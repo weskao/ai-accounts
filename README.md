@@ -342,3 +342,6 @@ You don't need SSH anymore — the install URLs above use plain HTTPS and no
 auth. If you (or an old script) are still calling
 `git+ssh://git@github.com/weskao/ai_accounts.git`, switch to the HTTPS form.
 
+## 📄 License
+
+This project is licensed under the terms of the MIT open source license. Please refer to the [LICENSE](./LICENSE) file for the full terms.
