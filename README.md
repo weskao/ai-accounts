@@ -3,10 +3,24 @@
 Personal CLI toolbox — a collection of productivity tools packaged as a Python
 project and managed via [`uv tool`](https://docs.astral.sh/uv/concepts/tools/).
 
+Requires **uv** ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
+and Python ≥ 3.10. No GitHub token or SSH key is required to install — the
+repo is public.
+
 ## Install (all tools in one shot)
 
+Pin to the latest release tag from
+[Releases](https://github.com/weskao/ai-accounts/releases)
+(currently `v0.1.0`):
+
 ```sh
-uv tool install git+ssh://git@github.com/weskao/ai_accounts.git
+uv tool install --from git+https://github.com/weskao/ai_accounts.git@v0.1.0 ai-accounts
+```
+
+Or install the latest `main`:
+
+```sh
+uv tool install --from git+https://github.com/weskao/ai_accounts.git ai-accounts
 ```
 
 After install, the following commands are available on `PATH`:
@@ -29,7 +43,7 @@ uv tool upgrade ai-accounts
 ## Reinstall (force)
 
 ```sh
-uv tool install --reinstall git+ssh://git@github.com/weskao/ai_accounts.git
+uv tool install --reinstall --from git+https://github.com/weskao/ai_accounts.git@v0.1.0 ai-accounts
 ```
 
 ## Uninstall
@@ -291,3 +305,40 @@ alias htmltomd='html2md'
 alias h2m='html2md'
 alias htom='html2md'
 ```
+
+---
+
+## Troubleshooting
+
+### `uv: command not found`
+
+`uv` isn't installed or isn't on `PATH`. Install it and open a new shell:
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
+# or
+brew install uv
+```
+
+### `error: Repository not found` over HTTPS
+
+The repo URL is wrong, or visibility changed. The canonical URL is
+`https://github.com/weskao/ai_accounts.git` and the repo is public.
+
+### Stale clone after switching install URL
+
+If a previous install is stuck on an old URL or commit, wipe the cache and
+reinstall pinned to a tag:
+
+```sh
+uv cache clean
+uv tool uninstall ai-accounts 2>/dev/null
+uv tool install --reinstall --from git+https://github.com/weskao/ai_accounts.git@v0.1.0 ai-accounts
+```
+
+### `Permission denied (publickey)` when using an `ssh://` URL
+
+You don't need SSH anymore — the install URLs above use plain HTTPS and no
+auth. If you (or an old script) are still calling
+`git+ssh://git@github.com/weskao/ai_accounts.git`, switch to the HTTPS form.
+
