@@ -7,6 +7,9 @@ Requires **uv** ([install uv](https://docs.astral.sh/uv/getting-started/installa
 and Python ≥ 3.10. No GitHub token or SSH key is required to install — the
 repo is public.
 
+Runs on **macOS, Windows, and Linux**. OS-specific bits (clipboard, dependency
+install, terminal colors) are handled automatically per platform.
+
 ## Install (all tools in one shot)
 
 Pin to the latest release tag from
@@ -92,7 +95,8 @@ ge -f file.txt -w                   # translate file to English + overwrite
 ge -f -w file.txt                   # same, alternative ordering
 ```
 
-> Results are automatically copied to the system clipboard (`pbcopy`).
+> Results are automatically copied to the system clipboard — `pbcopy` on macOS,
+> the Win32 clipboard API on Windows, and `wl-copy` / `xclip` / `xsel` on Linux.
 > Texts over 4500 characters are split into chunks and translated sequentially.
 
 ---
