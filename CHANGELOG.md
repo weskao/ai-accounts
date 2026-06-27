@@ -1,3 +1,12 @@
+## [0.3.1] - 2026-06-27
+
+### 🐛 Bug Fixes
+
+- **vcadd:** Use TextInputMenuAgent, add timeout
+
+### 🎨 Styling
+
+- **vcadd:** Translate error messages from chinese to english
 ## [0.3.0] - 2026-06-27
 
 ### 🚀 Features
@@ -7,6 +16,10 @@
 ### 🐛 Bug Fixes
 
 - **readme:** Replace hardcoded v0.1.0 with vX.Y.Z placeholder
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.3.0
 ## [0.2.0] - 2026-06-20
 
 ### 🚀 Features
