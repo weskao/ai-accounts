@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "ai-accounts" }]
 license = { text = "MIT" }
-dependencies = []
+dependencies = ["pypinyin"]
 
 [project.scripts]
 gtrans = "ai_accounts.gtrans:main"
@@ -15,6 +15,7 @@ imgmin = "ai_accounts.imgmin:main"
 resize-image = "ai_accounts.resize:main"
 towebp = "ai_accounts.towebp:main"
 html2md = "ai_accounts.html_to_md:main"
+vcadd = "ai_accounts.vcadd:main"
 
 [build-system]
 requires = ["hatchling"]

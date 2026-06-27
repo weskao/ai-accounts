@@ -35,6 +35,7 @@ After install, the following commands are available on `PATH`:
 | `resize-image` | Resize images (JPG/PNG/WebP) via ImageMagick |
 | `towebp` | Convert PNG/JPG/JPEG to WebP |
 | `html2md` | Convert HTML files to Markdown via pandoc |
+| `vcadd` | Add Chinese words with 注音符號（Bopomofo）readings to vChewing user dictionary |
 
 ## Update
 
@@ -265,6 +266,41 @@ html2md "API Reference.md"     # accepts .md extension — auto-maps to .html so
 
 ---
 
+## `vcadd` — vChewing User Dictionary Helper
+
+Append one or more Chinese words (with their auto-generated 注音符號（Bopomofo）readings) to the
+vChewing input method's user phrase file (`userdata-cht.txt`), then trigger a live reload
+so the new entries take effect immediately — no manual restart required.
+
+**Platform:** macOS only (requires vChewing and `osascript`).
+
+### vcadd Usage
+
+```sh
+vcadd <word> [word ...]
+```
+
+### vcadd Examples
+
+```sh
+vcadd 蛋白質         # add a single word
+vcadd 人工智慧 機器學習  # add multiple words at once
+```
+
+- Duplicate entries are detected and skipped automatically.
+- Each added entry is printed in `word BopomofoReading` format (e.g. `蛋白質 ㄉㄢˋ-ㄅㄞˊ-ㄓˊ`).
+- vChewing is reloaded via AppleScript after any words are added. If the reload fails,
+  a reminder to press **Reload User Phrases** manually is shown.
+
+### vcadd Dependencies
+
+| Dependency | Notes |
+| --- | --- |
+| `pypinyin` | Python package — installed automatically with ai-accounts |
+| vChewing | Must be running for the AppleScript reload to succeed |
+
+---
+
 ## External binaries required
 
 Each tool checks its own dependencies and reports a clear error if anything is
@@ -277,6 +313,7 @@ missing. Most can be auto-installed via Homebrew on first use.
 | `resize-image` | `magick` (imagemagick) |
 | `towebp` | `cwebp` |
 | `html2md` | `pandoc` |
+| `vcadd` | `osascript` (macOS built-in), vChewing input method |
 
 ---
 
