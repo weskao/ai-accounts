@@ -164,14 +164,14 @@ def ensure_tool(pkg: str, cmd: str | None = None) -> bool:
         return True
 
     if IS_MACOS:
-        log_yellow(f"⚠️  未偵測到 {bin_name},嘗試透過 Homebrew 安裝 {pkg}...")
+        log_yellow(f"⚠️  {bin_name} not detected, attempting to install {pkg} via Homebrew...")
         if have("brew"):
             res = subprocess.run(["brew", "install", pkg])
             if res.returncode == 0 and have(bin_name):
                 return True
-            log_red(f"❌ brew install {pkg} 失敗")
+            log_red(f"❌ brew install {pkg} failed")
         else:
-            log_red("❌ 找不到 Homebrew,請先安裝:https://brew.sh")
+            log_red("❌ Homebrew not found, please install first: https://brew.sh")
 
     log_red(f"❌ Required tool '{bin_name}' not found.")
     log_yellow(f"   Install it with:  {_install_hint(pkg)}")
