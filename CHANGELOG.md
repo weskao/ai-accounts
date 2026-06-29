@@ -1,3 +1,12 @@
+## [0.3.2] - 2026-06-29
+
+### 🐛 Bug Fixes
+
+- **vcadd:** Auto-switch to vChewing if not active before reload
+
+### 🎨 Styling
+
+- Translate remaining chinese messages to english
 ## [0.3.1] - 2026-06-27
 
 ### 🐛 Bug Fixes
@@ -7,6 +16,10 @@
 ### 🎨 Styling
 
 - **vcadd:** Translate error messages from chinese to english
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.3.1
 ## [0.3.0] - 2026-06-27
 
 ### 🚀 Features
