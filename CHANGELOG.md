@@ -1,3 +1,8 @@
+## [0.3.3] - 2026-06-29
+
+### 🐛 Bug Fixes
+
+- **vcadd:** Retry activation check after switching to vChewing
 ## [0.3.2] - 2026-06-29
 
 ### 🐛 Bug Fixes
@@ -7,6 +12,10 @@
 ### 🎨 Styling
 
 - Translate remaining chinese messages to english
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.3.2
 ## [0.3.1] - 2026-06-27
 
 ### 🐛 Bug Fixes
