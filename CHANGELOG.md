@@ -1,8 +1,17 @@
+## [0.3.4] - 2026-06-30
+
+### 🚀 Features
+
+- **vcadd:** Git sync with auto union-conflict resolution
 ## [0.3.3] - 2026-06-29
 
 ### 🐛 Bug Fixes
 
 - **vcadd:** Retry activation check after switching to vChewing
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.3.3
 ## [0.3.2] - 2026-06-29
 
 ### 🐛 Bug Fixes
