@@ -1,14 +1,17 @@
 ## [0.3.5] - 2026-06-30
 
-### 🐛 Bug Fixes
+### 🚜 Refactor
 
 - **vcadd:** Remove explicit reload; vChewing auto-reloads via FSEvents
-
 ## [0.3.4] - 2026-06-30
 
 ### 🚀 Features
 
 - **vcadd:** Git sync with auto union-conflict resolution
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.3.4
 ## [0.3.3] - 2026-06-29
 
 ### 🐛 Bug Fixes
