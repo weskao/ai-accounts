@@ -289,15 +289,14 @@ vcadd 人工智慧 機器學習  # add multiple words at once
 
 - Duplicate entries are detected and skipped automatically.
 - Each added entry is printed in `word BopomofoReading` format (e.g. `蛋白質 ㄉㄢˋ-ㄅㄞˊ-ㄓˊ`).
-- vChewing is reloaded via AppleScript after any words are added. If the reload fails,
-  a reminder to press **Reload User Phrases** manually is shown.
+- vChewing reloads the user phrase file automatically via FSEvents — no manual reload or restart required.
 
 ### vcadd Dependencies
 
 | Dependency | Notes |
 | --- | --- |
 | `pypinyin` | Python package — installed automatically with ai-accounts |
-| vChewing | Must be running for the AppleScript reload to succeed |
+| vChewing | Must be installed and running |
 
 ---
 
@@ -313,7 +312,7 @@ missing. Most can be auto-installed via Homebrew on first use.
 | `resize-image` | `magick` (imagemagick) |
 | `towebp` | `cwebp` |
 | `html2md` | `pandoc` |
-| `vcadd` | `osascript` (macOS built-in), vChewing input method |
+| `vcadd` | vChewing input method |
 
 ---
 

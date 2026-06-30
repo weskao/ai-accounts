@@ -1,3 +1,9 @@
+## [0.3.5] - 2026-06-30
+
+### 🐛 Bug Fixes
+
+- **vcadd:** Remove explicit reload; vChewing auto-reloads via FSEvents
+
 ## [0.3.4] - 2026-06-30
 
 ### 🚀 Features
