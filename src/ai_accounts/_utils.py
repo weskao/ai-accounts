@@ -286,3 +286,137 @@ def run(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
     """Thin wrapper around subprocess.run that uses text=True by default."""
     kwargs.setdefault("text", True)
     return subprocess.run(cmd, **kwargs)
+
+
+# ── git helpers ──────────────────────────────────────────────────────────────
+
+def is_git_repo(path: "Path") -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def _resolve_union_conflict(file_path: "Path") -> bool:
+    """Resolve conflict markers in an append-only word-list file via union merge.
+
+    Keeps all non-duplicate lines from both sides. Returns True if no conflict
+    markers remain after resolution.
+    """
+    from pathlib import Path as _Path
+    content = file_path.read_text(encoding="utf-8")  # type: ignore[arg-type]
+    if "<<<<<<< " not in content:
+        return True
+
+    seen: set[str] = set()
+    out: list[str] = []
+    state = "normal"  # normal | ours | theirs
+
+    for line in content.splitlines():
+        if line.startswith("<<<<<<< "):
+            state = "ours"
+            continue
+        if line == "=======":
+            state = "theirs"
+            continue
+        if line.startswith(">>>>>>> "):
+            state = "normal"
+            continue
+        # Deduplicate by the first token (the word itself); keep comment/blank lines as-is.
+        if line and not line.startswith("#") and not line.startswith(" "):
+            key = line.split(maxsplit=1)[0]
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(line)
+
+    resolved = "\n".join(out)
+    if not resolved.endswith("\n"):
+        resolved += "\n"
+    file_path.write_text(resolved, encoding="utf-8")  # type: ignore[arg-type]
+    return "<<<<<<< " not in resolved
+
+
+def git_sync(repo_dir: "Path", file_path: "Path", commit_msg: str) -> list[str]:
+    """Commit file_path, pull --rebase (auto-resolving union conflicts), then push.
+
+    Order: add → commit → pull --rebase → push.
+
+    On conflict: if only file_path conflicts, resolves via union merge and
+    continues the rebase. If other files conflict or resolution fails, aborts
+    the rebase and prints instructions for manual recovery.
+
+    Returns a list of completed step descriptions, stopping at the first failure.
+    """
+    import os as _os
+
+    def _run(args: list[str], extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        env = {**_os.environ, **(extra_env or {})}
+        return subprocess.run(
+            ["git", "-C", str(repo_dir), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    done: list[str] = []
+
+    _run(["add", str(file_path)])
+    commit = _run(["commit", "-m", commit_msg])
+    if commit.returncode != 0:
+        print(f"❌ git commit failed: {commit.stderr.strip()}")
+        return done
+    done.append("git commit")
+
+    # Attempt rebase pull, resolving union conflicts on file_path if needed.
+    for attempt in range(10):  # guard against infinite rebase loops
+        if attempt == 0:
+            result = _run(["pull", "--rebase"])
+        else:
+            result = _run(["rebase", "--continue"], extra_env={"GIT_EDITOR": "true"})
+
+        if result.returncode == 0:
+            done.append("git pull --rebase")
+            break
+
+        # Check which files are conflicted.
+        unmerged = _run(["diff", "--name-only", "--diff-filter=U"])
+        conflicted = [f.strip() for f in unmerged.stdout.splitlines() if f.strip()]
+
+        try:
+            rel_file = str(file_path.relative_to(repo_dir))  # type: ignore[attr-defined]
+        except ValueError:
+            rel_file = str(file_path)
+
+        if conflicted != [rel_file]:
+            _run(["rebase", "--abort"])
+            others = [f for f in conflicted if f != rel_file]
+            print(
+                f"❌ Conflict in unexpected file(s): {others or conflicted}. "
+                "Rebase aborted — please resolve manually and push."
+            )
+            return done
+
+        if not _resolve_union_conflict(file_path):  # type: ignore[arg-type]
+            _run(["rebase", "--abort"])
+            print(
+                f"❌ Union merge could not fully resolve conflicts in {rel_file}. "
+                "Rebase aborted — please resolve manually and push."
+            )
+            return done
+
+        _run(["add", str(file_path)])
+        done.append("🔀 conflict auto-resolved")
+    else:
+        _run(["rebase", "--abort"])
+        print("❌ Rebase loop exceeded limit. Aborted — please pull and push manually.")
+        return done
+
+    push = _run(["push"])
+    if push.returncode != 0:
+        print(f"❌ git push failed: {push.stderr.strip()}")
+        return done
+    done.append("git push")
+
+    return done
