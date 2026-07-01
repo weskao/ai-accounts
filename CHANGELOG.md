@@ -1,8 +1,17 @@
+## [0.4.0] - 2026-07-01
+
+### 🚀 Features
+
+- **vcadd:** Use conventional commit format for userdata-cht commits
 ## [0.3.5] - 2026-06-30
 
 ### 🚜 Refactor
 
 - **vcadd:** Remove explicit reload; vChewing auto-reloads via FSEvents
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.3.5
 ## [0.3.4] - 2026-06-30
 
 ### 🚀 Features
