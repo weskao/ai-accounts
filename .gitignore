@@ -9,3 +9,5 @@ build/
 *.swp
 .venv/
 .claude/ecc/install-state.json
+.claude/skills/ecc/
+
