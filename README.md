@@ -335,14 +335,28 @@ uv tool install --editable .
 If you want the original short aliases to keep working, drop these into `~/.zshrc`:
 
 ```zsh
+# Translation
 alias ge='gtrans -e'             # quick: auto-detect → English
 alias translate='gtrans'         # explicit alias
+
+# Image
 alias resize='resize-image'      # avoid clobbering shell's builtin `resize`
 alias toWebp='towebp'
+
+# HTML → Markdown
 alias html_to_md='html2md'
 alias htmltomd='html2md'
 alias h2m='html2md'
 alias htom='html2md'
+
+# Codex accounts
+alias codexwho='codex-accounts who'
+alias codexcurrent='codex-accounts current'
+alias codexsave='codex-accounts save'
+alias codexlist='codex-accounts list'
+alias codexswitch='codex-accounts switch'
+alias codexremove='codex-accounts remove'
+alias codexloginswitch='codex-accounts login-switch'
 ```
 
 ---
