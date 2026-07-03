@@ -313,6 +313,9 @@ directory as secrets.
 > (the default login flow), the stored tokens are issued via ChatGPT OAuth. In that case,
 > `login-switch` (which calls `codex logout`) will revoke the active ChatGPT OAuth session;
 > switching profiles with `switch` does **not** hit the network and is safe to use at any time.
+> `refresh` uses the OAuth refresh grant (the same call Codex makes internally) — it renews
+> tokens **without** logging out, so it never revokes the ChatGPT session and never opens a
+> browser.
 
 ### codex-accounts Usage
 
@@ -323,6 +326,10 @@ codex-accounts save <name>           # save the current login as a reusable prof
 codex-accounts list                  # list saved profiles (table view)
 codex-accounts switch <name>         # switch to a saved profile
 codex-accounts remove <name>         # delete a saved profile
+codex-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browser, no logout);
+                                     # no name = refresh the active auth + sync it back
+codex-accounts refresh --all         # renew every saved profile in one run
+codex-accounts sync                  # copy the active auth back to its matching profile
 codex-accounts login-switch <name>   # codex logout + codex login + save as <name>
 ```
 
@@ -359,6 +366,25 @@ codex-accounts switch work       # activate the "work" profile
 codex-accounts who               # confirm the current account
 ```
 
+### codex-accounts Token upkeep
+
+Saved profiles are snapshots — Codex keeps refreshing the *active* `auth.json` while you use
+it (access tokens last ~10 days), but the copies under `~/.codex/accounts/` go stale. Two
+commands keep them fresh, no re-login required:
+
+```sh
+codex-accounts refresh --all     # renew every saved profile via OAuth refresh
+codex-accounts refresh work      # renew just one profile
+codex-accounts refresh           # renew the active auth, then sync it back to its profile
+codex-accounts sync              # no network: copy the (already-fresh) active auth back
+                                 # to its matching profile
+```
+
+When a refreshed profile belongs to the currently active account, `refresh` also updates
+`auth.json` — OAuth refresh rotates the refresh token, so this keeps the live login from
+being stranded with a dead token. If a refresh fails because the refresh token itself has
+expired or been revoked, re-login with `codex-accounts login-switch <name>`.
+
 ### codex-accounts Examples
 
 ```sh
@@ -366,6 +392,7 @@ codex-accounts login-switch personal   # log into a new account, save it as "per
 codex-accounts login-switch work       # log into another account, save it as "work"
 codex-accounts list                    # see all saved profiles, with the active one marked
 codex-accounts switch personal         # switch back to "personal"
+codex-accounts refresh --all           # renew tokens for every saved profile
 codex-accounts who                     # confirm which account is currently active
 ```
 
@@ -401,7 +428,7 @@ missing. Most can be auto-installed via Homebrew on first use.
 | `towebp` | `cwebp` |
 | `html2md` | `pandoc` |
 | `vcadd` | vChewing input method |
-| `codex-accounts` | `codex` CLI (required for `who`/`login-switch`; `list`/`save`/`switch`/`remove` work without it) |
+| `codex-accounts` | `codex` CLI (required for `who`/`login-switch`; `list`/`save`/`switch`/`remove`/`refresh`/`sync` work without it) |
 
 ---
 
@@ -445,6 +472,8 @@ alias codexsave='codex-accounts save'
 alias codexlist='codex-accounts list'
 alias codexswitch='codex-accounts switch'
 alias codexremove='codex-accounts remove'
+alias codexrefresh='codex-accounts refresh'
+alias codexsync='codex-accounts sync'
 alias codexloginswitch='codex-accounts login-switch'
 ```
 
@@ -477,12 +506,6 @@ uv cache clean
 uv tool uninstall ai-accounts 2>/dev/null
 uv tool install --reinstall --from git+https://github.com/weskao/ai_accounts.git@vX.Y.Z ai-accounts
 ```
-
-### `Permission denied (publickey)` when using an `ssh://` URL
-
-You don't need SSH anymore — the install URLs above use plain HTTPS and no
-auth. If you (or an old script) are still calling
-`git+ssh://git@github.com/weskao/ai_accounts.git`, switch to the HTTPS form.
 
 ## 📄 License
 
