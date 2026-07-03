@@ -141,6 +141,11 @@ _INSTALL_HINTS: dict[str, dict[str, str]] = {
         "linux": "sudo apt install imagemagick   (or: sudo dnf install ImageMagick / sudo pacman -S imagemagick)",
         "win32": "winget install --id ImageMagick.ImageMagick   (or: choco install imagemagick)",
     },
+    "codex": {
+        "darwin": "npm install -g @openai/codex",
+        "linux": "npm install -g @openai/codex",
+        "win32": "npm install -g @openai/codex",
+    },
 }
 
 
@@ -148,6 +153,37 @@ def _install_hint(pkg: str) -> str:
     by_os = _INSTALL_HINTS.get(pkg, {})
     key = "darwin" if IS_MACOS else "win32" if IS_WINDOWS else "linux"
     return by_os.get(key) or f"install '{pkg}' using your platform's package manager"
+
+
+def ensure_python_package(import_name: str, pip_name: str | None = None) -> bool:
+    """Ensure a Python package is importable, auto-installing via pip if needed.
+
+    Args:
+        import_name: The name used in ``import <import_name>`` statements.
+        pip_name: The PyPI package name (defaults to ``import_name`` if omitted).
+
+    Returns True when the package is available, False if installation failed.
+    """
+    try:
+        __import__(import_name)
+        return True
+    except ImportError:
+        pass
+
+    install_name = pip_name or import_name
+    log_yellow(f"⚙️  {import_name} not installed, installing automatically...")
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", install_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        __import__(import_name)
+        log_green(f"✅ {install_name} installed successfully")
+        return True
+    except Exception as exc:
+        log_red(f"❌ Failed to auto-install {install_name}: {exc}")
+        return False
 
 
 def ensure_tool(pkg: str, cmd: str | None = None) -> bool:
