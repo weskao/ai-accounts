@@ -373,6 +373,92 @@ class SwitchExpiredFallbackTests(_CodexHomeMixin):
         relogin.assert_not_called()  # 5xx is transient, not a revoked token
 
 
+class KeychainMirrorTests(_CodexHomeMixin):
+    """On macOS codex reads its OAuth credentials from the login keychain
+    ("Codex Auth") in preference to auth.json. Any write to the active auth
+    MUST mirror into that keychain item, or codex keeps using the old account.
+
+    We never *create* a keychain item that codex didn't already have: if no
+    item exists (Linux, older codex, or a fresh test home) auth.json is the
+    source of truth and we leave the keychain alone.
+    """
+
+    def test_keychain_account_is_deterministic_home_hash(self):
+        acct = ca._keychain_account()
+        self.assertIsNotNone(acct)
+        self.assertTrue(acct.startswith("cli|"))
+        self.assertEqual(acct, ca._keychain_account())  # stable
+        self.assertEqual(len(acct), len("cli|") + 16)
+
+    def test_keychain_account_is_none_off_macos(self):
+        with mock.patch.object(ca.platform, "system", return_value="Linux"):
+            self.assertIsNone(ca._keychain_account())
+
+    def test_switch_mirrors_new_auth_into_existing_keychain_item(self):
+        self.write_auth(_auth_payload("acct-w", "w@x.com"))
+        self.write_profile("personal", _auth_payload("acct-p", "personal@x.com"))
+
+        with mock.patch.object(ca, "have", return_value=False), \
+                mock.patch.object(ca, "_read_keychain_auth", return_value="{}"), \
+                mock.patch.object(ca, "_write_keychain_auth", return_value=True) as write_kc:
+            rc = self.run_quiet(ca.cmd_switch, "personal")
+
+        self.assertEqual(rc, 0)
+        write_kc.assert_called_once()
+        written = json.loads(write_kc.call_args.args[0])
+        self.assertEqual(written["tokens"]["account_id"], "acct-p")
+
+    def test_switch_does_not_create_keychain_item_when_absent(self):
+        self.write_auth(_auth_payload("acct-w", "w@x.com"))
+        self.write_profile("personal", _auth_payload("acct-p", "personal@x.com"))
+
+        with mock.patch.object(ca, "have", return_value=False), \
+                mock.patch.object(ca, "_read_keychain_auth", return_value=None), \
+                mock.patch.object(ca, "_write_keychain_auth", return_value=True) as write_kc:
+            rc = self.run_quiet(ca.cmd_switch, "personal")
+
+        self.assertEqual(rc, 0)
+        write_kc.assert_not_called()
+
+    def test_active_refresh_mirrors_into_keychain(self):
+        self.write_auth(_auth_payload("acct-w", "w@x.com"))
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+        new = {"access_token": _jwt({"exp": int(time.time()) + 864000}), "refresh_token": "rt-new"}
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(new, None)), \
+                mock.patch.object(ca, "_read_keychain_auth", return_value="{}"), \
+                mock.patch.object(ca, "_write_keychain_auth", return_value=True) as write_kc:
+            rc = self.run_quiet(ca.cmd_refresh, None)
+        self.assertEqual(rc, 0)
+        self.assertTrue(write_kc.called)
+        written = json.loads(write_kc.call_args.args[0])
+        self.assertEqual(written["tokens"]["refresh_token"], "rt-new")
+
+    def test_refreshing_inactive_profile_never_touches_keychain(self):
+        # auth.json is a different account than the profile being refreshed.
+        self.write_auth(_auth_payload("acct-p", "p@x.com"))
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+        new = {"access_token": _jwt({"exp": int(time.time()) + 864000})}
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(new, None)), \
+                mock.patch.object(ca, "_read_keychain_auth", return_value="{}"), \
+                mock.patch.object(ca, "_write_keychain_auth", return_value=True) as write_kc:
+            self.run_quiet(ca.cmd_refresh, "work")
+        write_kc.assert_not_called()
+
+    def test_read_active_claims_prefers_keychain_over_auth_json(self):
+        # auth.json says acct-file, keychain says acct-kc → codex uses keychain.
+        self.write_auth(_auth_payload("acct-file", "file@x.com"))
+        kc_secret = json.dumps(_auth_payload("acct-kc", "keychain@x.com"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=kc_secret):
+            claims = ca._read_active_claims()
+        self.assertEqual(claims["email"], "keychain@x.com")
+
+    def test_read_active_claims_falls_back_to_auth_json(self):
+        self.write_auth(_auth_payload("acct-file", "file@x.com"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=None):
+            claims = ca._read_active_claims()
+        self.assertEqual(claims["email"], "file@x.com")
+
+
 class MainDispatchTests(_CodexHomeMixin):
     def test_main_routes_refresh_and_sync(self):
         with mock.patch.object(ca, "cmd_refresh", return_value=0) as refresh, \

@@ -9,8 +9,10 @@ token expires). Never prints raw tokens — only decoded, non-secret claims.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -78,6 +80,103 @@ def _profile_file(name: str) -> Path | None:
     return _account_dir() / f"{safe}.json"
 
 
+# ── macOS keychain mirror ───────────────────────────────────────────────────
+# Modern Codex CLI stores its OAuth credentials in the login keychain and reads
+# them in preference to auth.json (only falling back to the file when the item
+# is absent). So a switch that rewrites only auth.json is silently ignored by
+# codex. We mirror every active-auth write into that keychain item, matching the
+# derivation codex uses: service "Codex Auth", account "cli|<first-16-hex of
+# sha256(realpath(CODEX_HOME))>". Verified against cockpit-core codex_account.rs.
+
+_KEYCHAIN_SERVICE = "Codex Auth"
+
+
+def _keychain_account() -> str | None:
+    """Keychain account name codex derives from the resolved CODEX_HOME.
+    None off macOS (no keychain-backed store there)."""
+    if platform.system() != "Darwin":
+        return None
+    try:
+        resolved = os.path.realpath(_codex_home())
+    except OSError:
+        resolved = str(_codex_home())
+    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()
+    return f"cli|{digest[:16]}"
+
+
+def _read_keychain_auth() -> str | None:
+    """Return the keychain-stored auth JSON string, or None if absent/off-macOS."""
+    account = _keychain_account()
+    if account is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-a", account, "-w"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    secret = (result.stdout or "").strip()
+    if not secret:
+        return None
+    # `security -w` hex-encodes the secret when it contains bytes it deems
+    # "non-clean" (e.g. newlines). Decode that back to the original JSON text.
+    if re.fullmatch(r"(?:[0-9a-fA-F]{2})+", secret):
+        try:
+            secret = bytes.fromhex(secret).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            pass
+    return secret
+
+
+def _write_keychain_auth(content: str) -> bool:
+    """Update the keychain item's secret in place. Returns True on success."""
+    account = _keychain_account()
+    if account is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["security", "add-generic-password", "-U",
+             "-s", _KEYCHAIN_SERVICE, "-a", account, "-w", content],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def _is_default_auth(auth_path: Path) -> bool:
+    """True when auth_path is the codex-managed active auth (CODEX_HOME/auth.json)."""
+    return auth_path == _codex_home() / "auth.json"
+
+
+def _mirror_active_auth_to_keychain(auth_path: Path) -> None:
+    """Mirror the active auth.json into codex's keychain item so codex actually
+    picks up the switch. Best-effort and *update-only*: we never fabricate a
+    keychain credential store codex wasn't already using — if no item exists,
+    auth.json is authoritative and we leave the keychain untouched."""
+    if not _is_default_auth(auth_path) or _keychain_account() is None:
+        return
+    if _read_keychain_auth() is None:
+        return  # codex isn't keychain-backed here; auth.json is the source of truth
+    try:
+        auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    # Compact, newline-free JSON — matches codex/cockpit and avoids `security`
+    # storing a value that reads back hex-encoded.
+    content = json.dumps(auth, separators=(",", ":"))
+    if not _write_keychain_auth(content):
+        log_yellow(
+            "⚠️  Could not update the macOS keychain; codex may keep using the "
+            "previous account until its next login."
+        )
+
+
 # ── JWT claim decoding (no raw tokens ever printed) ─────────────────────────
 
 def _decode_jwt_payload(token: str | None) -> dict | None:
@@ -115,15 +214,8 @@ def _format_unix_time(value) -> str | None:
         return None
 
 
-def _read_claims(auth_path: Path) -> dict | None:
-    """Read non-secret account claims from a Codex auth file. None if missing/unreadable."""
-    if not auth_path.is_file():
-        return None
-    try:
-        auth = json.loads(auth_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
+def _claims_from_auth(auth: dict) -> dict:
+    """Extract non-secret account claims from a parsed Codex auth object."""
     tokens = auth.get("tokens") or {}
     # access_token expires in days; id_token expires in ~1 hour (identity-only).
     # Prefer access_token so the displayed expiry reflects when re-login is actually needed.
@@ -149,6 +241,36 @@ def _read_claims(auth_path: Path) -> dict | None:
         "expires_epoch": exp,
         "expires_str": _format_unix_time(exp),
     }
+
+
+def _claims_from_text(text: str) -> dict | None:
+    """Claims from a raw auth-JSON string (e.g. a keychain secret). None if unparseable."""
+    try:
+        return _claims_from_auth(json.loads(text))
+    except Exception:
+        return None
+
+
+def _read_claims(auth_path: Path) -> dict | None:
+    """Read non-secret account claims from a Codex auth file. None if missing/unreadable."""
+    if not auth_path.is_file():
+        return None
+    try:
+        return _claims_from_auth(json.loads(auth_path.read_text(encoding="utf-8")))
+    except Exception:
+        return None
+
+
+def _read_active_claims() -> dict | None:
+    """Claims for the *active* login as codex actually sees it: the macOS
+    keychain is codex's source of truth and takes precedence over auth.json;
+    fall back to the file when no keychain item exists (Linux/older codex)."""
+    secret = _read_keychain_auth()
+    if secret:
+        claims = _claims_from_text(secret)
+        if claims is not None:
+            return claims
+    return _read_claims(_auth_file())
 
 
 def _identity_label(claims: dict | None) -> str:
@@ -245,6 +367,9 @@ def _apply_refreshed_tokens(path: Path, refreshed: dict) -> None:
     )
     path.write_text(json.dumps(auth, indent=2) + "\n", encoding="utf-8")
     path.chmod(0o600)
+    # Keep codex's keychain in lock-step when we just rewrote the active auth
+    # (no-op for profile files and off-macOS).
+    _mirror_active_auth_to_keychain(path)
 
 
 def _refresh_file(path: Path, label: str) -> dict | None:
@@ -384,7 +509,7 @@ def cmd_who() -> int:
     _panel("Codex Login Status", status_lines)
 
     print()
-    _panel("Current Auth Claims", _claims_lines(_read_claims(_auth_file())))
+    _panel("Current Auth Claims", _claims_lines(_read_active_claims()))
     return 0
 
 
@@ -418,7 +543,7 @@ def cmd_list() -> int:
         print(f"{DIM}   Add one with: codex-accounts save <profile_name>{RESET}", file=sys.stderr)
         return 0
 
-    active_key = _identity_key(_read_claims(_auth_file()))
+    active_key = _identity_key(_read_active_claims())
 
     rows = []
     for profile_path in profiles:
@@ -474,6 +599,9 @@ def cmd_switch(name: str) -> int:
 
     shutil.copy2(profile_file, auth_path)
     auth_path.chmod(0o600)
+    # codex reads the keychain before auth.json on macOS — without this mirror
+    # the copy above is silently ignored and codex keeps the old account.
+    _mirror_active_auth_to_keychain(auth_path)
 
     print(f"{GREEN}✅ Switched Codex profile to:{RESET} {BOLD}{name}{RESET}")
     if backup_path:
