@@ -36,6 +36,7 @@ After install, the following commands are available on `PATH`:
 | `towebp` | Convert PNG/JPG/JPEG to WebP |
 | `html2md` | Convert HTML files to Markdown via pandoc |
 | `vcadd` | Add Chinese words with 注音符號（Bopomofo）readings to vChewing user dictionary |
+| `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove) |
 
 ## Update
 
@@ -300,6 +301,93 @@ vcadd 人工智慧 機器學習  # add multiple words at once
 
 ---
 
+## `codex-accounts` — Codex CLI Account Manager
+
+Save, list, and switch between multiple [Codex CLI](https://github.com/openai/codex) login
+profiles. Never prints raw tokens — only decoded, non-secret claims (email, name, account ID,
+org ID, expiry). Saved profiles under `~/.codex/accounts/` contain auth tokens — treat that
+directory as secrets.
+
+> **Scope**: this tool only manages `~/.codex/auth.json` — it does **not** touch OpenAI API
+> keys or any other credential store. When Codex is configured with `auth_mode: chatgpt`
+> (the default login flow), the stored tokens are issued via ChatGPT OAuth. In that case,
+> `login-switch` (which calls `codex logout`) will revoke the active ChatGPT OAuth session;
+> switching profiles with `switch` does **not** hit the network and is safe to use at any time.
+
+### codex-accounts Usage
+
+```sh
+codex-accounts who                   # show the current logged-in account
+codex-accounts current               # alias for `who`
+codex-accounts save <name>           # save the current login as a reusable profile
+codex-accounts list                  # list saved profiles (table view)
+codex-accounts switch <name>         # switch to a saved profile
+codex-accounts remove <name>         # delete a saved profile
+codex-accounts login-switch <name>   # codex logout + codex login + save as <name>
+```
+
+### codex-accounts First-time setup
+
+**Prerequisite** — the Codex CLI must be installed:
+
+```sh
+which codex || npm install -g @openai/codex
+```
+
+**Single account** — log in once, save the profile:
+
+```sh
+codex login                       # opens browser for authentication
+codex-accounts save personal      # save the active auth as "personal"
+codex-accounts who                # confirm which account is active
+```
+
+**Multiple accounts** (e.g. personal + work) — use `login-switch`, which runs
+`codex logout` → `codex login` → `save` in one step:
+
+```sh
+codex-accounts login-switch personal   # log into the first account, save as "personal"
+codex-accounts login-switch work       # log into the second account, save as "work"
+codex-accounts list                    # verify both profiles are saved
+```
+
+After the initial setup, switch at any time with:
+
+```sh
+codex-accounts switch personal   # activate the "personal" profile
+codex-accounts switch work       # activate the "work" profile
+codex-accounts who               # confirm the current account
+```
+
+### codex-accounts Examples
+
+```sh
+codex-accounts login-switch personal   # log into a new account, save it as "personal"
+codex-accounts login-switch work       # log into another account, save it as "work"
+codex-accounts list                    # see all saved profiles, with the active one marked
+codex-accounts switch personal         # switch back to "personal"
+codex-accounts who                     # confirm which account is currently active
+```
+
+### codex-accounts Output
+
+- `list` renders a bordered table (Profile / Account / Account ID / Expires / Status) with the
+  currently active profile highlighted in green and marked `ACTIVE`.
+- `who` and `switch` render a bordered "Current Auth Claims" panel; expiry is color-coded
+  (green = valid, yellow = expiring within 24h, red = `EXPIRED`) with the state also spelled
+  out in text, not color alone.
+- `switch` backs up the previous `auth.json` (timestamped, `chmod 600`) before overwriting it.
+
+### codex-accounts Environment Overrides
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CODEX_HOME` | `~/.codex` | Base Codex config directory |
+| `CODEX_AUTH_JSON` | `$CODEX_HOME/auth.json` | Active Codex auth file |
+| `CODEX_ACCOUNT_DIR` | `$CODEX_HOME/accounts` | Where saved profiles are stored |
+
+---
+
 ## External binaries required
 
 Each tool checks its own dependencies and reports a clear error if anything is
@@ -313,6 +401,7 @@ missing. Most can be auto-installed via Homebrew on first use.
 | `towebp` | `cwebp` |
 | `html2md` | `pandoc` |
 | `vcadd` | vChewing input method |
+| `codex-accounts` | `codex` CLI (required for `who`/`login-switch`; `list`/`save`/`switch`/`remove` work without it) |
 
 ---
 
