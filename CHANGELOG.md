@@ -1,8 +1,40 @@
+## [0.5.0] - 2026-07-11
+
+### 🚀 Features
+
+- **codex-accounts:** Add multi-profile codex cli account manager
+- **utils:** Add ensure_python_package helper and codex install hint
+- **codex:** Add refresh and sync commands
+
+### 🐛 Bug Fixes
+
+- **codex_accounts:** Mirror auth writes to macOS keychain on switch
+- **codex_accounts:** Correct usage display and token persistence
+
+### 💼 Other
+
+- **deps:** Add pytest to dev dependencies
+
+### 📚 Documentation
+
+- **readme:** Group zsh aliases by category
+- **readme:** Document codex-accounts tool
+- Add claude.md project guidance
+
+### ⚙️ Miscellaneous Tasks
+
+- Sync uv.lock to version 0.4.0
+- Ignore claude installer state
+- Ignore claude skills directory
 ## [0.4.0] - 2026-07-01
 
 ### 🚀 Features
 
 - **vcadd:** Use conventional commit format for userdata-cht commits
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.4.0
 ## [0.3.5] - 2026-06-30
 
 ### 🚜 Refactor
