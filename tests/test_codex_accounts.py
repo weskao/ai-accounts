@@ -14,11 +14,13 @@ import os
 import tempfile
 import time
 import unittest
+import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from ai_accounts import codex_accounts as ca
+from ai_accounts import codex_usage
 
 
 def _jwt(payload: dict) -> str:
@@ -74,6 +76,12 @@ class _CodexHomeMixin(unittest.TestCase):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             return fn(*args)
 
+    def run_capture(self, fn, *args) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = fn(*args)
+        return rc, out.getvalue(), err.getvalue()
+
 
 class OauthRefreshRequestTests(unittest.TestCase):
     """_oauth_refresh must send the exact request codex-rs sends."""
@@ -121,6 +129,85 @@ class OauthRefreshRequestTests(unittest.TestCase):
             refreshed, error = ca._oauth_refresh("rt-bad")
         self.assertIsNone(refreshed)
         self.assertIn("401", error)
+
+
+class ReadActiveAuthTextTests(_CodexHomeMixin):
+    """_read_active_auth_text is the byte-level mirror of _read_active_claims
+    used by persist paths — same keychain-first source order, so a
+    keychain-only token rotation isn't discarded in favor of stale auth.json
+    bytes."""
+
+    def test_prefers_valid_keychain_json_over_auth_json_file(self):
+        self.write_auth(_auth_payload("acct-file", "file@x.com"))
+        kc_secret = json.dumps(_auth_payload("acct-kc", "kc@x.com"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=kc_secret):
+            text = ca._read_active_auth_text()
+        self.assertEqual(text, kc_secret)
+
+    def test_falls_back_to_auth_json_when_keychain_absent(self):
+        auth = self.write_auth(_auth_payload("acct-file", "file@x.com"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=None):
+            text = ca._read_active_auth_text()
+        self.assertEqual(text, auth.read_text())
+
+    def test_falls_back_to_auth_json_when_keychain_content_is_invalid_json(self):
+        auth = self.write_auth(_auth_payload("acct-file", "file@x.com"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value="not json"):
+            text = ca._read_active_auth_text()
+        self.assertEqual(text, auth.read_text())
+
+    def test_returns_none_when_nothing_available(self):
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=None):
+            self.assertIsNone(ca._read_active_auth_text())
+
+
+class SaveCommandTests(_CodexHomeMixin):
+    """cmd_save must persist the *active* auth keychain-first — codex may
+    rotate tokens (e.g. a fresh browser login) into the keychain only,
+    leaving auth.json stale. Saving auth.json bytes would silently discard
+    that rotation into the profile."""
+
+    def test_save_persists_keychain_content_over_stale_auth_json(self):
+        self.write_auth(_auth_payload("acct-w", "w@x.com", refresh_token="rt-stale"))
+        live = json.dumps(_auth_payload("acct-w", "w@x.com", refresh_token="rt-live"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=live):
+            rc = self.run_quiet(ca.cmd_save, "work")
+
+        self.assertEqual(rc, 0)
+        saved = json.loads((self.home / "accounts" / "work.json").read_text())
+        self.assertEqual(saved["tokens"]["refresh_token"], "rt-live")
+        # auth.json rewritten from the same content so file and keychain agree
+        auth = json.loads((self.home / "auth.json").read_text())
+        self.assertEqual(auth["tokens"]["refresh_token"], "rt-live")
+
+    def test_save_works_with_keychain_only_login_no_auth_json_file(self):
+        # Pure keychain-backed login: codex never wrote auth.json at all.
+        live = json.dumps(_auth_payload("acct-k", "k@x.com", refresh_token="rt-kc"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=live):
+            rc = self.run_quiet(ca.cmd_save, "kc-only")
+
+        self.assertEqual(rc, 0)
+        saved = json.loads((self.home / "accounts" / "kc-only.json").read_text())
+        self.assertEqual(saved["tokens"]["refresh_token"], "rt-kc")
+
+    def test_save_without_auth_or_keychain_errors(self):
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=None):
+            rc = self.run_quiet(ca.cmd_save, "nope")
+        self.assertEqual(rc, 1)
+        self.assertFalse((self.home / "accounts" / "nope.json").exists())
+
+    def test_login_switch_captures_fresh_keychain_only_tokens(self):
+        # login-switch = codex logout + codex login + save; the fresh browser
+        # login may land only in the keychain (no auth.json write at all).
+        fresh = json.dumps(_auth_payload("acct-new", "new@x.com", refresh_token="rt-fresh"))
+        with mock.patch.object(ca, "ensure_tool", return_value=True), \
+                mock.patch.object(ca.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+                mock.patch.object(ca, "_read_keychain_auth", return_value=fresh):
+            rc = self.run_quiet(ca.cmd_login_switch, "newacct")
+
+        self.assertEqual(rc, 0)
+        saved = json.loads((self.home / "accounts" / "newacct.json").read_text())
+        self.assertEqual(saved["tokens"]["refresh_token"], "rt-fresh")
 
 
 class RefreshCommandTests(_CodexHomeMixin):
@@ -215,6 +302,83 @@ class RefreshCommandTests(_CodexHomeMixin):
         rc = self.run_quiet(ca.cmd_refresh, None)
         self.assertEqual(rc, 1)
 
+    def test_refresh_no_arg_syncback_prefers_keychain_over_stale_file(self):
+        # Sync-back to the matching profile must use keychain-first content,
+        # not just the freshly-written auth.json bytes, so it stays correct
+        # even if the keychain reports something newer.
+        self.write_auth(_auth_payload("acct-w", "w@x.com"))
+        profile = self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+        new = {"access_token": _jwt({"exp": int(time.time()) + 864000}), "refresh_token": "rt-new"}
+        live = json.dumps(_auth_payload("acct-w", "w@x.com", refresh_token="rt-keychain-live"))
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(new, None)), \
+                mock.patch.object(ca, "_read_keychain_auth", return_value=live), \
+                mock.patch.object(ca, "_write_keychain_auth", return_value=True):
+            rc = self.run_quiet(ca.cmd_refresh, None)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(profile.read_text())["tokens"]["refresh_token"], "rt-keychain-live"
+        )
+
+    def test_refresh_http_4xx_classified_as_revoked_with_login_switch_message(self):
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-dead"))
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(None, "HTTP 401 from token endpoint")):
+            rc, _out, err = self.run_capture(ca.cmd_refresh, "work")
+        self.assertEqual(rc, 1)
+        self.assertIn("codex-accounts login-switch work", err)
+
+    def test_refresh_active_auth_revoked_suggests_codex_login_not_login_switch(self):
+        # "the active auth" is not a profile name — the revoked-token guidance
+        # must say `codex login`, not `login-switch the active auth`.
+        self.write_auth(_auth_payload("acct-w", "w@x.com", refresh_token="rt-dead"))
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(None, "HTTP 401 from token endpoint")):
+            rc, _out, err = self.run_capture(ca.cmd_refresh, None)
+        self.assertEqual(rc, 1)
+        self.assertIn("codex login", err)
+        self.assertNotIn("login-switch the active auth", err)
+
+    def test_refresh_transient_network_error_gets_distinct_retry_later_message(self):
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-w"))
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(None, "network error: timed out")):
+            rc, _out, err = self.run_capture(ca.cmd_refresh, "work")
+        self.assertEqual(rc, 1)
+        self.assertIn("retry later", err.lower())
+        self.assertNotIn("login-switch", err)
+
+    def test_refresh_http_5xx_is_transient_not_revoked(self):
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-w"))
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(None, "HTTP 503 from token endpoint")):
+            rc, _out, err = self.run_capture(ca.cmd_refresh, "work")
+        self.assertEqual(rc, 1)
+        self.assertIn("retry later", err.lower())
+        self.assertNotIn("login-switch", err)
+
+    def test_refresh_all_distinguishes_revoked_from_transient_and_continues(self):
+        self.write_profile("dead", _auth_payload("acct-d", "d@x.com", refresh_token="rt-dead"))
+        self.write_profile("flaky", _auth_payload("acct-f", "f@x.com", refresh_token="rt-flaky"))
+        self.write_profile("good", _auth_payload("acct-g", "g@x.com", refresh_token="rt-good"))
+
+        calls = []
+
+        def fake_refresh(token):
+            calls.append(token)
+            if token == "rt-dead":
+                return None, "HTTP 401 from token endpoint"
+            if token == "rt-flaky":
+                return None, "network error: timed out"
+            return {"access_token": _jwt({"exp": int(time.time()) + 864000})}, None
+
+        with mock.patch.object(ca, "_oauth_refresh", side_effect=fake_refresh):
+            rc, _out, err = self.run_capture(ca.cmd_refresh, "--all")
+
+        self.assertEqual(rc, 1)
+        # the loop kept going past both failures — every profile was attempted
+        self.assertEqual(sorted(calls), ["rt-dead", "rt-flaky", "rt-good"])
+        self.assertIn("Revoked (re-login required)", err)
+        self.assertIn("codex-accounts login-switch dead", err)
+        self.assertIn("Transient failure, retry later", err)
+        self.assertIn("flaky", err)
+
 
 class SyncCommandTests(_CodexHomeMixin):
     def test_sync_copies_auth_to_matching_profile(self):
@@ -236,6 +400,276 @@ class SyncCommandTests(_CodexHomeMixin):
     def test_sync_without_auth_file_errors(self):
         rc = self.run_quiet(ca.cmd_sync)
         self.assertEqual(rc, 1)
+
+    def test_sync_prefers_keychain_over_stale_auth_json(self):
+        # cmd_sync's whole job is "copy the true active auth to its profile" —
+        # it must copy the keychain's live tokens, not a stale auth.json.
+        self.write_auth(_auth_payload("acct-w", "w@x.com", refresh_token="rt-file-stale"))
+        profile = self.write_profile(
+            "work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-old-profile")
+        )
+        live = json.dumps(_auth_payload("acct-w", "w@x.com", refresh_token="rt-keychain-live"))
+
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=live):
+            rc = self.run_quiet(ca.cmd_sync)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(profile.read_text())["tokens"]["refresh_token"], "rt-keychain-live"
+        )
+
+
+class UsageRequestTests(_CodexHomeMixin):
+    def test_fetch_usage_sends_codex_headers_and_parses_windows(self):
+        auth = self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+        captured = {}
+
+        class FakeResponse:
+            def read(self):
+                return json.dumps(
+                    {
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 12,
+                                "limit_window_seconds": 18_000,
+                                "reset_at": 1_800_000_000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 34,
+                                "limit_window_seconds": 604_800,
+                                "reset_after_seconds": 3600,
+                            },
+                        }
+                    }
+                ).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_open(request, timeout=None):
+            captured["url"] = request.full_url
+            captured["timeout"] = timeout
+            captured["authorization"] = request.get_header("Authorization")
+            captured["accept"] = request.get_header("Accept")
+            captured["account"] = request.get_header("Chatgpt-account-id")
+            return FakeResponse()
+
+        opener = mock.Mock()
+        opener.open.side_effect = fake_open
+        with mock.patch("urllib.request.build_opener", return_value=opener):
+            usage = codex_usage.fetch_usage(auth)
+
+        self.assertEqual(captured["url"], "https://chatgpt.com/backend-api/wham/usage")
+        self.assertEqual(captured["timeout"], 20)
+        self.assertTrue(captured["authorization"].startswith("Bearer "))
+        self.assertEqual(captured["accept"], "application/json")
+        self.assertEqual(captured["account"], "acct-w")
+        self.assertIsNotNone(usage.hourly)
+        self.assertIsNotNone(usage.weekly)
+        self.assertEqual(usage.hourly.percentage, 12)
+        self.assertEqual(usage.hourly.window_minutes, 300)
+        self.assertEqual(usage.hourly.reset_time, 1_800_000_000)
+        self.assertEqual(usage.weekly.percentage, 34)
+        self.assertEqual(usage.weekly.window_minutes, 10_080)
+
+    def test_snapshot_classifies_weekly_only_primary_window_by_duration(self):
+        # Live-account case: the usage API returned only a 7-day window as
+        # primary_window with no secondary_window at all. Positional mapping
+        # would put it in the 5H slot; duration-based classification must
+        # route it to the weekly slot instead.
+        payload = {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 58,
+                    "limit_window_seconds": 604_800,
+                    "reset_after_seconds": 3_600,
+                },
+            }
+        }
+        snapshot = codex_usage._snapshot(payload)
+        self.assertIsNone(snapshot.hourly)
+        self.assertIsNotNone(snapshot.weekly)
+        self.assertEqual(snapshot.weekly.percentage, 58)
+        self.assertEqual(codex_usage.format_usage_window(snapshot.hourly, "5h"), "-")
+        self.assertRegex(
+            codex_usage.format_usage_window(snapshot.weekly, "1week"),
+            r"^\d+% · \d+d \d+h \d+m$",
+        )
+
+    def test_snapshot_classifies_hourly_primary_weekly_secondary_by_duration(self):
+        # Assumed ordering (primary=hourly, secondary=weekly) still maps
+        # correctly when both windows carry a known duration.
+        payload = {
+            "rate_limit": {
+                "primary_window": {"used_percent": 12, "limit_window_seconds": 18_000},
+                "secondary_window": {"used_percent": 34, "limit_window_seconds": 604_800},
+            }
+        }
+        snapshot = codex_usage._snapshot(payload)
+        self.assertEqual(snapshot.hourly.percentage, 12)
+        self.assertEqual(snapshot.weekly.percentage, 34)
+
+    def test_snapshot_falls_back_to_position_when_duration_missing(self):
+        # limit_window_seconds absent on both windows -- duration can't
+        # classify them, so it falls back to the positional assumption.
+        payload = {
+            "rate_limit": {
+                "primary_window": {"used_percent": 12},
+                "secondary_window": {"used_percent": 34},
+            }
+        }
+        snapshot = codex_usage._snapshot(payload)
+        self.assertEqual(snapshot.hourly.percentage, 12)
+        self.assertEqual(snapshot.weekly.percentage, 34)
+
+    def test_fetch_usage_reports_error_without_raising(self):
+        auth = self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+        opener = mock.Mock()
+        opener.open.side_effect = OSError("offline")
+        with mock.patch("urllib.request.build_opener", return_value=opener):
+            usage = codex_usage.fetch_usage(auth)
+        self.assertEqual(usage.error, "network error")
+
+    def test_fetch_usage_does_not_follow_redirects_with_bearer_token(self):
+        auth = self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+        err = urllib.error.HTTPError(
+            codex_usage.USAGE_URL,
+            302,
+            "Found",
+            {"Location": "https://example.invalid/steal"},
+            io.BytesIO(b""),
+        )
+        opener = mock.Mock()
+        opener.open.side_effect = err
+        with mock.patch("urllib.request.build_opener", return_value=opener) as build_opener:
+            usage = codex_usage.fetch_usage(auth)
+
+        self.assertEqual(usage.error, "HTTP 302 from usage endpoint")
+        self.assertIs(build_opener.call_args.args[0], codex_usage._NoRedirectHandler)
+
+    def test_fetch_usage_treats_window_without_used_percent_as_unknown(self):
+        auth = self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+
+        class FakeResponse:
+            def read(self):
+                return json.dumps(
+                    {"rate_limit": {"primary_window": {"limit_window_seconds": 18_000}}}
+                ).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        opener = mock.Mock()
+        opener.open.return_value = FakeResponse()
+        with mock.patch("urllib.request.build_opener", return_value=opener):
+            usage = codex_usage.fetch_usage(auth)
+
+        self.assertIsNone(usage.hourly)
+        self.assertEqual(codex_usage.format_usage_window(usage.hourly, "5h"), "-")
+
+    def test_usage_window_formats_reset_countdown_5h(self):
+        window = codex_usage.UsageWindow(
+            percentage=50,
+            reset_time=1_800_000_000,
+            window_minutes=300,
+        )
+        with mock.patch.object(codex_usage.time, "time", return_value=1_799_982_480):
+            self.assertEqual(codex_usage.format_usage_window(window, "5h"), "50% · 4h 52m")
+
+    def test_usage_window_formats_reset_countdown_1week(self):
+        window = codex_usage.UsageWindow(
+            percentage=58,
+            reset_time=1_800_000_000,
+            window_minutes=10_080,
+        )
+        with mock.patch.object(codex_usage.time, "time", return_value=1_799_902_500):
+            self.assertEqual(codex_usage.format_usage_window(window, "1week"), "58% · 1d 3h 5m")
+
+    def test_usage_window_shows_zero_units(self):
+        window_5h = codex_usage.UsageWindow(percentage=0, reset_time=1_800_000_120, window_minutes=300)
+        window_1w = codex_usage.UsageWindow(percentage=0, reset_time=1_800_003_600, window_minutes=10_080)
+        with mock.patch.object(codex_usage.time, "time", return_value=1_800_000_000):
+            self.assertEqual(codex_usage.format_usage_window(window_5h, "5h"), "0% · 0h 2m")
+            self.assertEqual(codex_usage.format_usage_window(window_1w, "1week"), "0% · 0d 1h 0m")
+
+    def test_usage_cell_matches_required_shape_with_ansi_stripped(self):
+        window_5h = codex_usage.UsageWindow(percentage=58, reset_time=1_800_000_000, window_minutes=300)
+        window_1w = codex_usage.UsageWindow(percentage=58, reset_time=1_800_000_000, window_minutes=10_080)
+        with mock.patch.object(codex_usage.time, "time", return_value=1_799_982_480):
+            cell_5h = ca._ANSI_RE.sub("", ca._usage_cell(window_5h, "5h"))
+            cell_1w = ca._ANSI_RE.sub("", ca._usage_cell(window_1w, "1week"))
+        self.assertRegex(cell_5h, r"^\d+% · \d+h \d+m$")
+        self.assertRegex(cell_1w, r"^\d+% · \d+d \d+h \d+m$")
+
+    def test_usage_cell_colors_percent_thresholds(self):
+        low = codex_usage.UsageWindow(percentage=0, reset_time=None, window_minutes=300)
+        mid = codex_usage.UsageWindow(percentage=50, reset_time=None, window_minutes=300)
+        high = codex_usage.UsageWindow(percentage=80, reset_time=None, window_minutes=300)
+
+        self.assertIn(ca.GREEN, ca._usage_cell(low, "5h"))
+        self.assertIn(ca.YELLOW, ca._usage_cell(mid, "5h"))
+        self.assertIn(ca.RED, ca._usage_cell(high, "5h"))
+
+    def test_list_includes_usage_columns(self):
+        self.write_auth(_auth_payload("acct-w", "w@x.com"))
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+        usage = codex_usage.UsageSnapshot(
+            hourly=codex_usage.UsageWindow(percentage=12, reset_time=1_800_000_000, window_minutes=300),
+            weekly=codex_usage.UsageWindow(percentage=34, reset_time=1_800_003_600, window_minutes=10_080),
+            refreshed_at=1_700_000_000,
+            error=None,
+        )
+
+        out = io.StringIO()
+        with mock.patch.object(codex_usage, "fetch_usage", return_value=usage), \
+                redirect_stdout(out), redirect_stderr(io.StringIO()):
+            with mock.patch.object(codex_usage.time, "time", return_value=1_799_982_480):
+                rc = ca.cmd_list()
+
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("5H USED", text)
+        self.assertIn("1W USED", text)
+        self.assertIn("UPDATED", text)
+        self.assertIn("12%", text)
+        self.assertIn("34%", text)
+        self.assertIn("4h 52m", text)
+        self.assertIn("0d 5h 52m", text)
+
+    def test_active_row_fetches_usage_from_live_auth_file(self):
+        self.write_auth(_auth_payload("acct-a", "a@x.com"))
+        active_profile = self.write_profile("active", _auth_payload("acct-a", "a@x.com"))
+        other_profile = self.write_profile("other", _auth_payload("acct-b", "b@x.com"))
+
+        calls = []
+
+        def fake_fetch_usage(path):
+            calls.append(path)
+            return codex_usage.UsageSnapshot(hourly=None, weekly=None, refreshed_at=None, error=None)
+
+        with mock.patch.object(codex_usage, "fetch_usage", side_effect=fake_fetch_usage):
+            rc = self.run_quiet(ca.cmd_list)
+
+        self.assertEqual(rc, 0)
+        self.assertIn(ca._auth_file(), calls)
+        self.assertIn(other_profile, calls)
+        self.assertNotIn(active_profile, calls)
+
+    def test_refresh_all_summary_does_not_fetch_usage(self):
+        self.write_profile("a", _auth_payload("acct-a", "a@x.com"))
+        new = {"access_token": _jwt({"exp": int(time.time()) + 864000})}
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(new, None)), \
+                mock.patch.object(codex_usage, "fetch_usage") as fetch_usage:
+            rc = self.run_quiet(ca.cmd_refresh, "--all")
+
+        self.assertEqual(rc, 0)
+        fetch_usage.assert_not_called()
 
 
 class SwitchStalenessTests(_CodexHomeMixin):
@@ -297,6 +731,27 @@ class SwitchStalenessTests(_CodexHomeMixin):
         self.assertEqual(rc, 0)
         auth = json.loads((self.home / "auth.json").read_text())
         self.assertEqual(auth["tokens"]["account_id"], "acct-p")
+
+    def test_switch_folds_back_keychain_live_tokens_not_stale_auth_json(self):
+        # codex rotated the refresh_token in the keychain only; auth.json on
+        # disk is stale. The outgoing profile must capture the live keychain
+        # tokens, not the stale file bytes.
+        work_profile = self.write_profile(
+            "work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-profile-old")
+        )
+        self.write_auth(_auth_payload("acct-w", "w@x.com", refresh_token="rt-file-stale"))
+        self.write_profile("personal", _auth_payload("acct-p", "p@x.com"))
+        live = json.dumps(_auth_payload("acct-w", "w@x.com", refresh_token="rt-keychain-live"))
+
+        with mock.patch.object(ca, "have", return_value=False), \
+                mock.patch.object(ca, "_read_keychain_auth", return_value=live), \
+                mock.patch.object(ca, "_write_keychain_auth", return_value=True):
+            rc = self.run_quiet(ca.cmd_switch, "personal")
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(work_profile.read_text())["tokens"]["refresh_token"], "rt-keychain-live"
+        )
 
 
 class SwitchExpiredFallbackTests(_CodexHomeMixin):
@@ -443,6 +898,23 @@ class KeychainMirrorTests(_CodexHomeMixin):
                 mock.patch.object(ca, "_write_keychain_auth", return_value=True) as write_kc:
             self.run_quiet(ca.cmd_refresh, "work")
         write_kc.assert_not_called()
+
+    def test_refresh_profile_active_syncback_mirrors_into_keychain(self):
+        # Direction here is profile → active: "work" is refreshed from its own
+        # saved refresh_token, then folded into the currently-active auth.json
+        # (same account). Those rotated tokens must land in the keychain too.
+        self.write_auth(_auth_payload("acct-w", "w@x.com"))
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-old"))
+        new = {"access_token": _jwt({"exp": int(time.time()) + 864000}), "refresh_token": "rt-new"}
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(new, None)), \
+                mock.patch.object(ca, "_read_keychain_auth", return_value="{}"), \
+                mock.patch.object(ca, "_write_keychain_auth", return_value=True) as write_kc:
+            rc = self.run_quiet(ca.cmd_refresh, "work")
+
+        self.assertEqual(rc, 0)
+        write_kc.assert_called_once()
+        written = json.loads(write_kc.call_args.args[0])
+        self.assertEqual(written["tokens"]["refresh_token"], "rt-new")
 
     def test_read_active_claims_prefers_keychain_over_auth_json(self):
         # auth.json says acct-file, keychain says acct-kc → codex uses keychain.

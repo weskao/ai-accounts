@@ -22,6 +22,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import codex_usage
 from ._utils import DIM, GREEN, RED, RESET, YELLOW, ensure_tool, have, log_red, log_yellow
 
 BOLD = "\033[1m"
@@ -35,7 +36,7 @@ USAGE
   codex-accounts who                   Show the current logged-in Codex account
   codex-accounts current               Alias for `who`
   codex-accounts save <name>           Save the current login as a reusable profile
-  codex-accounts list                  List saved profiles (table view)
+  codex-accounts list                  List saved profiles with live 5h/1week usage
   codex-accounts switch <name>         Switch to a saved profile
   codex-accounts remove <name>         Delete a saved profile
   codex-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
@@ -273,6 +274,41 @@ def _read_active_claims() -> dict | None:
     return _read_claims(_auth_file())
 
 
+def _read_active_auth_text() -> str | None:
+    """Raw active-auth JSON text, byte-level mirror of _read_active_claims:
+    keychain-first (codex's real source of truth on macOS), falling back to
+    auth.json when no keychain item exists or its content isn't valid JSON.
+    Persist paths should copy this instead of auth.json bytes directly, or a
+    keychain-only token rotation gets silently discarded into a stale profile."""
+    secret = _read_keychain_auth()
+    if secret:
+        try:
+            json.loads(secret)
+        except ValueError:
+            secret = None
+    if secret:
+        return secret
+    auth_path = _auth_file()
+    if not auth_path.is_file():
+        return None
+    try:
+        return auth_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _copy_active_auth_to(dest: Path) -> None:
+    """Copy the active auth (keychain-first, same source order as
+    _read_active_auth_text) to dest. Falls back to a plain auth.json file
+    copy if the active auth can't be read as text at all."""
+    text = _read_active_auth_text()
+    if text is not None:
+        dest.write_text(text, encoding="utf-8")
+    else:
+        shutil.copy2(_auth_file(), dest)
+    dest.chmod(0o600)
+
+
 def _identity_label(claims: dict | None) -> str:
     if not claims:
         return "(unreadable)"
@@ -300,6 +336,19 @@ def _expiry_status(claims: dict | None) -> tuple[str, str]:
     if exp - now < 24 * 3600:
         return f"{claims['expires_str']} (soon)", YELLOW
     return claims["expires_str"], GREEN
+
+
+def _list_expiry_status(claims: dict | None) -> tuple[str, str]:
+    if not claims or not claims.get("expires_epoch"):
+        return "—", DIM
+    now = datetime.now().timestamp()
+    exp = claims["expires_epoch"]
+    text = codex_usage.format_unix_time_compact(int(exp))
+    if exp <= now:
+        return f"{text} expired", RED
+    if exp - now < 24 * 3600:
+        return f"{text} soon", YELLOW
+    return text, GREEN
 
 
 def _token_expired_or_soon(claims: dict | None) -> bool:
@@ -372,21 +421,40 @@ def _apply_refreshed_tokens(path: Path, refreshed: dict) -> None:
     _mirror_active_auth_to_keychain(path)
 
 
-def _refresh_file(path: Path, label: str) -> dict | None:
-    """Refresh the tokens stored in one auth-format file. Returns the OAuth
-    response on success (so callers can propagate it), None on failure."""
+def _is_revoked_error(error: str | None) -> bool:
+    """True when the token endpoint outright rejected the refresh_token (HTTP
+    4xx) — a genuine revocation, as opposed to a transient network/server
+    hiccup (URLError, HTTP 5xx, timeout)."""
+    return (error or "").startswith("HTTP 4")
+
+
+def _refresh_file(path: Path, label: str, relogin_hint: str | None = None) -> tuple[dict | None, str | None]:
+    """Refresh the tokens stored in one auth-format file.
+
+    Returns (response, None) on success. On failure returns (None, kind):
+    kind is "revoked" when the refresh_token is missing or was rejected
+    outright (HTTP 4xx) — only a fresh login helps — or "transient" for a
+    network/server hiccup (URLError, HTTP 5xx, timeout) — safe to retry later.
+    relogin_hint overrides the default per-profile guidance (the active auth
+    isn't a profile name, so `login-switch {label}` would be nonsensical there).
+    """
+    hint = relogin_hint or f"Re-login with: codex-accounts login-switch {label}"
     refresh_token = _read_refresh_token(path)
     if not refresh_token:
         log_red(f"❌ No refresh_token found in {label}")
-        log_yellow(f"   Re-login with: codex-accounts login-switch {label}")
-        return None
+        log_yellow(f"   {hint}")
+        return None, "revoked"
     refreshed, error = _oauth_refresh(refresh_token)
     if refreshed is None:
+        if _is_revoked_error(error):
+            log_red(f"❌ Refresh token revoked/dead for {label}: {error}")
+            log_yellow(f"   {hint}")
+            return None, "revoked"
         log_red(f"❌ Refresh failed for {label}: {error}")
-        log_yellow(f"   If the refresh token is dead, run: codex-accounts login-switch {label}")
-        return None
+        log_yellow("   Token endpoint unreachable — retry later.")
+        return None, "transient"
     _apply_refreshed_tokens(path, refreshed)
-    return refreshed
+    return refreshed, None
 
 
 def _matching_profile(auth_path: Path) -> Path | None:
@@ -426,7 +494,7 @@ def _recover_switched_auth(auth_path: Path, profile_file: Path, name: str) -> in
             return 0
         # Only a genuine auth rejection (4xx) means the refresh_token is dead;
         # network errors and 5xx are transient and must not pop a browser.
-        if not (error or "").startswith("HTTP 4"):
+        if not _is_revoked_error(error):
             log_yellow(f"⚠️  Could not refresh after switch ({error}); codex will retry on next use.")
             return 0
 
@@ -473,9 +541,32 @@ def _claims_lines(claims: dict | None) -> list[str]:
     return lines
 
 
+def _short_id(value: str | None) -> str:
+    if not value:
+        return f"{DIM}—{RESET}"
+    if len(value) <= 14:
+        return value
+    return f"{value[:8]}…{value[-4:]}"
+
+
+def _usage_color(percentage: int) -> str:
+    if percentage >= 80:
+        return RED + BOLD
+    if percentage >= 50:
+        return YELLOW
+    return GREEN
+
+
+def _usage_cell(window: codex_usage.UsageWindow | None, window_kind: str) -> str:
+    if window is None:
+        return f"{DIM}—{RESET}"
+    percent = f"{_usage_color(window.percentage)}{window.percentage}%{RESET}"
+    return codex_usage.format_usage_window(window, window_kind, percent)
+
+
 def _print_accounts_table(rows: list[dict]) -> None:
-    headers = ["PROFILE", "ACCOUNT", "ACCOUNT ID", "EXPIRES", "STATUS"]
-    keys = ["profile", "account", "account_id", "expires", "status"]
+    headers = ["PROFILE", "ACCOUNT", "ID", "5H USED", "1W USED", "UPDATED", "AUTH", "STATE"]
+    keys = ["profile", "account", "account_id", "usage_5h", "usage_1week", "usage_updated", "expires", "status"]
     widths = [
         max(_visible_len(h), max((_visible_len(r[k]) for r in rows), default=0))
         for h, k in zip(headers, keys)
@@ -518,16 +609,23 @@ def cmd_save(name: str) -> int:
     if profile_file is None:
         return 1
 
-    auth_path = _auth_file()
-    if not auth_path.is_file():
-        log_red(f"❌ No Codex auth file found: {auth_path}")
+    # Keychain-first: codex may have rotated tokens (e.g. a fresh browser
+    # login) into the keychain only, leaving auth.json stale. Persisting from
+    # auth.json bytes would silently save the stale copy — see module notes.
+    auth_text = _read_active_auth_text()
+    if auth_text is None:
+        log_red(f"❌ No Codex auth file found: {_auth_file()}")
         log_yellow("   Run: codex login")
         return 1
 
     _account_dir().mkdir(parents=True, exist_ok=True)
-    shutil.copy2(auth_path, profile_file)
+    profile_file.write_text(auth_text, encoding="utf-8")
     _account_dir().chmod(0o700)
     profile_file.chmod(0o600)
+
+    # Rewrite auth.json from the same content so file and keychain agree.
+    _auth_file().write_text(auth_text, encoding="utf-8")
+    _auth_file().chmod(0o600)
 
     print(f"{GREEN}✅ Saved Codex profile:{RESET} {BOLD}{name}{RESET}")
     print(f"{DIM}   → {profile_file}{RESET}\n")
@@ -535,7 +633,7 @@ def cmd_save(name: str) -> int:
     return 0
 
 
-def cmd_list() -> int:
+def cmd_list(*, fetch_usage: bool = True) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
@@ -550,12 +648,20 @@ def cmd_list() -> int:
         name = profile_path.stem
         claims = _read_claims(profile_path)
         is_active = active_key is not None and _identity_key(claims) == active_key
-        expires_text, color = _expiry_status(claims)
+        expires_text, color = _list_expiry_status(claims)
+        usage = (
+            codex_usage.fetch_usage(_auth_file() if is_active else profile_path)
+            if fetch_usage
+            else codex_usage.UsageSnapshot(hourly=None, weekly=None, refreshed_at=None, error=None)
+        )
         rows.append(
             {
                 "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
                 "account": _identity_label(claims) if claims else f"{RED}(unreadable){RESET}",
-                "account_id": (claims or {}).get("account_id") or f"{DIM}—{RESET}",
+                "account_id": _short_id((claims or {}).get("account_id")),
+                "usage_5h": _usage_cell(usage.hourly, "5h"),
+                "usage_1week": _usage_cell(usage.weekly, "1week"),
+                "usage_updated": codex_usage.format_refreshed_at(usage),
                 "expires": f"{color}{expires_text}{RESET}",
                 "status": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
             }
@@ -590,8 +696,7 @@ def cmd_switch(name: str) -> int:
         # idempotent. Pure local file op; no network.
         outgoing_profile = _matching_profile(auth_path)
         if outgoing_profile is not None:
-            shutil.copy2(auth_path, outgoing_profile)
-            outgoing_profile.chmod(0o600)
+            _copy_active_auth_to(outgoing_profile)
 
         backup_path = auth_path.with_name(f"{auth_path.name}.backup")
         shutil.copy2(auth_path, backup_path)
@@ -631,24 +736,29 @@ def cmd_remove(name: str) -> int:
     return 0
 
 
-def _refresh_one_profile(name: str) -> int:
+def _refresh_one_profile(name: str) -> tuple[int, str | None]:
+    """Refresh one saved profile. Returns (exit_code, failure_kind) — kind is
+    None on success, else "revoked" or "transient" (see _refresh_file)."""
     profile_file = _profile_file(name)
     if profile_file is None:
-        return 1
+        return 1, None
     if not profile_file.is_file():
         log_red(f"❌ Profile not found: {name}")
         print()
         cmd_list()
-        return 1
+        return 1, None
 
-    refreshed = _refresh_file(profile_file, name)
+    refreshed, kind = _refresh_file(profile_file, name)
     if refreshed is None:
-        return 1
+        return 1, kind
 
     print(f"{GREEN}✅ Refreshed Codex profile:{RESET} {BOLD}{name}{RESET}")
 
     # Consistency guard: refresh_token rotation would strand the active login,
     # so mirror the new tokens into auth.json when it is the same account.
+    # _apply_refreshed_tokens also mirrors into the keychain (its own no-op
+    # off macOS / when auth.json isn't the active source), so this keeps
+    # auth.json *and* the keychain in step with the profile's fresh tokens.
     auth_path = _auth_file()
     if auth_path.is_file() and _identity_key(_read_claims(auth_path)) == _identity_key(
         _read_claims(profile_file)
@@ -658,7 +768,7 @@ def _refresh_one_profile(name: str) -> int:
 
     print()
     _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
-    return 0
+    return 0, None
 
 
 def _refresh_all_profiles() -> int:
@@ -668,15 +778,20 @@ def _refresh_all_profiles() -> int:
         log_yellow("⚠️  No saved Codex profiles to refresh.")
         return 0
 
-    failures = []
+    revoked = []
+    transient = []
     for profile_path in profiles:
-        if _refresh_one_profile(profile_path.stem) != 0:
-            failures.append(profile_path.stem)
+        rc, kind = _refresh_one_profile(profile_path.stem)
+        if rc != 0:
+            (revoked if kind == "revoked" else transient).append(profile_path.stem)
         print()
 
-    cmd_list()
-    if failures:
-        log_red(f"❌ Failed to refresh: {', '.join(failures)}")
+    cmd_list(fetch_usage=False)
+    if revoked:
+        log_red(f"❌ Revoked (re-login required): {', '.join(revoked)}")
+    if transient:
+        log_yellow(f"⚠️  Transient failure, retry later: {', '.join(transient)}")
+    if revoked or transient:
         return 1
     print(f"{GREEN}✅ All {len(profiles)} profile(s) refreshed.{RESET}")
     return 0
@@ -689,14 +804,16 @@ def _refresh_active_auth() -> int:
         log_yellow("   Run: codex login")
         return 1
 
-    if _refresh_file(auth_path, "the active auth") is None:
+    refreshed, _kind = _refresh_file(
+        auth_path, "the active auth", relogin_hint="Re-login with: codex login"
+    )
+    if refreshed is None:
         return 1
     print(f"{GREEN}✅ Refreshed active Codex auth.{RESET}")
 
     profile_path = _matching_profile(auth_path)
     if profile_path is not None:
-        shutil.copy2(auth_path, profile_path)
-        profile_path.chmod(0o600)
+        _copy_active_auth_to(profile_path)
         print(f"{DIM}   (synced back to profile: {profile_path.stem}){RESET}")
     else:
         log_yellow("⚠️  No saved profile matches the active account — save one with: codex-accounts save <name>")
@@ -711,7 +828,7 @@ def cmd_refresh(target: str | None) -> int:
         return _refresh_all_profiles()
     if target is None:
         return _refresh_active_auth()
-    return _refresh_one_profile(target)
+    return _refresh_one_profile(target)[0]
 
 
 def cmd_sync() -> int:
@@ -727,8 +844,7 @@ def cmd_sync() -> int:
         log_yellow("   Save it first with: codex-accounts save <name>")
         return 1
 
-    shutil.copy2(auth_path, profile_path)
-    profile_path.chmod(0o600)
+    _copy_active_auth_to(profile_path)
     print(f"{GREEN}✅ Synced active auth → profile:{RESET} {BOLD}{profile_path.stem}{RESET}")
     print()
     _panel(f"Profile: {profile_path.stem}", _claims_lines(_read_claims(profile_path)), accent=GREEN)
