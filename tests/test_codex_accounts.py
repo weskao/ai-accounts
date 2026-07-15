@@ -471,8 +471,11 @@ class RefreshCommandTests(_CodexHomeMixin):
             return None, "HTTP 401"
 
         with mock.patch.object(ca, "_oauth_refresh", side_effect=fake_refresh):
-            rc = self.run_quiet(ca.cmd_refresh, "--all")
+            rc, out, _err = self.run_capture(ca.cmd_refresh, "--all")
         self.assertEqual(rc, 1)  # at least one failure
+        text = ca._ANSI_RE.sub("", out)
+        self.assertIn("Refreshed Codex profile: good", text)
+        self.assertIn("Saved Codex profiles", text)
 
     def test_refresh_all_success(self):
         self.write_profile("a", _auth_payload("acct-a", "a@x.com"))
@@ -480,6 +483,32 @@ class RefreshCommandTests(_CodexHomeMixin):
         with mock.patch.object(ca, "_oauth_refresh", return_value=(new, None)):
             rc = self.run_quiet(ca.cmd_refresh, "--all")
         self.assertEqual(rc, 0)
+
+    def test_refresh_all_prints_profile_panels_then_final_list_table(self):
+        self.write_profile("a", _auth_payload("acct-a", "a@x.com", refresh_token="rt-a"))
+        self.write_profile("b", _auth_payload("acct-b", "b@x.com", refresh_token="rt-b"))
+
+        def refresh(token):
+            account_id = "acct-a" if token == "rt-a" else "acct-b"
+            email = "a-new@x.com" if token == "rt-a" else "b-new@x.com"
+            return {
+                "access_token": _jwt(
+                    {"email": email, "exp": int(time.time()) + 864000, "account_id": account_id}
+                ),
+                "refresh_token": f"{token}-new",
+            }, None
+
+        with mock.patch.object(ca, "_oauth_refresh", side_effect=refresh):
+            rc, out, _err = self.run_capture(ca.cmd_refresh, "--all")
+
+        text = ca._ANSI_RE.sub("", out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(text.startswith("✅ Refreshed Codex profile: a"))
+        self.assertEqual(text.count("Saved Codex profiles"), 1)
+        self.assertIn("Profile: a", text)
+        self.assertIn("Profile: b", text)
+        self.assertIn("a-new@x.com", text)
+        self.assertIn("b-new@x.com", text)
 
     def test_refresh_all_refreshes_same_account_profiles_independently(self):
         # Given: two named profiles share an account ID but have separate token chains.
@@ -1025,15 +1054,31 @@ class UsageRequestTests(_CodexHomeMixin):
         fetch_usage.assert_called_once()
         oauth_refresh.assert_not_called()
 
-    def test_refresh_all_summary_does_not_fetch_usage(self):
+    def test_refresh_all_summary_fetches_current_usage(self):
         self.write_profile("a", _auth_payload("acct-a", "a@x.com"))
         new = {"access_token": _jwt({"exp": int(time.time()) + 864000})}
+        usage = codex_usage.UsageSnapshot(
+            hourly=codex_usage.UsageWindow(
+                percentage=12,
+                reset_time=1_800_000_000,
+                window_minutes=300,
+            ),
+            weekly=codex_usage.UsageWindow(
+                percentage=34,
+                reset_time=1_800_003_600,
+                window_minutes=10_080,
+            ),
+            refreshed_at=1_700_000_000,
+            error=None,
+        )
         with mock.patch.object(ca, "_oauth_refresh", return_value=(new, None)), \
-                mock.patch.object(codex_usage, "fetch_usage") as fetch_usage:
-            rc = self.run_quiet(ca.cmd_refresh, "--all")
+                mock.patch.object(codex_usage, "fetch_usage", return_value=usage) as fetch_usage:
+            rc, out, _err = self.run_capture(ca.cmd_refresh, "--all")
 
         self.assertEqual(rc, 0)
-        fetch_usage.assert_not_called()
+        self.assertIn("12%", out)
+        self.assertIn("34%", out)
+        fetch_usage.assert_called_once()
 
 
 class SwitchStalenessTests(_CodexHomeMixin):

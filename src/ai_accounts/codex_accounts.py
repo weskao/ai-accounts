@@ -944,7 +944,7 @@ def cmd_remove(name: str) -> int:
     return 0
 
 
-def _refresh_one_profile(name: str) -> tuple[int, str | None]:
+def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, str | None]:
     """Refresh one saved profile. Returns (exit_code, failure_kind) — kind is
     None on success, else "revoked" or "transient" (see _refresh_file)."""
     profile_file = _profile_file(name)
@@ -960,12 +960,15 @@ def _refresh_one_profile(name: str) -> tuple[int, str | None]:
     if refreshed is None:
         return 1, kind
 
-    print(f"{GREEN}✅ Refreshed Codex profile:{RESET} {BOLD}{name}{RESET}")
-    if _sync_refreshed_profile(profile_file):
+    if show_summary:
+        print(f"{GREEN}✅ Refreshed Codex profile:{RESET} {BOLD}{name}{RESET}")
+    synced_active = _sync_refreshed_profile(profile_file)
+    if show_summary and synced_active:
         print(f"{DIM}   (same account is active — auth.json updated too){RESET}")
 
-    print()
-    _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+    if show_summary:
+        print()
+        _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
     return 0, None
 
 
@@ -988,9 +991,8 @@ def _refresh_all_profiles() -> int:
         rc, kind = _refresh_one_profile(profile_path.stem)
         if rc != 0:
             (revoked if kind == "revoked" else transient).append(profile_path.stem)
-        print()
 
-    cmd_list(fetch_usage=False)
+    cmd_list()
     if revoked:
         log_red(f"❌ Revoked (re-login required): {', '.join(revoked)}")
     if transient:
