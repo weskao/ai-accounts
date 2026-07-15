@@ -180,6 +180,8 @@ def format_usage_window(window: UsageWindow | None, window_kind: str, percentage
 
 
 def _format_error(error: str) -> str:
+    if error == "re-login required":
+        return "RELOGIN"
     if error.startswith("HTTP "):
         return "ERR " + error.split()[1]
     if error == "network error":
