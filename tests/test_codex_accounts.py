@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import os
+import sys
 import tempfile
 import time
 import unittest
@@ -264,6 +265,43 @@ class SaveCommandTests(_CodexHomeMixin):
         self.assertEqual(rc, 0)
         saved = json.loads((self.home / "accounts" / "newacct.json").read_text())
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-fresh")
+
+    def test_login_switch_cancellation_is_quiet_and_preserves_profiles(self):
+        current = self.write_profile(
+            "current", _auth_payload("acct-old", "old@x.com", refresh_token="rt-current")
+        )
+        self.write_auth(_auth_payload("acct-old", "old@x.com", refresh_token="rt-current"))
+        self.mark_current("current")
+
+        with mock.patch.object(ca, "ensure_tool", return_value=True), \
+                mock.patch.object(ca, "_read_keychain_auth", return_value=None), \
+                mock.patch.object(ca.subprocess, "run", side_effect=KeyboardInterrupt):
+            rc, _out, err = self.run_capture(ca.cmd_login_switch, "newacct")
+
+        self.assertEqual(rc, 130)
+        self.assertIn("Login cancelled", err)
+        self.assertEqual(json.loads(current.read_text())["tokens"]["refresh_token"], "rt-current")
+        self.assertFalse((self.home / "accounts" / "newacct.json").exists())
+
+    def test_login_switch_restores_control_character_echo_after_cancellation(self):
+        terminal = mock.Mock()
+        terminal.fileno.return_value = 5
+        termios = mock.Mock(ECHOCTL=0x40, TCSANOW=0)
+        original = [0, 0, 0, 0x40, 0, 0, []]
+        termios.tcgetattr.return_value = original
+
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=None), \
+                mock.patch.object(ca.sys, "stdin", terminal), \
+                mock.patch.object(ca.os, "isatty", return_value=True), \
+                mock.patch.dict(sys.modules, {"termios": termios}), \
+                mock.patch.object(ca.subprocess, "run", side_effect=KeyboardInterrupt):
+            rc = self.run_quiet(ca._run_isolated_login)
+
+        self.assertEqual(rc, (None, 130))
+        self.assertEqual(
+            termios.tcsetattr.call_args_list,
+            [mock.call(5, 0, [0, 0, 0, 0, 0, 0, []]), mock.call(5, 0, original)],
+        )
 
     def test_login_switch_fresh_file_login_beats_stale_keychain_and_updates_it(self):
         # The observed live disaster: `codex login` wrote the fresh login to

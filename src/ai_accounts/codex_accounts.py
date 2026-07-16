@@ -9,6 +9,7 @@ token expires). Never prints raw tokens — only decoded, non-secret claims.
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -1059,6 +1060,32 @@ def cmd_sync() -> int:
     return 0
 
 
+@contextmanager
+def _suppress_interrupt_echo():
+    try:
+        import termios
+
+        fd = sys.stdin.fileno()
+        if not os.isatty(fd) or not hasattr(termios, "ECHOCTL"):
+            yield
+            return
+        original = termios.tcgetattr(fd)
+        if not original[3] & termios.ECHOCTL:
+            yield
+            return
+        quiet = original.copy()
+        quiet[3] &= ~termios.ECHOCTL
+        termios.tcsetattr(fd, termios.TCSANOW, quiet)
+    except (ImportError, OSError):
+        yield
+        return
+
+    try:
+        yield
+    finally:
+        termios.tcsetattr(fd, termios.TCSANOW, original)
+
+
 def _run_isolated_login() -> tuple[str | None, int]:
     with tempfile.TemporaryDirectory(prefix="codex-accounts-login-") as temp_dir:
         login_home = Path(temp_dir)
@@ -1066,10 +1093,15 @@ def _run_isolated_login() -> tuple[str | None, int]:
         env["CODEX_HOME"] = str(login_home)
         env.pop("CODEX_ACCOUNT_DIR", None)
         env.pop("CODEX_AUTH_JSON", None)
-        login = subprocess.run(
-            ["codex", "login", "-c", 'cli_auth_credentials_store="file"'],
-            env=env,
-        )
+        try:
+            with _suppress_interrupt_echo():
+                login = subprocess.run(
+                    ["codex", "login", "-c", 'cli_auth_credentials_store="file"'],
+                    env=env,
+                )
+        except KeyboardInterrupt:
+            log_yellow("Login cancelled. Your current profile was not changed.")
+            return None, 130
         if login.returncode != 0:
             log_red("❌ codex login did not complete successfully")
             return None, login.returncode
