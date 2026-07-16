@@ -1,3 +1,20 @@
+## [0.5.1] - 2026-07-16
+
+### 🐛 Bug Fixes
+
+- **codex_accounts:** Stabilize profile switching
+- **codex-accounts:** Refresh current usage
+- **codex-accounts:** Quiet cancelled login
+
+### 📚 Documentation
+
+- Update codex accounts list example
+- **readme:** Fix demo lab duration
+- **readme:** Clarify codex-accounts profiles
+
+### ⚙️ Miscellaneous Tasks
+
+- **dev:** Add lint and type tools
 ## [0.5.0] - 2026-07-11
 
 ### 🚀 Features
@@ -26,6 +43,7 @@
 - Sync uv.lock to version 0.4.0
 - Ignore claude installer state
 - Ignore claude skills directory
+- **release:** Bump version to 0.5.0
 ## [0.4.0] - 2026-07-01
 
 ### 🚀 Features
