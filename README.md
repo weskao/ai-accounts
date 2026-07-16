@@ -408,7 +408,7 @@ Saved Codex profiles  (4)
 ├────────────┼─────────────────────────────────────┼───────────────┼─────────┼────────────────────┼─────────┼──────────────┼────────┤
 │ demo-main  │ Alex Example <alex@example.test>    │ 71b55315…61bc │ —       │  97% ·  2d  5h 27m │ 11:39   │ Jul 26 04:44 │ —      │
 │ demo-work  │ Casey Demo <casey@example.test>     │ 4847e557…c28d │ —       │  18% ·  6d  6h 59m │ 11:39   │ Jul 26 04:44 │ ACTIVE │
-│ demo-lab   │ Jordan Sample <jordan@example.test> │ d933c962…c400 │ —       │  90% · 23d  3h  9m │ 11:39   │ Jul 26 04:44 │ —      │
+│ demo-lab   │ Jordan Sample <jordan@example.test> │ d933c962…c400 │ —       │  90% ·  3d  3h  9m │ 11:39   │ Jul 26 04:44 │ —      │
 │ demo-alt   │ Taylor Test <taylor@example.test>   │ cb0a5a64…45dc │ —       │ 100% ·  2d 14h  2m │ 11:39   │ Jul 26 04:44 │ —      │
 └────────────┴─────────────────────────────────────┴───────────────┴─────────┴────────────────────┴─────────┴──────────────┴────────┘
 ```
