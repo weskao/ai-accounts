@@ -1,3 +1,8 @@
+## [0.6.0] - 2026-07-16
+
+### 🚀 Features
+
+- **codex-accounts:** Add interactive switch
 ## [0.5.1] - 2026-07-16
 
 ### 🐛 Bug Fixes
@@ -11,6 +16,7 @@
 - Update codex accounts list example
 - **readme:** Fix demo lab duration
 - **readme:** Clarify codex-accounts profiles
+- **changelog:** Release v0.5.1
 
 ### ⚙️ Miscellaneous Tasks
 
