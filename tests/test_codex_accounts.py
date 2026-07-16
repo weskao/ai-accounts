@@ -1119,6 +1119,53 @@ class UsageRequestTests(_CodexHomeMixin):
         fetch_usage.assert_called_once()
 
 
+class InteractiveSwitchTests(_CodexHomeMixin):
+    def test_selects_valid_profile_by_number(self):
+        # Given: two valid profiles plus expired and unreadable profiles.
+        self.write_profile("personal", _auth_payload("acct-p", "p@x.com"))
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+        self.write_profile("expired", _auth_payload("acct-e", "e@x.com", expires_in=-3600))
+        self.write_profile("broken", {"tokens": {}})
+
+        # When: the user selects the second displayed valid profile.
+        with mock.patch("builtins.input", return_value="2"), mock.patch.object(
+            ca, "cmd_switch", return_value=0
+        ) as switch:
+            rc, out, _err = self.run_capture(ca.cmd_switch_interactive)
+
+        # Then: only valid profiles are offered and the selected profile is switched.
+        self.assertEqual(rc, 0)
+        self.assertIn("1) personal", out)
+        self.assertIn("2) work", out)
+        self.assertNotIn("expired", out)
+        self.assertNotIn("broken", out)
+        switch.assert_called_once_with("work")
+
+    def test_rejects_selection_outside_valid_profile_range(self):
+        # Given: one valid profile.
+        self.write_profile("personal", _auth_payload("acct-p", "p@x.com"))
+
+        # When: the user enters an unavailable number.
+        with mock.patch("builtins.input", return_value="2"), mock.patch.object(
+            ca, "cmd_switch", return_value=0
+        ) as switch:
+            rc = self.run_quiet(ca.cmd_switch_interactive)
+
+        # Then: no switch occurs.
+        self.assertEqual(rc, 1)
+        switch.assert_not_called()
+
+    def test_switch_without_name_opens_interactive_selection(self):
+        # Given: the switch command has no explicit profile name.
+        with mock.patch.object(ca, "cmd_switch_interactive", return_value=0) as interactive:
+            # When: the command is dispatched.
+            rc = ca.main(["switch"])
+
+        # Then: the interactive selector handles it.
+        self.assertEqual(rc, 0)
+        interactive.assert_called_once_with()
+
+
 class SwitchStalenessTests(_CodexHomeMixin):
     """switch must not restore tokens codex has already rotated away.
 

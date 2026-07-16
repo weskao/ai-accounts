@@ -44,7 +44,7 @@ USAGE
   codex-accounts current               Alias for `who`
   codex-accounts save <name>           Save the current login as a reusable profile
   codex-accounts list                  List profiles with usage (never refreshes tokens)
-  codex-accounts switch <name>         Switch to a saved profile
+  codex-accounts switch [<name>]       Switch by name; no name = interactive picker
   codex-accounts remove <name>         Delete a saved profile
   codex-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
                                        no name = refresh active auth + sync it back
@@ -57,6 +57,7 @@ EXAMPLES
   codex-accounts login-switch personal
   codex-accounts login-switch work
   codex-accounts list
+  codex-accounts switch
   codex-accounts switch personal
   codex-accounts refresh --all
   codex-accounts who
@@ -930,6 +931,41 @@ def cmd_switch(name: str) -> int:
     return cmd_who()
 
 
+def cmd_switch_interactive() -> int:
+    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
+    now = datetime.now().timestamp()
+    valid_profiles = []
+    for profile in profiles:
+        claims = _read_claims(profile)
+        expires_epoch = claims.get("expires_epoch") if claims else None
+        if expires_epoch is not None and expires_epoch > now:
+            valid_profiles.append((profile, claims))
+
+    if not valid_profiles:
+        log_yellow("⚠️  No unexpired Codex profiles available to switch.")
+        return 1
+
+    print(f"{BOLD}Choose a Codex profile:{RESET}")
+    for index, (profile, claims) in enumerate(valid_profiles, start=1):
+        print(f"  {index}) {profile.stem}  {DIM}{_identity_label(claims)}{RESET}")
+
+    try:
+        selection = input("Select account number: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        log_yellow("Switch cancelled.")
+        return 1
+
+    if not selection.isdecimal():
+        log_red("❌ Enter one of the account numbers shown above.")
+        return 1
+    selected_index = int(selection) - 1
+    if selected_index < 0 or selected_index >= len(valid_profiles):
+        log_red("❌ Enter one of the account numbers shown above.")
+        return 1
+    return cmd_switch(valid_profiles[selected_index][0].stem)
+
+
 def cmd_remove(name: str) -> int:
     profile_file = _profile_file(name)
     if profile_file is None:
@@ -1147,10 +1183,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_list()
     if command == "switch":
         if not rest:
-            log_red("Usage: codex-accounts switch <profile_name>")
-            print()
-            cmd_list()
-            return 1
+            return cmd_switch_interactive()
         return cmd_switch(rest[0])
     if command == "remove":
         if not rest:
