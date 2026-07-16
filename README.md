@@ -398,8 +398,21 @@ codex-accounts who                     # confirm which account is currently acti
 
 ### codex-accounts Output
 
-- `list` renders a bordered table (Profile / Account / Account ID / Expires / Status) with the
-  currently active profile highlighted in green and marked `ACTIVE`.
+- `list` renders a bordered table with usage, refresh time, auth expiry, and active state:
+
+```text
+❯ codex-accounts list
+Saved Codex profiles  (4)
+┌────────────┬─────────────────────────────────────┬───────────────┬─────────┬────────────────────┬─────────┬──────────────┬────────┐
+│ PROFILE    │ ACCOUNT                             │ ID            │ 5H USED │ 1W USED            │ UPDATED │ AUTH         │ STATE  │
+├────────────┼─────────────────────────────────────┼───────────────┼─────────┼────────────────────┼─────────┼──────────────┼────────┤
+│ demo-main  │ Alex Example <alex@example.test>    │ 71b55315…61bc │ —       │  97% ·  2d  5h 27m │ 11:39   │ Jul 26 04:44 │ —      │
+│ demo-work  │ Casey Demo <casey@example.test>     │ 4847e557…c28d │ —       │  18% ·  6d  6h 59m │ 11:39   │ Jul 26 04:44 │ ACTIVE │
+│ demo-lab   │ Jordan Sample <jordan@example.test> │ d933c962…c400 │ —       │  90% · 23d  3h  9m │ 11:39   │ Jul 26 04:44 │ —      │
+│ demo-alt   │ Taylor Test <taylor@example.test>   │ cb0a5a64…45dc │ —       │ 100% ·  2d 14h  2m │ 11:39   │ Jul 26 04:44 │ —      │
+└────────────┴─────────────────────────────────────┴───────────────┴─────────┴────────────────────┴─────────┴──────────────┴────────┘
+```
+
 - `who` and `switch` render a bordered "Current Auth Claims" panel; expiry is color-coded
   (green = valid, yellow = expiring within 24h, red = `EXPIRED`) with the state also spelled
   out in text, not color alone.
