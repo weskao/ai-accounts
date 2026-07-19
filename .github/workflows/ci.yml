@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          python-version: "3.10"
+      - run: uv sync --locked
+      - run: uv run pytest
+      - run: uv build
+      - run: uv run gtrans --help
+      - run: uv run charcount --help
+      - run: uv run imgmin --help
+      - run: uv run resize-image --help
+      - run: uv run towebp --help
+      - run: uv run html2md --help
+      - run: uv run vcadd --help
+      - run: uv run codex-accounts --help
+      - run: uv run agy-accounts --help

@@ -13,12 +13,17 @@ from contextlib import redirect_stderr
 from unittest import mock
 
 from ai_accounts import _utils as u
+from ai_accounts import gemini_accounts as ga
+from ai_accounts import gemini_usage as gu
+from ai_accounts import vcadd
 
 
 class _PlatformMixin:
     """Force a given platform by patching the module-level OS flags."""
 
     def force_platform(self, *, macos=False, windows=False, linux=False):
+        if not isinstance(self, unittest.TestCase):
+            raise TypeError("platform mixin requires unittest.TestCase")
         patches = [
             mock.patch.object(u, "IS_MACOS", macos),
             mock.patch.object(u, "IS_WINDOWS", windows),
@@ -138,6 +143,39 @@ class EnsureToolTests(_PlatformMixin, unittest.TestCase):
     def test_unknown_package_has_generic_hint(self):
         self.force_platform(linux=True)
         self.assertIn("package manager", u._install_hint("totally-unknown-tool"))
+
+
+class PlatformLimitedCommandTests(unittest.TestCase):
+    def test_agy_accounts_fails_cleanly_outside_macos(self):
+        error = io.StringIO()
+        with mock.patch.object(ga.sys, "platform", "win32"), redirect_stderr(error):
+            self.assertEqual(ga.main(["who"]), 1)
+        self.assertIn("requires macOS Keychain", error.getvalue())
+
+    def test_agy_help_remains_available_outside_macos(self):
+        with mock.patch.object(ga.sys, "platform", "linux"):
+            self.assertEqual(ga.main(["--help"]), 0)
+
+    def test_agy_usage_without_posix_modules_returns_error(self):
+        with mock.patch.object(gu.os, "name", "nt"):
+            usage = gu.fetch_usage()
+        self.assertEqual(usage.error, "agy usage inspection requires macOS or Linux")
+
+    def test_missing_macos_security_command_does_not_raise(self):
+        with mock.patch.object(ga.subprocess, "run", side_effect=FileNotFoundError):
+            self.assertIsNone(ga._read_cli_keyring_secret())
+            self.assertFalse(ga._store_keychain_secret("secret"))
+            self.assertFalse(ga._delete_cli_auth())
+
+    def test_vcadd_fails_cleanly_outside_macos(self):
+        error = io.StringIO()
+        with mock.patch.object(vcadd.sys, "platform", "win32"), redirect_stderr(error):
+            self.assertEqual(vcadd.main(["測試"]), 1)
+        self.assertIn("requires macOS", error.getvalue())
+
+    def test_vcadd_help_remains_available_outside_macos(self):
+        with mock.patch.object(vcadd.sys, "platform", "win32"):
+            self.assertEqual(vcadd.main(["--help"]), 0)
 
 
 if __name__ == "__main__":

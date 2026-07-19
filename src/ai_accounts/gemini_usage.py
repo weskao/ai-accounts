@@ -2,20 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import fcntl
 import json
 import os
-import pty
 import re
 import shutil
 import ssl
 import struct
 import subprocess
-import termios
 import threading
 import time
 from typing import TypeAlias
 import urllib.request
+
+if os.name == "nt":
+    fcntl = None
+    pty = None
+    termios = None
+else:
+    import fcntl
+    import pty
+    import termios
 
 from .codex_usage import UsageWindow, format_unix_time_compact
 
@@ -106,12 +112,15 @@ def _identity(payload: JsonDict) -> tuple[str | None, str | None]:
 
 
 def _ports(pid: int) -> list[int]:
-    result = subprocess.run(
-        ["lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return []
     ports: list[int] = []
     for line in result.stdout.splitlines()[1:]:
         match = re.search(r":(\d+)\s+\(LISTEN\)$", line)
@@ -157,6 +166,8 @@ def _drain(fd: int, output: bytearray) -> None:
 
 
 def _open_pty() -> tuple[int, int]:
+    if pty is None or fcntl is None or termios is None:
+        raise RuntimeError("POSIX pseudo-terminal support is unavailable")
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
     return master, slave
@@ -184,6 +195,17 @@ def fetch_usage_from_pid(pid: int) -> UsageSnapshot | None:
 
 
 def fetch_usage(timeout: float = 15) -> UsageSnapshot:
+    if os.name == "nt":
+        return UsageSnapshot(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "agy usage inspection requires macOS or Linux",
+        )
     binary = os.environ.get("ANTIGRAVITY_CLI_PATH") or shutil.which("agy")
     if not binary:
         return UsageSnapshot(None, None, None, None, None, None, None, "agy not found")

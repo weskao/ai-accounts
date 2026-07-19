@@ -7,8 +7,22 @@ Requires **uv** ([install uv](https://docs.astral.sh/uv/getting-started/installa
 and Python ≥ 3.10. No GitHub token or SSH key is required to install — the
 repo is public.
 
-Runs on **macOS, Windows, and Linux**. OS-specific bits (clipboard, dependency
-install, terminal colors) are handled automatically per platform.
+The package installs and every command starts cleanly on **macOS, Windows, and
+Linux**. `vcadd` and `agy-accounts` require macOS because their upstream
+credential/input-method integrations are macOS-only; they report that limitation
+without a traceback on other platforms.
+
+Install `uv` first:
+
+```sh
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
 ## Install (all tools in one shot)
 
@@ -25,6 +39,20 @@ Or install the latest `main`:
 uv tool install --from git+https://github.com/weskao/ai_accounts.git ai-accounts
 ```
 
+### Install from a clone
+
+The same checkout flow works in bash, zsh, and PowerShell:
+
+```sh
+git clone https://github.com/weskao/ai_accounts.git
+cd ai-accounts
+uv sync --locked
+uv tool install --editable .
+```
+
+`uv sync --locked` installs the development/test environment from `uv.lock`;
+`uv tool install --editable .` exposes every command globally from that checkout.
+
 After install, the following commands are available on `PATH`:
 
 | Command | Purpose |
@@ -35,9 +63,9 @@ After install, the following commands are available on `PATH`:
 | `resize-image` | Resize images (JPG/PNG/WebP) via ImageMagick |
 | `towebp` | Convert PNG/JPG/JPEG to WebP |
 | `html2md` | Convert HTML files to Markdown via pandoc |
-| `vcadd` | Add Chinese words with 注音符號（Bopomofo）readings to vChewing user dictionary |
+| `vcadd` | Add Chinese words with 注音符號（Bopomofo）readings to vChewing user dictionary (macOS) |
 | `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove) |
-| `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota |
+| `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota (macOS) |
 
 ## Update
 
@@ -187,7 +215,10 @@ imgmin assets/ 1                     # batch mode 1 (all → JPEG)
 - **Batch mode:** Unicode-bordered table (Saved / Before / After / File) + summary line
 - Colors: green = saved, dim = no change, orange = grew
 
-### Dependencies (auto-installed via Homebrew/npm on first use)
+### Dependencies
+
+Install the format-specific binaries you use. Missing dependencies produce a
+platform-specific installation hint. For the complete macOS set:
 
 ```sh
 brew install pngquant oxipng jpegoptim webp svgo gifsicle
@@ -429,6 +460,9 @@ Saved Codex profiles  (2)
 
 ## `agy-accounts` — Antigravity Account Manager
 
+**Platform:** macOS only. The official `agy` session used by this command is
+stored in macOS Keychain.
+
 Save, list, and switch between multiple sessions for the official Antigravity CLI (`agy`). It
 never requires a `GEMINI_API_KEY`, embeds no OAuth client credentials, and never prints raw
 tokens. The active session is stored in the macOS Keychain by `agy`; reusable profile snapshots
@@ -517,18 +551,20 @@ agy-accounts who                     # confirm which account is currently active
 ## External binaries required
 
 Each tool checks its own dependencies and reports a clear error if anything is
-missing. Most can be auto-installed via Homebrew on first use.
+missing. macOS can install supported Homebrew dependencies on first use;
+Windows and Linux print the appropriate `winget`/Scoop/Chocolatey or system
+package-manager command.
 
-| Tool | External binaries |
-| --- | --- |
-| `gtrans` | `curl`, `pbcopy` (macOS) |
-| `imgmin` | `pngquant`, `oxipng`, `jpegoptim`, `cwebp` (webp), `svgo`, `gifsicle`, `sharp` (npm), `sips` (macOS) |
-| `resize-image` | `magick` (imagemagick) |
-| `towebp` | `cwebp` |
-| `html2md` | `pandoc` |
-| `vcadd` | vChewing input method |
-| `codex-accounts` | `codex` CLI (required for `who`/`login-switch`; `list`/`save`/`switch`/`remove`/`refresh`/`sync` work without it) |
-| `agy-accounts` | Official `agy` CLI and macOS Keychain |
+| Tool | Platforms | External binaries |
+| --- | --- | --- |
+| `gtrans` | macOS / Windows / Linux | Linux clipboard integration optionally uses `wl-copy`, `xclip`, or `xsel` |
+| `imgmin` | macOS / Windows / Linux | `pngquant`, `oxipng`, `jpegoptim`, `cwebp`, `svgo`, `gifsicle`, `sharp`; HEIC-to-HEIC additionally needs macOS `sips` |
+| `resize-image` | macOS / Windows / Linux | `magick` (ImageMagick) |
+| `towebp` | macOS / Windows / Linux | `cwebp` |
+| `html2md` | macOS / Windows / Linux | `pandoc` |
+| `vcadd` | macOS only | vChewing input method |
+| `codex-accounts` | macOS / Windows / Linux | `codex` CLI for `who` and `login-switch` |
+| `agy-accounts` | macOS only | Official `agy` CLI and macOS Keychain |
 
 ---
 
@@ -536,7 +572,7 @@ missing. Most can be auto-installed via Homebrew on first use.
 
 ```sh
 cd ai-accounts
-uv sync
+uv sync --locked
 uv run gtrans "Hello world"
 ```
 
@@ -598,8 +634,12 @@ alias agyloginswitch='agy-accounts login-switch'
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
-# or
 brew install uv
+```
+
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 ### `error: Repository not found` over HTTPS

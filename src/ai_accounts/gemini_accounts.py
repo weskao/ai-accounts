@@ -47,6 +47,9 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 HELP = """agy-accounts — manage multiple Antigravity OAuth profiles
 
+PLATFORM
+  macOS only (official agy session is stored in macOS Keychain)
+
 USAGE
   agy-accounts who                   Show the selected Antigravity account
   agy-accounts current               Alias for `who`
@@ -104,20 +107,23 @@ _KEYRING_PREFIX = "go-keyring-base64:"
 
 
 def _read_cli_keyring_secret() -> str | None:
-    result = subprocess.run(
-        [
-            "security",
-            "find-generic-password",
-            "-s",
-            _KEYCHAIN_SERVICE,
-            "-a",
-            _KEYCHAIN_ACCOUNT,
-            "-w",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "security",
+                "find-generic-password",
+                "-s",
+                _KEYCHAIN_SERVICE,
+                "-a",
+                _KEYCHAIN_ACCOUNT,
+                "-w",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
     value = result.stdout.strip()
     return value if result.returncode == 0 and value else None
 
@@ -170,22 +176,25 @@ def _keyring_secret_from_auth(auth: JsonDict) -> str | None:
 
 
 def _store_keychain_secret(secret: str) -> bool:
-    result = subprocess.run(
-        [
-            "security",
-            "add-generic-password",
-            "-U",
-            "-s",
-            _KEYCHAIN_SERVICE,
-            "-a",
-            _KEYCHAIN_ACCOUNT,
-            "-w",
-            secret,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "security",
+                "add-generic-password",
+                "-U",
+                "-s",
+                _KEYCHAIN_SERVICE,
+                "-a",
+                _KEYCHAIN_ACCOUNT,
+                "-w",
+                secret,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
     return result.returncode == 0
 
 
@@ -207,19 +216,22 @@ def _write_cli_auth_text(auth_text: str) -> bool:
 
 
 def _delete_cli_auth() -> bool:
-    result = subprocess.run(
-        [
-            "security",
-            "delete-generic-password",
-            "-s",
-            _KEYCHAIN_SERVICE,
-            "-a",
-            _KEYCHAIN_ACCOUNT,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "security",
+                "delete-generic-password",
+                "-s",
+                _KEYCHAIN_SERVICE,
+                "-a",
+                _KEYCHAIN_ACCOUNT,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
     return result.returncode == 0
 
 
@@ -1040,6 +1052,11 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(HELP)
         return 0
+
+    if sys.platform != "darwin":
+        log_red("❌ agy-accounts currently requires macOS Keychain.")
+        log_yellow("   The other ai-accounts commands remain available on this platform.")
+        return 1
 
     command, *rest = argv
 
