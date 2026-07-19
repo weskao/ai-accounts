@@ -432,7 +432,7 @@ Saved Codex profiles  (2)
 Save, list, and switch between multiple sessions for the official Antigravity CLI (`agy`). It
 never requires a `GEMINI_API_KEY`, embeds no OAuth client credentials, and never prints raw
 tokens. The active session is stored in the macOS Keychain by `agy`; reusable profile snapshots
-live in CodexBar's compatible `~/.codexbar/antigravity/` store.
+live in ai-accounts's own `~/.ai-accounts/antigravity/` store.
 
 `list` temporarily activates each profile, asks `agy` for the same quota data used by `/usage`,
 and restores the original session. It shows plan, Gemini weekly/5-hour use, Claude/GPT
@@ -507,7 +507,7 @@ agy-accounts who                     # confirm which account is currently active
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ANTIGRAVITY_HOME` | `~/.codexbar/antigravity` | Profile and credential-mirror root |
+| `ANTIGRAVITY_HOME` | `~/.ai-accounts/antigravity` | Profile and credential-mirror root |
 | `ANTIGRAVITY_OAUTH_JSON` | `$ANTIGRAVITY_HOME/oauth_creds.json` | Active Keychain session mirror |
 | `ANTIGRAVITY_ACCOUNT_DIR` | `$ANTIGRAVITY_HOME/accounts` | Saved profiles |
 | `ANTIGRAVITY_CLI_PATH` | resolved from `PATH` | Override the `agy` executable used for quota checks |

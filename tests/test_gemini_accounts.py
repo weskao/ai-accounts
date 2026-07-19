@@ -127,6 +127,23 @@ class _HomeMixin(unittest.TestCase):
         return result, output.getvalue(), error.getvalue()
 
 
+class StoragePathTests(unittest.TestCase):
+    def test_default_storage_is_ai-accounts_owned(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(ga.Path, "home", return_value=Path("/tmp/home")),
+        ):
+            self.assertEqual(
+                ga._antigravity_dir(), Path("/tmp/home/.ai-accounts/antigravity")
+            )
+            self.assertEqual(
+                ga._account_dir(), Path("/tmp/home/.ai-accounts/antigravity/accounts")
+            )
+            self.assertEqual(
+                ga._auth_file(), Path("/tmp/home/.ai-accounts/antigravity/oauth_creds.json")
+            )
+
+
 class ClaimsTests(unittest.TestCase):
     def test_claims_decode_identity_and_millisecond_expiry(self) -> None:
         claims = ga._claims_from_auth(

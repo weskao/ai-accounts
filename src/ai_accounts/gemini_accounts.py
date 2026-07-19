@@ -70,7 +70,7 @@ EXAMPLES
   agy-accounts refresh --all
   agy-accounts who
 
-Profiles live under ~/.codexbar/antigravity/accounts/<name>.json.
+Profiles live under ~/.ai-accounts/antigravity/accounts/<name>.json.
 Treat that directory as secrets — saved profiles contain Google OAuth tokens.
 """
 
@@ -79,7 +79,7 @@ Treat that directory as secrets — saved profiles contain Google OAuth tokens.
 def _antigravity_dir() -> Path:
     return Path(
         os.environ.get(
-            "ANTIGRAVITY_HOME", str(Path.home() / ".codexbar" / "antigravity")
+            "ANTIGRAVITY_HOME", str(Path.home() / ".ai-accounts" / "antigravity")
         )
     )
 
