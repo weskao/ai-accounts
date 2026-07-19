@@ -6,7 +6,6 @@ import json
 import os
 import pty
 import shutil
-import signal
 import ssl
 import subprocess
 import threading
@@ -182,11 +181,11 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
             time.sleep(0.25)
     finally:
         if process.poll() is None:
-            os.killpg(process.pid, signal.SIGTERM)
+            process.terminate()
             try:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                process.kill()
                 process.wait(timeout=2)
         os.close(master)
 

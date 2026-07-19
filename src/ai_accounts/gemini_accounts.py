@@ -692,7 +692,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             if fetch_usage:
                 profile_text = profile_path.read_text(encoding="utf-8")
                 if _write_cli_auth_text(profile_text):
-                    usage = gemini_usage.fetch_usage()
+                    usage = gemini_usage.fetch_usage(timeout=8)
                     refreshed_text = _read_active_auth_text()
                     if refreshed_text is not None:
                         refreshed = json.loads(refreshed_text)
