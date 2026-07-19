@@ -576,7 +576,7 @@ def _print_accounts_table(rows: list[dict[str, str]]) -> None:
         ("CLAUDE/GPT 5H USED", "other_5h"),
         ("CLAUDE/GPT 1W USED", "other_weekly"),
         ("UPDATED", "usage_updated"),
-        ("AUTH", "expires"),
+        ("SESSION", "expires"),
         ("STATE", "status"),
     ]
     optional_keys = {
