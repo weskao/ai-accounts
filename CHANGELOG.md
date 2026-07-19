@@ -1,3 +1,16 @@
+## [1.0.0] - 2026-07-19
+
+### 🚀 Features
+
+- **agy-accounts:** [**breaking**] Use ai-accounts profile store
+
+### 🐛 Bug Fixes
+
+- **platform:** Support clean cross-platform setup
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Prepare v1.0.0
 ## [0.7.0] - 2026-07-19
 
 ### 🚀 Features
@@ -13,6 +26,10 @@
 - **agy-accounts:** [**breaking**] Stabilize login and list
 - **agy-accounts:** Mark refreshable auth
 - **gemini:** Rename auth column to session
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.7.0
 ## [0.6.0] - 2026-07-16
 
 ### 🚀 Features
