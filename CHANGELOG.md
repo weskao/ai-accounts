@@ -1,8 +1,27 @@
+## [0.7.0] - 2026-07-19
+
+### 🚀 Features
+
+- **accounts:** Add gemini profile quota tracking
+
+### 🐛 Bug Fixes
+
+- **agy-accounts:** [**breaking**] Migrate login to antigravity
+- **agy-accounts:** [**breaking**] Use official agy sessions
+- **agy-accounts:** Stabilize quota process cleanup
+- **agy-accounts:** Detect quota listener ports
+- **agy-accounts:** [**breaking**] Stabilize login and list
+- **agy-accounts:** Mark refreshable auth
+- **gemini:** Rename auth column to session
 ## [0.6.0] - 2026-07-16
 
 ### 🚀 Features
 
 - **codex-accounts:** Add interactive switch
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.6.0
 ## [0.5.1] - 2026-07-16
 
 ### 🐛 Bug Fixes
