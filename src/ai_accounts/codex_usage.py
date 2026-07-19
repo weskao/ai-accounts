@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -14,6 +15,10 @@ JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dic
 JsonDict: TypeAlias = dict[str, JsonValue]
 
 USAGE_URL: Final = "https://chatgpt.com/backend-api/wham/usage"
+_USAGE_CELL_RE: Final = re.compile(
+    r"^(?P<color>(?:\033\[[0-9;]*m)*)(?P<percent>\d+)%(?P<reset>\033\[0m)? · "
+    r"(?:(?P<days>\d+)d )?(?P<hours>\d+)h (?P<minutes>\d+)m$"
+)
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -34,6 +39,26 @@ class UsageSnapshot:
     weekly: UsageWindow | None
     refreshed_at: int | None
     error: str | None
+
+
+def align_usage_cells(rows: list[dict[str, str]], key: str) -> None:
+    matches = [match for row in rows if (match := _USAGE_CELL_RE.match(row[key]))]
+    if not matches:
+        return
+    widths = {
+        name: max(len(match.group(name) or "") for match in matches)
+        for name in ("percent", "days", "hours", "minutes")
+    }
+    for row, match in zip(rows, (_USAGE_CELL_RE.match(row[key]) for row in rows), strict=True):
+        if match is None:
+            continue
+        days = f"{(match.group('days') or '').rjust(widths['days'])}d " if widths["days"] else ""
+        row[key] = (
+            f"{match.group('color')}{match.group('percent').rjust(widths['percent'])}%"
+            f"{match.group('reset') or ''} · {days}"
+            f"{match.group('hours').rjust(widths['hours'])}h "
+            f"{match.group('minutes').rjust(widths['minutes'])}m"
+        )
 
 
 def _load_json(path: Path) -> JsonDict | None:

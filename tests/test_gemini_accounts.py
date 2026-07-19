@@ -281,7 +281,7 @@ class ProfileCommandTests(_HomeMixin):
         self.assertEqual(old["refresh_token"], "rt-rotated")
         self.assertEqual(old["id_token"], _creds("sub-o", "o@x.com")["id_token"])
 
-    def test_list_marks_active_and_shows_quota_columns(self) -> None:
+    def test_list_matches_codex_claim_columns_and_shows_quota_columns(self) -> None:
         auth = _creds("sub-a", "a@x.com", refresh_token="rt-a")
         self.write_profile("active", auth)
         self.set_active(auth)
@@ -290,10 +290,38 @@ class ProfileCommandTests(_HomeMixin):
             result, output, _ = self.capture(ga.cmd_list)
         text = ga._ANSI_RE.sub("", output)
         self.assertEqual(result, 0)
-        self.assertIn("GEMINI WEEK", text)
-        self.assertIn("GEMINI 5H", text)
-        self.assertIn("CLAUDE/GPT WEEK", text)
+        self.assertIn("ID", text)
+        self.assertIn("AUTH", text)
+        self.assertIn("sub-a", text)
+        self.assertIn("GEMINI 5H USED", text)
+        self.assertIn("GEMINI 1W USED", text)
+        self.assertIn("CLAUDE/GPT 1W USED", text)
         self.assertEqual(text.count("ACTIVE"), 1)
+
+    def test_list_hides_columns_unavailable_from_agy(self) -> None:
+        auth = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        auth.pop("id_token")
+        auth["email"] = "a@x.com"
+        self.write_profile("active", auth)
+        self.set_active(auth)
+        self.mark_current("active")
+        weekly_usage = gu.UsageSnapshot(
+            UsageWindow(6, 2_000_000_000, 10080),
+            None,
+            UsageWindow(0, 2_000_000_000, 10080),
+            None,
+            "a@x.com",
+            "Pro",
+            2_000_000_000,
+            None,
+        )
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", return_value=weekly_usage):
+            _, output, _ = self.capture(ga.cmd_list)
+        text = ga._ANSI_RE.sub("", output)
+        self.assertNotIn("│ ID │", text)
+        self.assertNotIn("GEMINI 5H USED", text)
+        self.assertNotIn("CLAUDE/GPT 5H USED", text)
+        self.assertIn("GEMINI 1W USED", text)
 
     def test_list_restores_original_keyring_session(self) -> None:
         original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
@@ -347,26 +375,39 @@ class ProfileCommandTests(_HomeMixin):
 
 
 class LoginAndRefreshTests(_HomeMixin):
-    def test_login_switch_uses_official_agy_and_saves_session(self) -> None:
+    def test_login_switch_saves_session_when_agy_becomes_authenticated(self) -> None:
         fresh = _creds("sub-new", "new@x.com", refresh_token="rt-new")
+        process = mock.Mock(pid=123)
+        process.poll.return_value = None
 
-        def login(*args, **kwargs):
+        def launch(*args, **kwargs):
             self.set_active(fresh)
-            return mock.Mock(returncode=0)
+            return process
 
         with mock.patch.object(ga, "ensure_tool", return_value=True), mock.patch.object(
-            ga.subprocess, "run", side_effect=login
-        ) as run, mock.patch.object(ga.gemini_usage, "fetch_usage", return_value=_usage("new@x.com")):
+            ga.subprocess, "Popen", side_effect=launch
+        ) as popen, mock.patch.object(
+            ga.subprocess,
+            "run",
+            side_effect=AssertionError("login-switch must not wait for agy to exit"),
+        ), mock.patch.object(
+            ga.gemini_usage, "fetch_usage_from_pid",
+            return_value=_usage("new@x.com"),
+        ):
             self.assertEqual(self.quiet(ga.cmd_login_switch, "new"), 0)
-        self.assertEqual(run.call_args.args[0], ["agy"])
+
+        self.assertEqual(popen.call_args.args[0], ["agy"])
+        process.terminate.assert_called_once_with()
         saved = json.loads((self.home / "accounts" / "new.json").read_text())
         self.assertEqual(saved["refresh_token"], "rt-new")
 
     def test_cancelled_login_restores_previous_session(self) -> None:
         old = _creds("sub-old", "old@x.com", refresh_token="rt-old")
         self.set_active(old)
+        process = mock.Mock(returncode=130)
+        process.poll.return_value = 130
         with mock.patch.object(ga, "ensure_tool", return_value=True), mock.patch.object(
-            ga.subprocess, "run", return_value=mock.Mock(returncode=130)
+            ga.subprocess, "Popen", return_value=process
         ):
             self.assertEqual(self.quiet(ga.cmd_login_switch, "new"), 130)
         self.assertIsNotNone(self.active)

@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TypeAlias
@@ -21,7 +22,12 @@ from ._utils import (
     log_red,
     log_yellow,
 )
-from .codex_usage import UsageWindow, format_usage_window
+from .codex_usage import (
+    UsageWindow,
+    align_usage_cells,
+    format_unix_time_compact,
+    format_usage_window,
+)
 
 JsonValue: TypeAlias = (
     None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
@@ -482,6 +488,21 @@ def _expiry_status(claims: Claims | None) -> tuple[str, str]:
     return _string(claims["expires_str"]) or "—", GREEN
 
 
+def _list_expiry_status(claims: Claims | None) -> tuple[str, str]:
+    if not claims:
+        return "—", DIM
+    expires_epoch = claims.get("expires_epoch")
+    if not isinstance(expires_epoch, int):
+        return "—", DIM
+    text = format_unix_time_compact(expires_epoch)
+    now = datetime.now().timestamp()
+    if expires_epoch <= now:
+        return f"{text} expired", RED
+    if expires_epoch - now < 24 * 3600:
+        return f"{text} soon", YELLOW
+    return text, GREEN
+
+
 def _claims_lines(claims: Claims | None) -> list[str]:
     if claims is None:
         return [
@@ -543,28 +564,35 @@ def _usage_cell(window: UsageWindow | None) -> str:
 
 
 def _print_accounts_table(rows: list[dict[str, str]]) -> None:
-    headers = [
-        "PROFILE",
-        "ACCOUNT",
-        "PLAN",
-        "GEMINI WEEK",
-        "GEMINI 5H",
-        "CLAUDE/GPT WEEK",
-        "CLAUDE/GPT 5H",
-        "UPDATED",
-        "STATE",
+    columns = [
+        ("PROFILE", "profile"),
+        ("ACCOUNT", "account"),
+        ("ID", "account_id"),
+        ("PLAN", "plan"),
+        ("GEMINI 5H USED", "gemini_5h"),
+        ("GEMINI 1W USED", "gemini_weekly"),
+        ("CLAUDE/GPT 5H USED", "other_5h"),
+        ("CLAUDE/GPT 1W USED", "other_weekly"),
+        ("UPDATED", "usage_updated"),
+        ("AUTH", "expires"),
+        ("STATE", "status"),
     ]
-    keys = [
-        "profile",
-        "account",
-        "plan",
-        "gemini_weekly",
+    optional_keys = {
+        "account_id",
         "gemini_5h",
-        "other_weekly",
+        "gemini_weekly",
         "other_5h",
-        "usage_updated",
-        "status",
+        "other_weekly",
+    }
+    for key in optional_keys - {"account_id"}:
+        align_usage_cells(rows, key)
+    columns = [
+        (header, key)
+        for header, key in columns
+        if key not in optional_keys
+        or any(_ANSI_RE.sub("", row[key]) != "—" for row in rows)
     ]
+    headers, keys = zip(*columns, strict=True)
     widths = [
         max(_visible_len(h), max((_visible_len(r[k]) for r in rows), default=0))
         for h, k in zip(headers, keys)
@@ -721,17 +749,21 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
                         profile_path.chmod(0o600)
                         if is_active:
                             restore_text = json.dumps(saved)
+            expires_text, expires_color = _list_expiry_status(claims)
             rows.append(
                 {
                     "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
-                    "account": usage.email
-                    or (_identity_label(claims) if claims else f"{RED}(unreadable){RESET}"),
+                    "account": _identity_label(claims)
+                    if claims
+                    else usage.email or f"{RED}(unreadable){RESET}",
+                    "account_id": _short_id(_string((claims or {}).get("account_id"))),
                     "plan": usage.plan or f"{DIM}—{RESET}",
-                    "gemini_weekly": _usage_cell(usage.gemini_weekly),
                     "gemini_5h": _usage_cell(usage.gemini_session),
-                    "other_weekly": _usage_cell(usage.other_weekly),
+                    "gemini_weekly": _usage_cell(usage.gemini_weekly),
                     "other_5h": _usage_cell(usage.other_session),
+                    "other_weekly": _usage_cell(usage.other_weekly),
                     "usage_updated": gemini_usage.format_refreshed_at(usage),
+                    "expires": f"{expires_color}{expires_text}{RESET}",
                     "status": status,
                 }
             )
@@ -965,28 +997,37 @@ def cmd_login_switch(name: str) -> int:
         _copy_active_auth_to(outgoing_profile)
     _delete_cli_auth()
     print(
-        f"{DIM}Launching the official agy login. Complete browser sign-in, then exit agy with Ctrl+D twice.{RESET}"
+        f"{DIM}Launching the official agy login. Complete browser sign-in; the profile will save automatically.{RESET}"
     )
     try:
-        login = subprocess.run(["agy"], check=False)
+        login = subprocess.Popen(["agy"])
+        usage = None
+        while login.poll() is None:
+            usage = gemini_usage.fetch_usage_from_pid(login.pid)
+            if usage is not None:
+                break
+            time.sleep(0.25)
     except KeyboardInterrupt:
-        login = subprocess.CompletedProcess(["agy"], 130)
-    auth_text = _read_active_auth_text()
-    if login.returncode != 0 or auth_text is None:
         _restore_cli_auth(outgoing_text)
         log_yellow("Login cancelled. Your previous agy session was restored.")
-        return login.returncode or 1
+        return 130
 
-    usage = gemini_usage.fetch_usage()
-    if usage.error or not usage.email:
-        _restore_cli_auth(outgoing_text)
-        log_red(f"❌ agy login could not be verified: {usage.error or 'missing account'}")
-        return 1
-    refreshed_text = _read_active_auth_text() or auth_text
-    auth = json.loads(refreshed_text)
-    if usage.email:
-        auth["email"] = usage.email
-    return _save_profile_auth(name, json.dumps(auth, indent=2) + "\n")
+    if usage is not None and usage.error is None and usage.email:
+        login.terminate()
+        try:
+            login.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            login.kill()
+            login.wait(timeout=2)
+        auth_text = _read_active_auth_text()
+        if auth_text is not None:
+            auth = json.loads(auth_text)
+            auth["email"] = usage.email
+            return _save_profile_auth(name, json.dumps(auth, indent=2) + "\n")
+
+    _restore_cli_auth(outgoing_text)
+    log_yellow("Login cancelled. Your previous agy session was restored.")
+    return login.returncode or 1
 
 
 # ── entry point ───────────────────────────────────────────────────────────

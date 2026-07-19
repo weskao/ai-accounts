@@ -162,6 +162,27 @@ def _open_pty() -> tuple[int, int]:
     return master, slave
 
 
+def fetch_usage_from_pid(pid: int) -> UsageSnapshot | None:
+    summary = status = None
+    for port in _ports(pid):
+        summary = summary or _post(port, "RetrieveUserQuotaSummary")
+        status = status or _post(port, "GetUserStatus")
+    if summary is None or status is None:
+        return None
+    gemini_weekly, gemini_session, other_weekly, other_session = _parse_summary(summary)
+    email, plan = _identity(status)
+    return UsageSnapshot(
+        gemini_weekly,
+        gemini_session,
+        other_weekly,
+        other_session,
+        email,
+        plan,
+        int(time.time()),
+        None,
+    )
+
+
 def fetch_usage(timeout: float = 15) -> UsageSnapshot:
     binary = os.environ.get("ANTIGRAVITY_CLI_PATH") or shutil.which("agy")
     if not binary:
@@ -181,13 +202,11 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
     drain = threading.Thread(target=_drain, args=(master, output), daemon=True)
     drain.start()
     deadline = time.monotonic() + timeout
-    summary = status = None
+    usage = None
     try:
         while time.monotonic() < deadline and process.poll() is None:
-            for port in _ports(process.pid):
-                summary = summary or _post(port, "RetrieveUserQuotaSummary")
-                status = status or _post(port, "GetUserStatus")
-            if summary is not None and status is not None:
+            usage = fetch_usage_from_pid(process.pid)
+            if usage is not None:
                 break
             time.sleep(0.25)
     finally:
@@ -200,24 +219,13 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
                 process.wait(timeout=2)
         os.close(master)
 
-    if summary is None or status is None:
+    if usage is None:
         if b"Select login method:" in output:
             return UsageSnapshot(
                 None, None, None, None, None, None, None, "re-login required"
             )
         return UsageSnapshot(None, None, None, None, None, None, None, "agy unavailable")
-    gemini_weekly, gemini_session, other_weekly, other_session = _parse_summary(summary)
-    email, plan = _identity(status)
-    return UsageSnapshot(
-        gemini_weekly,
-        gemini_session,
-        other_weekly,
-        other_session,
-        email,
-        plan,
-        int(time.time()),
-        None,
-    )
+    return usage
 
 
 def format_refreshed_at(snapshot: UsageSnapshot) -> str:
