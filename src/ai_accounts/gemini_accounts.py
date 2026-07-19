@@ -1,28 +1,14 @@
-"""agy-accounts — manage multiple Antigravity Google OAuth profiles.
-
-Sibling of ``codex-accounts``, using the installed Antigravity app's public
-OAuth client and the same credential location as CodexBar. No Gemini API key or
-hardcoded client credential is required. Never prints raw tokens.
-"""
-
 from __future__ import annotations
 
 import base64
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 import re
-import shutil
-import secrets
+import subprocess
 import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
-import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import TypeAlias, cast
+from typing import TypeAlias
 
 from . import gemini_usage
 from ._utils import (
@@ -31,6 +17,7 @@ from ._utils import (
     RED,
     RESET,
     YELLOW,
+    ensure_tool,
     log_red,
     log_yellow,
 )
@@ -40,7 +27,7 @@ JsonValue: TypeAlias = (
     None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 )
 JsonDict: TypeAlias = dict[str, JsonValue]
-Claims: TypeAlias = dict[str, str | int | None]
+Claims: TypeAlias = dict[str, str | int | bool | None]
 
 
 def _string(value: object) -> str | None:
@@ -61,8 +48,8 @@ USAGE
   agy-accounts list                  List saved profiles (table view)
   agy-accounts switch [<name>]       Switch by name; no name = interactive picker
   agy-accounts remove <name>         Delete a saved profile
-  agy-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
-                                     no name = refresh active auth + sync it back
+  agy-accounts refresh [<name>]      Let agy refresh a session and its quota;
+                                     no name = refresh active session + sync it back
   agy-accounts refresh --all         Refresh every saved profile
   agy-accounts sync                  Copy the active auth back to its matching profile
   agy-accounts login-switch <name>   Antigravity Google login + save as <name>
@@ -83,10 +70,6 @@ Treat that directory as secrets — saved profiles contain Google OAuth tokens.
 
 
 # ── paths ─────────────────────────────────────────────────────────────────
-# Match CodexBar's Antigravity OAuth store so both tools share the selected
-# account without touching Gemini CLI's retired credential files.
-
-
 def _antigravity_dir() -> Path:
     return Path(
         os.environ.get(
@@ -107,6 +90,138 @@ def _auth_file() -> Path:
             "ANTIGRAVITY_OAUTH_JSON", str(_antigravity_dir() / "oauth_creds.json")
         )
     )
+
+
+_KEYCHAIN_SERVICE = "gemini"
+_KEYCHAIN_ACCOUNT = "antigravity"
+_KEYRING_PREFIX = "go-keyring-base64:"
+
+
+def _read_cli_keyring_secret() -> str | None:
+    result = subprocess.run(
+        [
+            "security",
+            "find-generic-password",
+            "-s",
+            _KEYCHAIN_SERVICE,
+            "-a",
+            _KEYCHAIN_ACCOUNT,
+            "-w",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    value = result.stdout.strip()
+    return value if result.returncode == 0 and value else None
+
+
+def _auth_from_keyring_secret(secret: str) -> JsonDict | None:
+    if not secret.startswith(_KEYRING_PREFIX):
+        return None
+    try:
+        payload = json.loads(base64.b64decode(secret.removeprefix(_KEYRING_PREFIX)))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    token = payload.get("token") if isinstance(payload, dict) else None
+    if not isinstance(token, dict):
+        return None
+    auth = dict(token)
+    expiry = auth.pop("expiry", None)
+    if isinstance(expiry, str):
+        try:
+            auth["expiry_date"] = int(
+                datetime.fromisoformat(expiry.replace("Z", "+00:00")).timestamp()
+                * 1000
+            )
+        except ValueError:
+            pass
+    auth["auth_method"] = payload.get("auth_method", "consumer")
+    return auth
+
+
+def _keyring_secret_from_auth(auth: JsonDict) -> str | None:
+    access_token = _string(auth.get("access_token"))
+    refresh_token = _string(auth.get("refresh_token"))
+    if not access_token or not refresh_token:
+        return None
+    token: JsonDict = {
+        "access_token": access_token,
+        "token_type": _string(auth.get("token_type")) or "Bearer",
+        "refresh_token": refresh_token,
+    }
+    expiry_ms = auth.get("expiry_date")
+    if isinstance(expiry_ms, int | float):
+        token["expiry"] = datetime.fromtimestamp(
+            expiry_ms / 1000
+        ).astimezone().isoformat()
+    payload = {
+        "token": token,
+        "auth_method": _string(auth.get("auth_method")) or "consumer",
+    }
+    encoded = base64.b64encode(json.dumps(payload, separators=(",", ":")).encode())
+    return _KEYRING_PREFIX + encoded.decode("ascii")
+
+
+def _store_keychain_secret(secret: str) -> bool:
+    result = subprocess.run(
+        [
+            "security",
+            "add-generic-password",
+            "-U",
+            "-s",
+            _KEYCHAIN_SERVICE,
+            "-a",
+            _KEYCHAIN_ACCOUNT,
+            "-w",
+            secret,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _write_cli_auth_text(auth_text: str) -> bool:
+    try:
+        auth = json.loads(auth_text)
+    except ValueError:
+        return False
+    if not isinstance(auth, dict):
+        return False
+    secret = _keyring_secret_from_auth(auth)
+    if secret is None or not _store_keychain_secret(secret):
+        return False
+    auth_path = _auth_file()
+    auth_path.parent.mkdir(parents=True, exist_ok=True)
+    auth_path.write_text(json.dumps(auth, indent=2) + "\n", encoding="utf-8")
+    auth_path.chmod(0o600)
+    return True
+
+
+def _delete_cli_auth() -> bool:
+    result = subprocess.run(
+        [
+            "security",
+            "delete-generic-password",
+            "-s",
+            _KEYCHAIN_SERVICE,
+            "-a",
+            _KEYCHAIN_ACCOUNT,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _restore_cli_auth(auth_text: str | None) -> None:
+    if auth_text is None:
+        _delete_cli_auth()
+    else:
+        _write_cli_auth_text(auth_text)
 
 
 def _profile_file(name: str) -> Path | None:
@@ -205,6 +320,7 @@ def _claims_from_auth(auth: JsonDict) -> Claims:
         "issuer": _string(claims.get("iss")),
         "expires_epoch": exp,
         "expires_str": _format_unix_time(exp),
+        "refreshable": bool(_string(auth.get("refresh_token"))),
     }
 
 
@@ -240,13 +356,17 @@ def _token_key_from_path(path: Path) -> str | None:
 
 
 def _read_active_auth_text() -> str | None:
-    auth_path = _auth_file()
-    if not auth_path.is_file():
+    secret = _read_cli_keyring_secret()
+    if secret is None:
         return None
-    try:
-        return auth_path.read_text(encoding="utf-8")
-    except OSError:
+    auth = _auth_from_keyring_secret(secret)
+    if auth is None:
         return None
+    mirror = _auth_file()
+    mirror.parent.mkdir(parents=True, exist_ok=True)
+    mirror.write_text(json.dumps(auth, indent=2) + "\n", encoding="utf-8")
+    mirror.chmod(0o600)
+    return json.dumps(auth)
 
 
 def _read_active_claims() -> Claims | None:
@@ -287,6 +407,8 @@ def _active_profile(active_text: str | None = None) -> Path | None:
             and _identity_key(_read_claims(marked)) == active_identity
         ):
             return marked
+        if active_identity is None:
+            return marked
 
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
@@ -318,162 +440,13 @@ def _copy_active_auth_to(dest: Path) -> None:
                 f"⚠️  Not syncing active auth into {dest.name}: it belongs to a different account."
             )
             return
-    dest.write_text(text, encoding="utf-8")
+    active_auth = json.loads(text)
+    if dest.is_file():
+        saved_auth = json.loads(dest.read_text(encoding="utf-8"))
+        saved_auth.update(active_auth)
+        active_auth = saved_auth
+    dest.write_text(json.dumps(active_auth, indent=2) + "\n", encoding="utf-8")
     dest.chmod(0o600)
-
-
-# ── OAuth token refresh (Google installed-app flow, Antigravity client) ─────
-_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
-_OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-_OAUTH_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
-_OAUTH_SCOPES = (
-    "https://www.googleapis.com/auth/cloud-platform",
-    "https://www.googleapis.com/auth/userinfo.email",
-)
-
-
-def _oauth_client_credentials(
-    application_roots: tuple[Path, ...] | None = None,
-) -> tuple[str, str] | None:
-    relative_paths = (
-        "Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm",
-        "Contents/Resources/app/extensions/antigravity/bin/language_server_macos_x64",
-        "Contents/Resources/app/extensions/antigravity/bin/language_server_macos",
-        "Contents/Resources/app/out/main.js",
-        "Contents/Resources/bin/language_server",
-        "Contents/Resources/bin/language_server_macos",
-    )
-    app_roots = application_roots or (
-        Path("/Applications"),
-        Path.home() / "Applications",
-    )
-    candidates = [
-        root / "Antigravity.app" / rel for root in app_roots for rel in relative_paths
-    ]
-    id_pattern = re.compile(rb"[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com")
-    secret_pattern = re.compile(rb"GOCSPX-[A-Za-z0-9_-]{28}")
-    for path in candidates:
-        try:
-            content = path.read_bytes()
-        except OSError:
-            continue
-        client_ids = list(dict.fromkeys(id_pattern.findall(content)))
-        client_secrets = list(dict.fromkeys(secret_pattern.findall(content)))
-        if not client_ids or not client_secrets:
-            continue
-        client_id = client_ids[-1] if len(client_secrets) == 1 else client_ids[0]
-        client_secret = (
-            client_secrets[-1]
-            if len(client_ids) == len(client_secrets) and len(client_secrets) > 1
-            else client_secrets[0]
-        )
-        return client_id.decode("ascii"), client_secret.decode("ascii")
-    return None
-
-
-def _oauth_refresh(refresh_token: str) -> tuple[JsonDict | None, str | None]:
-    """Exchange a refresh_token for fresh tokens against Google's token
-    endpoint. Returns (response, None) on success, (None, error) on failure —
-    never raises, never logs tokens."""
-    credentials = _oauth_client_credentials()
-    if credentials is None:
-        return None, "Antigravity OAuth configuration not found"
-    client_id, client_secret = credentials
-    request = urllib.request.Request(
-        _OAUTH_TOKEN_URL,
-        data=urllib.parse.urlencode(
-            {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-            }
-        ).encode("utf-8"),
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8")), None
-    except urllib.error.HTTPError as exc:
-        return (
-            None,
-            f"HTTP {exc.code} from token endpoint (refresh token may be expired or revoked)",
-        )
-    except urllib.error.URLError as exc:
-        return None, f"network error: {exc.reason}"
-    except Exception as exc:  # malformed JSON response, etc.
-        return None, str(exc)
-
-
-def _apply_refreshed_tokens(path: Path, refreshed: JsonDict) -> None:
-    """Write refreshed token fields into an oauth_creds JSON file in place.
-    Google does not return a new refresh_token on refresh, so the existing one
-    is kept when the response omits it."""
-    auth = json.loads(path.read_text(encoding="utf-8"))
-    for key in ("access_token", "id_token", "refresh_token", "scope", "token_type"):
-        if refreshed.get(key):
-            auth[key] = refreshed[key]
-    expires_in = refreshed.get("expires_in")
-    if isinstance(expires_in, int | float):
-        auth["expiry_date"] = int((time.time() + expires_in) * 1000)
-    path.write_text(json.dumps(auth, indent=2) + "\n", encoding="utf-8")
-    path.chmod(0o600)
-
-
-def _is_revoked_error(error: str | None) -> bool:
-    """True when the token endpoint outright rejected the refresh_token (HTTP
-    4xx) — a genuine revocation, versus a transient network/5xx hiccup."""
-    return (error or "").startswith("HTTP 4")
-
-
-def _read_refresh_token(path: Path) -> str | None:
-    try:
-        auth = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return auth.get("refresh_token")
-
-
-def _refresh_file(
-    path: Path, label: str, relogin_hint: str | None = None
-) -> tuple[JsonDict | None, str | None]:
-    """Refresh the tokens stored in one oauth_creds file.
-
-    Returns (response, None) on success. On failure returns (None, kind):
-    "revoked" (missing or HTTP-4xx-rejected refresh_token — only a fresh login
-    helps) or "transient" (network / HTTP 5xx / timeout — safe to retry)."""
-    hint = relogin_hint or f"Re-login with: agy-accounts login-switch {label}"
-    refresh_token = _read_refresh_token(path)
-    if not refresh_token:
-        log_red(f"❌ No refresh_token found in {label}")
-        log_yellow(f"   {hint}")
-        return None, "revoked"
-    refreshed, error = _oauth_refresh(refresh_token)
-    if refreshed is None:
-        if _is_revoked_error(error):
-            log_red(f"❌ Refresh token revoked/dead for {label}: {error}")
-            log_yellow(f"   {hint}")
-            return None, "revoked"
-        log_red(f"❌ Refresh failed for {label}: {error}")
-        if error == "Antigravity OAuth configuration not found":
-            log_yellow("   Install or update Antigravity.app, then retry.")
-        else:
-            log_yellow("   Token endpoint unreachable — retry later.")
-        return None, "transient"
-    _apply_refreshed_tokens(path, refreshed)
-    return refreshed, None
-
-
-def _sync_refreshed_profile(profile_path: Path) -> bool:
-    if _active_profile() != profile_path:
-        return False
-    auth_path = _auth_file()
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(profile_path, auth_path)
-    auth_path.chmod(0o600)
-    _set_current_profile(profile_path)
-    return True
 
 
 # ── terminal rendering ───────────────────────────────────────────────────
@@ -536,8 +509,11 @@ def _claims_lines(claims: Claims | None) -> list[str]:
         lines.append(f"{DIM}Workspace{RESET}     : {claims['hosted_domain']}")
     if claims.get("issuer"):
         lines.append(f"{DIM}Issuer{RESET}        : {claims['issuer']}")
-    expires_text, color = _expiry_status(claims)
-    lines.append(f"{DIM}Token expiry{RESET}  : {color}{expires_text}{RESET}")
+    if claims.get("refreshable"):
+        lines.append(f"{DIM}Session{RESET}       : {GREEN}Refreshable by agy{RESET}")
+    else:
+        expires_text, color = _expiry_status(claims)
+        lines.append(f"{DIM}Access token{RESET}  : {color}{expires_text}{RESET}")
     return lines
 
 
@@ -562,28 +538,31 @@ def _usage_cell(window: UsageWindow | None) -> str:
     percent = f"{color}{window.percentage}%{RESET}"
     if window.reset_time is None:
         return percent
-    return format_usage_window(window, "daily", percent)
+    window_kind = "5h" if window.window_minutes == 5 * 60 else "weekly"
+    return format_usage_window(window, window_kind, percent)
 
 
 def _print_accounts_table(rows: list[dict[str, str]]) -> None:
     headers = [
         "PROFILE",
         "ACCOUNT",
-        "PRO USED",
-        "FLASH USED",
-        "LITE USED",
+        "PLAN",
+        "GEMINI WEEK",
+        "GEMINI 5H",
+        "CLAUDE/GPT WEEK",
+        "CLAUDE/GPT 5H",
         "UPDATED",
-        "AUTH",
         "STATE",
     ]
     keys = [
         "profile",
         "account",
-        "usage_pro",
-        "usage_flash",
-        "usage_lite",
+        "plan",
+        "gemini_weekly",
+        "gemini_5h",
+        "other_weekly",
+        "other_5h",
         "usage_updated",
-        "expires",
         "status",
     ]
     widths = [
@@ -613,11 +592,18 @@ def _print_accounts_table(rows: list[dict[str, str]]) -> None:
 
 
 def cmd_who() -> int:
-    active_email = _string((_read_active_claims() or {}).get("email"))
+    active_text = _read_active_auth_text()
+    active_profile = _active_profile(active_text)
+    claims = (
+        _read_claims(active_profile)
+        if active_profile is not None
+        else _claims_from_text(active_text or "")
+    )
+    active_email = _string((claims or {}).get("email"))
 
     status_lines = []
-    if _auth_file().is_file():
-        status_lines.append(f"{GREEN}Logged in{RESET}  {DIM}({_auth_file()}){RESET}")
+    if active_text is not None:
+        status_lines.append(f"{GREEN}Logged in through agy keyring{RESET}")
     else:
         status_lines.append(
             f"{RED}Not logged in{RESET}  {DIM}(run `agy-accounts login-switch <name>`){RESET}"
@@ -626,7 +612,7 @@ def cmd_who() -> int:
     _panel("Antigravity Login Status", status_lines)
 
     print()
-    _panel("Current Auth Claims", _claims_lines(_read_active_claims()))
+    _panel("Current Auth Claims", _claims_lines(claims))
     return 0
 
 
@@ -686,38 +672,56 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             primary = active_profile if active_profile in group else group[0]
             same_account_profiles.update(p for p in group if p != primary)
 
-    empty_usage = gemini_usage.UsageSnapshot(None, None, None, None, None)
-    rows = []
-    for profile_path, claims in profile_claims:
-        name = profile_path.stem
-        is_active = profile_path == active_profile
-        status = (
-            f"{GREEN}{BOLD}ACTIVE{RESET}"
-            if is_active
-            else f"{YELLOW}SAME ACCT{RESET}"
-            if profile_path in same_account_profiles
-            else f"{DIM}—{RESET}"
-        )
-        expires_text, color = _expiry_status(claims)
-        usage = empty_usage
-        if fetch_usage:
-            usage = gemini_usage.fetch_usage(
-                _auth_file() if is_active else profile_path
+    empty_usage = gemini_usage.UsageSnapshot(
+        None, None, None, None, None, None, None, None
+    )
+    rows: list[dict[str, str]] = []
+    restore_text = active_text
+    try:
+        for profile_path, claims in profile_claims:
+            name = profile_path.stem
+            is_active = profile_path == active_profile
+            status = (
+                f"{GREEN}{BOLD}ACTIVE{RESET}"
+                if is_active
+                else f"{YELLOW}SAME ACCT{RESET}"
+                if profile_path in same_account_profiles
+                else f"{DIM}—{RESET}"
             )
-        rows.append(
-            {
-                "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
-                "account": _identity_label(claims)
-                if claims
-                else f"{RED}(unreadable){RESET}",
-                "usage_pro": _usage_cell(usage.pro),
-                "usage_flash": _usage_cell(usage.flash),
-                "usage_lite": _usage_cell(usage.flash_lite),
-                "usage_updated": gemini_usage.format_refreshed_at(usage),
-                "expires": f"{color}{expires_text}{RESET}",
-                "status": status,
-            }
-        )
+            usage = empty_usage
+            if fetch_usage:
+                profile_text = profile_path.read_text(encoding="utf-8")
+                if _write_cli_auth_text(profile_text):
+                    usage = gemini_usage.fetch_usage()
+                    refreshed_text = _read_active_auth_text()
+                    if refreshed_text is not None:
+                        refreshed = json.loads(refreshed_text)
+                        saved = json.loads(profile_text)
+                        saved.update(refreshed)
+                        if usage.email:
+                            saved["email"] = usage.email
+                        profile_path.write_text(
+                            json.dumps(saved, indent=2) + "\n", encoding="utf-8"
+                        )
+                        profile_path.chmod(0o600)
+                        if is_active:
+                            restore_text = json.dumps(saved)
+            rows.append(
+                {
+                    "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
+                    "account": usage.email
+                    or (_identity_label(claims) if claims else f"{RED}(unreadable){RESET}"),
+                    "plan": usage.plan or f"{DIM}—{RESET}",
+                    "gemini_weekly": _usage_cell(usage.gemini_weekly),
+                    "gemini_5h": _usage_cell(usage.gemini_session),
+                    "other_weekly": _usage_cell(usage.other_weekly),
+                    "other_5h": _usage_cell(usage.other_session),
+                    "usage_updated": gemini_usage.format_refreshed_at(usage),
+                    "status": status,
+                }
+            )
+    finally:
+        _restore_cli_auth(restore_text)
 
     print(f"{BOLD}Saved Antigravity profiles{RESET}  {DIM}({len(rows)}){RESET}")
     _print_accounts_table(rows)
@@ -734,11 +738,8 @@ def cmd_switch(name: str) -> int:
         cmd_list()
         return 1
 
-    auth_path = _auth_file()
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
-
-    backup_path = None
-    if auth_path.is_file():
+    active_text = _read_active_auth_text()
+    if active_text is not None:
         # Fold any token rotation on the active account back into its own saved
         # profile before overwriting, so a later switch back restores fresh
         # tokens. Pure local file op; no network.
@@ -746,17 +747,13 @@ def cmd_switch(name: str) -> int:
         if outgoing_profile is not None:
             _copy_active_auth_to(outgoing_profile)
 
-        backup_path = auth_path.with_name(f"{auth_path.name}.backup")
-        shutil.copy2(auth_path, backup_path)
-        backup_path.chmod(0o600)
-
-    shutil.copy2(profile_file, auth_path)
-    auth_path.chmod(0o600)
+    if not _write_cli_auth_text(profile_file.read_text(encoding="utf-8")):
+        log_red("❌ Could not update the agy CLI keyring session")
+        return 1
     _set_current_profile(profile_file)
 
     print(f"{GREEN}✅ Switched Antigravity profile to:{RESET} {BOLD}{name}{RESET}")
-    if backup_path:
-        print(f"{DIM}   (previous auth backed up to {backup_path}){RESET}")
+    print(f"{DIM}   agy will use this account on its next launch.{RESET}")
     print()
     return cmd_who()
 
@@ -805,10 +802,7 @@ def cmd_remove(name: str) -> int:
     return 0
 
 
-def _refresh_one_profile(
-    name: str, *, show_summary: bool = True
-) -> tuple[int, str | None]:
-    """Refresh one saved profile. Returns (exit_code, failure_kind)."""
+def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, str | None]:
     profile_file = _profile_file(name)
     if profile_file is None:
         return 1, None
@@ -818,16 +812,32 @@ def _refresh_one_profile(
         cmd_list()
         return 1, None
 
-    refreshed, kind = _refresh_file(profile_file, name)
-    if refreshed is None:
-        return 1, kind
+    original_text = _read_active_auth_text()
+    is_active = _active_profile(original_text) == profile_file
+    profile_text = profile_file.read_text(encoding="utf-8")
+    if not _write_cli_auth_text(profile_text):
+        log_red(f"❌ Could not activate agy profile: {name}")
+        return 1, "keyring"
+    usage = gemini_usage.fetch_usage()
+    refreshed_text = _read_active_auth_text()
+    if refreshed_text is not None:
+        saved = json.loads(profile_text)
+        saved.update(json.loads(refreshed_text))
+        if usage.email:
+            saved["email"] = usage.email
+        profile_file.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
+        profile_file.chmod(0o600)
+        refreshed_text = json.dumps(saved)
+    if is_active and refreshed_text is not None:
+        _restore_cli_auth(refreshed_text)
+    else:
+        _restore_cli_auth(original_text)
+    if usage.error:
+        log_red(f"❌ agy could not refresh quota for {name}: {usage.error}")
+        return 1, "agy"
 
     if show_summary:
         print(f"{GREEN}✅ Refreshed Antigravity profile:{RESET} {BOLD}{name}{RESET}")
-    synced_active = _sync_refreshed_profile(profile_file)
-    if show_summary and synced_active:
-        print(f"{DIM}   (same account is active — oauth_creds.json updated too){RESET}")
-
     if show_summary:
         print()
         _panel(
@@ -843,43 +853,42 @@ def _refresh_all_profiles() -> int:
         log_yellow("⚠️  No saved Antigravity profiles to refresh.")
         return 0
 
-    revoked = []
-    transient = []
+    failed = []
     for profile_path in profiles:
         rc, kind = _refresh_one_profile(profile_path.stem)
         if rc != 0:
-            (revoked if kind == "revoked" else transient).append(profile_path.stem)
+            failed.append(profile_path.stem)
 
     cmd_list()
-    if revoked:
-        log_red(f"❌ Revoked (re-login required): {', '.join(revoked)}")
-    if transient:
-        log_yellow(f"⚠️  Transient failure, retry later: {', '.join(transient)}")
-    if revoked or transient:
+    if failed:
+        log_red(f"❌ agy refresh failed: {', '.join(failed)}")
         return 1
     print(f"{GREEN}✅ All {len(profiles)} profile(s) refreshed.{RESET}")
     return 0
 
 
 def _refresh_active_auth() -> int:
-    auth_path = _auth_file()
-    if not auth_path.is_file():
-        log_red(f"❌ No Antigravity auth file found: {auth_path}")
+    active_text = _read_active_auth_text()
+    if active_text is None:
+        log_red("❌ No Antigravity CLI session found in the keyring")
         log_yellow("   Run: agy-accounts login-switch <profile_name>")
         return 1
 
-    profile_path = _active_profile(_read_active_auth_text())
-    refreshed, _kind = _refresh_file(
-        auth_path,
-        "the active auth",
-        relogin_hint="Re-login with: agy-accounts login-switch <profile_name>",
-    )
-    if refreshed is None:
+    profile_path = _active_profile(active_text)
+    usage = gemini_usage.fetch_usage()
+    if usage.error:
+        log_red(f"❌ agy refresh failed: {usage.error}")
         return 1
+    refreshed_text = _read_active_auth_text()
     print(f"{GREEN}✅ Refreshed active Antigravity auth.{RESET}")
 
-    if profile_path is not None:
-        _copy_active_auth_to(profile_path)
+    if profile_path is not None and refreshed_text is not None:
+        saved = json.loads(profile_path.read_text(encoding="utf-8"))
+        saved.update(json.loads(refreshed_text))
+        if usage.email:
+            saved["email"] = usage.email
+        profile_path.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
+        profile_path.chmod(0o600)
         _set_current_profile(profile_path)
         print(f"{DIM}   (synced back to profile: {profile_path.stem}){RESET}")
     else:
@@ -888,7 +897,7 @@ def _refresh_active_auth() -> int:
         )
 
     print()
-    _panel("Current Auth Claims", _claims_lines(_read_claims(auth_path)), accent=GREEN)
+    _panel("Current Auth Claims", _claims_lines(_read_claims(_auth_file())), accent=GREEN)
     return 0
 
 
@@ -901,13 +910,13 @@ def cmd_refresh(target: str | None) -> int:
 
 
 def cmd_sync() -> int:
-    auth_path = _auth_file()
-    if not auth_path.is_file():
-        log_red(f"❌ No Antigravity auth file found: {auth_path}")
+    active_text = _read_active_auth_text()
+    if active_text is None:
+        log_red("❌ No Antigravity CLI session found in the keyring")
         log_yellow("   Run: agy-accounts login-switch <profile_name>")
         return 1
 
-    profile_path = _active_profile(_read_active_auth_text())
+    profile_path = _active_profile(active_text)
     if profile_path is None:
         log_red("❌ No unambiguous current profile.")
         log_yellow("   Select it first with: agy-accounts switch <name>")
@@ -927,145 +936,35 @@ def cmd_sync() -> int:
     return 0
 
 
-class _OAuthCallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-        server = cast("_OAuthCallbackServer", self.server)
-        server.oauth_callback = {key: values[0] for key, values in query.items()}
-        body = b"Antigravity login complete. You can close this window."
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-
-class _OAuthCallbackServer(HTTPServer):
-    oauth_callback: dict[str, str] | None = None
-
-
-def _authorization_url(redirect_uri: str, state: str, client_id: str) -> str:
-    return (
-        _OAUTH_AUTH_URL
-        + "?"
-        + urllib.parse.urlencode(
-            {
-                "client_id": client_id,
-                "redirect_uri": redirect_uri,
-                "response_type": "code",
-                "scope": " ".join(_OAUTH_SCOPES),
-                "access_type": "offline",
-                "prompt": "select_account consent",
-                "state": state,
-            }
-        )
-    )
-
-
-def _exchange_auth_code(
-    code: str, redirect_uri: str, client_id: str, client_secret: str
-) -> JsonDict:
-    request = urllib.request.Request(
-        _OAUTH_TOKEN_URL,
-        data=urllib.parse.urlencode(
-            {
-                "code": code,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            }
-        ).encode("utf-8"),
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    if not isinstance(payload, dict) or not _string(payload.get("access_token")):
-        raise ValueError("Google token response did not contain an access token")
-    expires_in = payload.get("expires_in")
-    if isinstance(expires_in, int | float):
-        payload["expiry_date"] = int((time.time() + expires_in) * 1000)
-    return payload
-
-
-def _fetch_user_email(access_token: str) -> str | None:
-    request = urllib.request.Request(
-        _OAUTH_USERINFO_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (OSError, ValueError):
-        return None
-    return _string(payload.get("email")) if isinstance(payload, dict) else None
-
-
-def _run_antigravity_login(timeout: float = 120) -> tuple[str | None, int]:
-    client = _oauth_client_credentials()
-    if client is None:
-        log_red("❌ Antigravity OAuth client not found in Antigravity.app")
-        log_yellow("   Install or update Antigravity.app, then retry.")
-        return None, 1
-
-    client_id, client_secret = client
-    state = secrets.token_urlsafe(32)
-    server = _OAuthCallbackServer(("127.0.0.1", 0), _OAuthCallbackHandler)
-    server.timeout = timeout
-    redirect_uri = f"http://127.0.0.1:{server.server_port}/callback"
-    auth_url = _authorization_url(redirect_uri, state, client_id)
-    print(f"{DIM}Opening Antigravity Google authentication in your browser.{RESET}")
-    if not webbrowser.open(auth_url):
-        log_yellow(f"Open this URL manually:\n{auth_url}")
-    try:
-        server.handle_request()
-    except KeyboardInterrupt:
-        log_yellow("Login cancelled. Your current profile was not changed.")
-        return None, 130
-    finally:
-        server.server_close()
-
-    callback = server.oauth_callback
-    if callback is None:
-        log_red("❌ Antigravity login timed out")
-        return None, 1
-    if callback.get("state") != state:
-        log_red("❌ Google login state mismatch")
-        return None, 1
-    if callback.get("error"):
-        log_red(f"❌ Google login failed: {callback['error']}")
-        return None, 1
-    code = callback.get("code")
-    if not code:
-        log_red("❌ Google login did not return an authorization code")
-        return None, 1
-    try:
-        credentials = _exchange_auth_code(code, redirect_uri, client_id, client_secret)
-        access_token = _string(credentials.get("access_token"))
-        if access_token:
-            email = _fetch_user_email(access_token)
-            if email:
-                credentials["email"] = email
-        return json.dumps(credentials, indent=2) + "\n", 0
-    except (OSError, ValueError) as error:
-        log_red(f"❌ Could not complete Antigravity login: {error}")
-        return None, 1
-
-
 def cmd_login_switch(name: str) -> int:
+    if not ensure_tool("agy"):
+        return 1
     if _profile_file(name) is None:
         return 1
-    outgoing_profile = _active_profile(_read_active_auth_text())
+    outgoing_text = _read_active_auth_text()
+    outgoing_profile = _active_profile(outgoing_text)
     if outgoing_profile is not None:
         _copy_active_auth_to(outgoing_profile)
-    auth_text, returncode = _run_antigravity_login()
-    if auth_text is None:
-        return returncode
-    return _save_profile_auth(name, auth_text)
+    _delete_cli_auth()
+    print(
+        f"{DIM}Launching the official agy login. Complete browser sign-in, then exit agy with Ctrl+D twice.{RESET}"
+    )
+    try:
+        login = subprocess.run(["agy"], check=False)
+    except KeyboardInterrupt:
+        login = subprocess.CompletedProcess(["agy"], 130)
+    auth_text = _read_active_auth_text()
+    if login.returncode != 0 or auth_text is None:
+        _restore_cli_auth(outgoing_text)
+        log_yellow("Login cancelled. Your previous agy session was restored.")
+        return login.returncode or 1
+
+    usage = gemini_usage.fetch_usage()
+    refreshed_text = _read_active_auth_text() or auth_text
+    auth = json.loads(refreshed_text)
+    if usage.email:
+        auth["email"] = usage.email
+    return _save_profile_auth(name, json.dumps(auth, indent=2) + "\n")
 
 
 # ── entry point ───────────────────────────────────────────────────────────

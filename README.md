@@ -429,14 +429,14 @@ Saved Codex profiles  (2)
 
 ## `agy-accounts` — Antigravity Account Manager
 
-Save, list, and switch between multiple Antigravity Google OAuth profiles and inspect each
-profile's Pro, Flash, and Flash Lite quota. This is the replacement path for personal accounts
-that can no longer use Gemini CLI OAuth. It never requires a `GEMINI_API_KEY` and never prints
-raw tokens. The public installed-app OAuth client is discovered from `Antigravity.app` at runtime;
-no client ID or secret is hardcoded in this repository.
+Save, list, and switch between multiple sessions for the official Antigravity CLI (`agy`). It
+never requires a `GEMINI_API_KEY`, embeds no OAuth client credentials, and never prints raw
+tokens. The active session is stored in the macOS Keychain by `agy`; reusable profile snapshots
+live in CodexBar's compatible `~/.codexbar/antigravity/` store.
 
-Credentials use CodexBar's compatible `~/.codexbar/antigravity/` store. `switch` is a local file
-copy and quota checks use the selected Google OAuth access token.
+`list` temporarily activates each profile, asks `agy` for the same quota data used by `/usage`,
+and restores the original session. It shows plan, Gemini weekly/5-hour use, Claude/GPT
+weekly/5-hour use, refresh time, and active state.
 
 ### agy-accounts Usage
 
@@ -444,26 +444,25 @@ copy and quota checks use the selected Google OAuth access token.
 agy-accounts who                   # show the selected Antigravity account
 agy-accounts current               # alias for `who`
 agy-accounts save <name>           # save the current login as a reusable profile
-agy-accounts list                  # list profiles with Pro / Flash / Flash Lite quota
+agy-accounts list                  # list profiles with agy model-family quota
 agy-accounts switch [<name>]       # switch by name; no name = interactive picker
 agy-accounts remove <name>         # delete a saved profile
-agy-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browser, no logout);
-                                   # no name = refresh the active auth + sync it back
-agy-accounts refresh --all         # renew every saved profile in one run
-agy-accounts sync                  # copy the active auth back to its matching profile
-agy-accounts login-switch <name>   # Antigravity Google login + save as <name>
+agy-accounts refresh [<name>]      # let agy refresh the session/quota and save rotations
+agy-accounts refresh --all         # refresh every saved profile through agy
+agy-accounts sync                  # copy the active Keychain session to its profile
+agy-accounts login-switch <name>   # official agy browser login + save as <name>
 ```
 
 ### agy-accounts First-time setup
 
-**Prerequisite** — install the Antigravity app:
+**Prerequisite** — install the official Antigravity CLI and confirm it is available:
 
 ```sh
-open https://antigravity.google
+agy --version
 ```
 
-Then add one or more accounts directly. The browser login uses Antigravity's supported OAuth
-client and does not modify Gemini CLI credentials:
+Then add one or more accounts. `login-switch` launches `agy` itself; finish its browser login,
+then exit the CLI with Ctrl+D twice so the new Keychain session can be saved:
 
 ```sh
 agy-accounts login-switch personal   # log into the first account, save as "personal"
@@ -479,22 +478,19 @@ agy-accounts switch work       # activate the "work" profile
 agy-accounts who               # confirm the current account
 ```
 
-### agy-accounts Token upkeep
+### agy-accounts Session upkeep
 
-Saved profiles are OAuth snapshots. These commands keep them fresh without a Gemini API key:
+The roughly one-hour expiry is for the access token, not the login. Saved sessions include a
+refresh token, and `agy` renews the access token automatically without a Gemini API key:
 
 ```sh
-agy-accounts refresh --all     # renew every saved profile via OAuth refresh
-agy-accounts refresh work      # renew just one profile
-agy-accounts refresh           # renew the active auth, then sync it back to its profile
-agy-accounts sync              # no network: copy the (already-fresh) active auth back
-                                # to its matching profile
+agy-accounts refresh --all     # refresh every profile and its quota through agy
+agy-accounts refresh work      # refresh one profile and save rotated tokens
+agy-accounts refresh           # refresh the active session and sync it back
+agy-accounts sync              # copy the current Keychain session to its profile
 ```
 
-When a refreshed profile belongs to the currently active account, `refresh` also updates
-`oauth_creds.json` — Google's refresh rotates tokens, so this keeps the live login from being
-stranded with a dead token. If a refresh fails because the refresh token itself has expired or
-been revoked, re-login with `agy-accounts login-switch <name>`.
+If a refresh token is revoked, re-login with `agy-accounts login-switch <name>`.
 
 ### agy-accounts Examples
 
@@ -511,9 +507,10 @@ agy-accounts who                     # confirm which account is currently active
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ANTIGRAVITY_HOME` | `~/.codexbar/antigravity` | Active credentials and account store root |
-| `ANTIGRAVITY_OAUTH_JSON` | `$ANTIGRAVITY_HOME/oauth_creds.json` | Selected OAuth credentials |
+| `ANTIGRAVITY_HOME` | `~/.codexbar/antigravity` | Profile and credential-mirror root |
+| `ANTIGRAVITY_OAUTH_JSON` | `$ANTIGRAVITY_HOME/oauth_creds.json` | Active Keychain session mirror |
 | `ANTIGRAVITY_ACCOUNT_DIR` | `$ANTIGRAVITY_HOME/accounts` | Saved profiles |
+| `ANTIGRAVITY_CLI_PATH` | resolved from `PATH` | Override the `agy` executable used for quota checks |
 
 ---
 
@@ -531,7 +528,7 @@ missing. Most can be auto-installed via Homebrew on first use.
 | `html2md` | `pandoc` |
 | `vcadd` | vChewing input method |
 | `codex-accounts` | `codex` CLI (required for `who`/`login-switch`; `list`/`save`/`switch`/`remove`/`refresh`/`sync` work without it) |
-| `agy-accounts` | `Antigravity.app` (OAuth client is discovered at login/refresh time) |
+| `agy-accounts` | Official `agy` CLI and macOS Keychain |
 
 ---
 
