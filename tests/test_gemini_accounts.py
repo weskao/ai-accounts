@@ -296,6 +296,8 @@ class ProfileCommandTests(_HomeMixin):
         self.assertIn("GEMINI 5H USED", text)
         self.assertIn("GEMINI 1W USED", text)
         self.assertIn("CLAUDE/GPT 1W USED", text)
+        self.assertIn("refreshable", text)
+        self.assertNotIn("soon", text)
         self.assertEqual(text.count("ACTIVE"), 1)
 
     def test_list_hides_columns_unavailable_from_agy(self) -> None:

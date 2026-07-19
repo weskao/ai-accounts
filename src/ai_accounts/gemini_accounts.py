@@ -491,6 +491,8 @@ def _expiry_status(claims: Claims | None) -> tuple[str, str]:
 def _list_expiry_status(claims: Claims | None) -> tuple[str, str]:
     if not claims:
         return "—", DIM
+    if claims.get("refreshable"):
+        return "refreshable", GREEN
     expires_epoch = claims.get("expires_epoch")
     if not isinstance(expires_epoch, int):
         return "—", DIM
