@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import fcntl
 import json
 import os
 import pty
+import re
 import shutil
 import ssl
+import struct
 import subprocess
+import termios
 import threading
 import time
 from typing import TypeAlias
@@ -110,11 +114,10 @@ def _ports(pid: int) -> list[int]:
     )
     ports: list[int] = []
     for line in result.stdout.splitlines()[1:]:
-        address = line.rsplit(maxsplit=1)[-1]
-        try:
-            port = int(address.rsplit(":", 1)[1].split(" ", 1)[0])
-        except (IndexError, ValueError):
+        match = re.search(r":(\d+)\s+\(LISTEN\)$", line)
+        if match is None:
             continue
+        port = int(match.group(1))
         if port not in ports:
             ports.append(port)
     return ports
@@ -144,12 +147,19 @@ def _post(port: int, method: str) -> JsonDict | None:
     return None
 
 
-def _drain(fd: int) -> None:
+def _drain(fd: int, output: bytearray) -> None:
     try:
-        while os.read(fd, 65536):
-            pass
+        while chunk := os.read(fd, 65536):
+            output.extend(chunk)
+            del output[:-8192]
     except OSError:
         pass
+
+
+def _open_pty() -> tuple[int, int]:
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+    return master, slave
 
 
 def fetch_usage(timeout: float = 15) -> UsageSnapshot:
@@ -157,7 +167,7 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
     if not binary:
         return UsageSnapshot(None, None, None, None, None, None, None, "agy not found")
 
-    master, slave = pty.openpty()
+    master, slave = _open_pty()
     process = subprocess.Popen(
         [binary],
         stdin=slave,
@@ -167,7 +177,8 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
         close_fds=True,
     )
     os.close(slave)
-    drain = threading.Thread(target=_drain, args=(master,), daemon=True)
+    output = bytearray()
+    drain = threading.Thread(target=_drain, args=(master, output), daemon=True)
     drain.start()
     deadline = time.monotonic() + timeout
     summary = status = None
@@ -190,6 +201,10 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
         os.close(master)
 
     if summary is None or status is None:
+        if b"Select login method:" in output:
+            return UsageSnapshot(
+                None, None, None, None, None, None, None, "re-login required"
+            )
         return UsageSnapshot(None, None, None, None, None, None, None, "agy unavailable")
     gemini_weekly, gemini_session, other_weekly, other_session = _parse_summary(summary)
     email, plan = _identity(status)
@@ -207,5 +222,7 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
 
 def format_refreshed_at(snapshot: UsageSnapshot) -> str:
     if snapshot.error:
+        if snapshot.error == "re-login required":
+            return "RELOGIN"
         return "ERR agy"
     return format_unix_time_compact(snapshot.refreshed_at)

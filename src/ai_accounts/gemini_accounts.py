@@ -646,6 +646,17 @@ def cmd_save(name: str) -> int:
     return _save_profile_auth(name, auth_text)
 
 
+def _validated_usage(
+    usage: gemini_usage.UsageSnapshot, claims: Claims | None
+) -> gemini_usage.UsageSnapshot:
+    expected = _string((claims or {}).get("email"))
+    if expected and usage.email and expected.casefold() != usage.email.casefold():
+        return gemini_usage.UsageSnapshot(
+            None, None, None, None, None, None, None, "re-login required"
+        )
+    return usage
+
+
 def cmd_list(*, fetch_usage: bool = True) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
@@ -692,8 +703,12 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             if fetch_usage:
                 profile_text = profile_path.read_text(encoding="utf-8")
                 if _write_cli_auth_text(profile_text):
-                    usage = gemini_usage.fetch_usage(timeout=8)
-                    refreshed_text = _read_active_auth_text()
+                    usage = _validated_usage(
+                        gemini_usage.fetch_usage(timeout=8), claims
+                    )
+                    refreshed_text = (
+                        _read_active_auth_text() if usage.error is None else None
+                    )
                     if refreshed_text is not None:
                         refreshed = json.loads(refreshed_text)
                         saved = json.loads(profile_text)
@@ -818,8 +833,8 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
     if not _write_cli_auth_text(profile_text):
         log_red(f"❌ Could not activate agy profile: {name}")
         return 1, "keyring"
-    usage = gemini_usage.fetch_usage()
-    refreshed_text = _read_active_auth_text()
+    usage = _validated_usage(gemini_usage.fetch_usage(), _read_claims(profile_file))
+    refreshed_text = _read_active_auth_text() if usage.error is None else None
     if refreshed_text is not None:
         saved = json.loads(profile_text)
         saved.update(json.loads(refreshed_text))
@@ -875,8 +890,11 @@ def _refresh_active_auth() -> int:
         return 1
 
     profile_path = _active_profile(active_text)
-    usage = gemini_usage.fetch_usage()
+    claims = _read_claims(profile_path) if profile_path is not None else None
+    usage = _validated_usage(gemini_usage.fetch_usage(), claims)
     if usage.error:
+        if usage.error == "re-login required":
+            _restore_cli_auth(active_text)
         log_red(f"❌ agy refresh failed: {usage.error}")
         return 1
     refreshed_text = _read_active_auth_text()
@@ -960,6 +978,10 @@ def cmd_login_switch(name: str) -> int:
         return login.returncode or 1
 
     usage = gemini_usage.fetch_usage()
+    if usage.error or not usage.email:
+        _restore_cli_auth(outgoing_text)
+        log_red(f"❌ agy login could not be verified: {usage.error or 'missing account'}")
+        return 1
     refreshed_text = _read_active_auth_text() or auth_text
     auth = json.loads(refreshed_text)
     if usage.email:

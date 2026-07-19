@@ -181,6 +181,28 @@ class KeyringTests(unittest.TestCase):
 
 
 class UsageTests(unittest.TestCase):
+    def test_ports_parse_lsof_listener_rows(self) -> None:
+        output = (
+            "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
+            "agy 123 user 10u IPv4 0x0 0t0 TCP 127.0.0.1:63833 (LISTEN)\n"
+            "agy 123 user 11u IPv4 0x0 0t0 TCP 127.0.0.1:63834 (LISTEN)\n"
+        )
+        with mock.patch.object(
+            gu.subprocess,
+            "run",
+            return_value=mock.Mock(stdout=output),
+        ):
+            self.assertEqual(gu._ports(123), [63833, 63834])
+
+    def test_background_pty_has_a_terminal_size(self) -> None:
+        with mock.patch.object(gu.pty, "openpty", return_value=(10, 11)), mock.patch.object(
+            gu.fcntl, "ioctl"
+        ) as ioctl:
+            self.assertEqual(gu._open_pty(), (10, 11))
+        ioctl.assert_called_once_with(
+            11, gu.termios.TIOCSWINSZ, gu.struct.pack("HHHH", 50, 160, 0, 0)
+        )
+
     def test_parse_official_quota_groups(self) -> None:
         payload: gu.JsonDict = {
             "groups": [
@@ -222,6 +244,10 @@ class UsageTests(unittest.TestCase):
     def test_fetch_usage_without_agy_reports_error(self) -> None:
         with mock.patch.object(gu.shutil, "which", return_value=None):
             self.assertEqual(gu.fetch_usage().error, "agy not found")
+
+    def test_relogin_error_has_an_actionable_label(self) -> None:
+        snapshot = _usage(error="re-login required")
+        self.assertEqual(gu.format_refreshed_at(snapshot), "RELOGIN")
 
 
 class ProfileCommandTests(_HomeMixin):
@@ -281,6 +307,24 @@ class ProfileCommandTests(_HomeMixin):
         if self.active is None:
             self.fail("expected restored session")
         self.assertEqual(self.active["refresh_token"], "rt-a")
+
+    def test_list_rejects_quota_from_a_different_account(self) -> None:
+        original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        self.write_profile("a", original)
+        self.set_active(original)
+        self.mark_current("a")
+
+        def wrong_account(*, timeout: float) -> gu.UsageSnapshot:
+            self.set_active(_creds("sub-b", "b@x.com", refresh_token="rt-b"))
+            return _usage("b@x.com")
+
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", side_effect=wrong_account
+        ):
+            _, output, _ = self.capture(ga.cmd_list)
+        self.assertIn("RELOGIN", ga._ANSI_RE.sub("", output))
+        saved = json.loads((self.home / "accounts" / "a.json").read_text())
+        self.assertEqual(saved["refresh_token"], "rt-a")
 
     def test_sync_merges_rotated_tokens_without_losing_identity(self) -> None:
         saved = _creds("sub-w", "w@x.com", refresh_token="rt-old")
