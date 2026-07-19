@@ -8,6 +8,7 @@ individual tools stay platform-agnostic.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -315,10 +316,10 @@ def output_and_copy(text: str) -> None:
     """Print to stdout, copy to clipboard, and announce on stderr."""
     print(text)
     if copy_to_clipboard(text):
-        print(f"\n✅ Copied to clipboard", file=sys.stderr)
+        print("\n✅ Copied to clipboard", file=sys.stderr)
 
 
-def run(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
+def run(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
     """Thin wrapper around subprocess.run that uses text=True by default."""
     kwargs.setdefault("text", True)
     return subprocess.run(cmd, **kwargs)
@@ -326,7 +327,7 @@ def run(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
 
 # ── git helpers ──────────────────────────────────────────────────────────────
 
-def is_git_repo(path: "Path") -> bool:
+def is_git_repo(path: Path) -> bool:
     result = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
         capture_output=True,
@@ -334,30 +335,25 @@ def is_git_repo(path: "Path") -> bool:
     return result.returncode == 0
 
 
-def _resolve_union_conflict(file_path: "Path") -> bool:
+def _resolve_union_conflict(file_path: Path) -> bool:
     """Resolve conflict markers in an append-only word-list file via union merge.
 
     Keeps all non-duplicate lines from both sides. Returns True if no conflict
     markers remain after resolution.
     """
-    from pathlib import Path as _Path
-    content = file_path.read_text(encoding="utf-8")  # type: ignore[arg-type]
+    content = file_path.read_text(encoding="utf-8")
     if "<<<<<<< " not in content:
         return True
 
     seen: set[str] = set()
     out: list[str] = []
-    state = "normal"  # normal | ours | theirs
 
     for line in content.splitlines():
         if line.startswith("<<<<<<< "):
-            state = "ours"
             continue
         if line == "=======":
-            state = "theirs"
             continue
         if line.startswith(">>>>>>> "):
-            state = "normal"
             continue
         # Deduplicate by the first token (the word itself); keep comment/blank lines as-is.
         if line and not line.startswith("#") and not line.startswith(" "):
@@ -370,11 +366,11 @@ def _resolve_union_conflict(file_path: "Path") -> bool:
     resolved = "\n".join(out)
     if not resolved.endswith("\n"):
         resolved += "\n"
-    file_path.write_text(resolved, encoding="utf-8")  # type: ignore[arg-type]
+    file_path.write_text(resolved, encoding="utf-8")
     return "<<<<<<< " not in resolved
 
 
-def git_sync(repo_dir: "Path", file_path: "Path", commit_msg: str) -> list[str]:
+def git_sync(repo_dir: Path, file_path: Path, commit_msg: str) -> list[str]:
     """Commit file_path, pull --rebase (auto-resolving union conflicts), then push.
 
     Order: add → commit → pull --rebase → push.
