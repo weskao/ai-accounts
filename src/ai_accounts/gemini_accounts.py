@@ -1,31 +1,28 @@
-"""agy-accounts — manage multiple Gemini CLI login profiles.
+"""agy-accounts — manage multiple Antigravity Google OAuth profiles.
 
-Sibling of ``codex-accounts``, adapted to the Gemini CLI's auth model. Gemini
-stores its OAuth credentials as a plain file (``~/.gemini/oauth_creds.json``)
-and tracks the active/previous Google account emails in
-``~/.gemini/google_accounts.json`` — no macOS keychain or API key. Quota comes
-from Gemini's OAuth-backed Code Assist endpoint. Never prints raw tokens — only
-decoded, non-secret ``id_token`` claims.
+Sibling of ``codex-accounts``, using the installed Antigravity app's public
+OAuth client and the same credential location as CodexBar. No Gemini API key or
+hardcoded client credential is required. Never prints raw tokens.
 """
 
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 import re
 import shutil
-import subprocess
+import secrets
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 from . import gemini_usage
 from ._utils import (
@@ -34,8 +31,6 @@ from ._utils import (
     RED,
     RESET,
     YELLOW,
-    ensure_tool,
-    have,
     log_red,
     log_yellow,
 )
@@ -57,10 +52,10 @@ CYAN = "\033[1;36m"
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
-HELP = """agy-accounts — manage multiple Gemini CLI login profiles
+HELP = """agy-accounts — manage multiple Antigravity OAuth profiles
 
 USAGE
-  agy-accounts who                   Show the current logged-in Gemini account
+  agy-accounts who                   Show the selected Antigravity account
   agy-accounts current               Alias for `who`
   agy-accounts save <name>           Save the current login as a reusable profile
   agy-accounts list                  List saved profiles (table view)
@@ -70,7 +65,7 @@ USAGE
                                      no name = refresh active auth + sync it back
   agy-accounts refresh --all         Refresh every saved profile
   agy-accounts sync                  Copy the active auth back to its matching profile
-  agy-accounts login-switch <name>   Isolated gemini login + save as <name>
+  agy-accounts login-switch <name>   Antigravity Google login + save as <name>
   agy-accounts -h | --help           Show this help
 
 EXAMPLES
@@ -82,35 +77,36 @@ EXAMPLES
   agy-accounts refresh --all
   agy-accounts who
 
-Profiles live under ~/.gemini/accounts/<name>.json (override with $GEMINI_ACCOUNT_DIR).
-Treat that directory as secrets — saved profiles contain Gemini OAuth tokens.
+Profiles live under ~/.codexbar/antigravity/accounts/<name>.json.
+Treat that directory as secrets — saved profiles contain Google OAuth tokens.
 """
 
 
 # ── paths ─────────────────────────────────────────────────────────────────
-# Gemini resolves its config dir as ``homedir()/.gemini`` where ``homedir()``
-# honours ``$GEMINI_CLI_HOME`` before the OS home (verified against the
-# installed @google/gemini-cli bundle). We mirror that exactly so an isolated
-# login (login-switch) and the live config point at the same files.
+# Match CodexBar's Antigravity OAuth store so both tools share the selected
+# account without touching Gemini CLI's retired credential files.
 
 
-def _gemini_dir() -> Path:
-    home = Path(os.environ.get("GEMINI_CLI_HOME", str(Path.home())))
-    return home / ".gemini"
+def _antigravity_dir() -> Path:
+    return Path(
+        os.environ.get(
+            "ANTIGRAVITY_HOME", str(Path.home() / ".codexbar" / "antigravity")
+        )
+    )
 
 
 def _account_dir() -> Path:
-    return Path(os.environ.get("GEMINI_ACCOUNT_DIR", str(_gemini_dir() / "accounts")))
+    return Path(
+        os.environ.get("ANTIGRAVITY_ACCOUNT_DIR", str(_antigravity_dir() / "accounts"))
+    )
 
 
 def _auth_file() -> Path:
     return Path(
-        os.environ.get("GEMINI_OAUTH_JSON", str(_gemini_dir() / "oauth_creds.json"))
+        os.environ.get(
+            "ANTIGRAVITY_OAUTH_JSON", str(_antigravity_dir() / "oauth_creds.json")
+        )
     )
-
-
-def _google_accounts_file() -> Path:
-    return _gemini_dir() / "google_accounts.json"
 
 
 def _profile_file(name: str) -> Path | None:
@@ -184,7 +180,7 @@ def _format_unix_time(value: object) -> str | None:
 
 
 def _claims_from_auth(auth: JsonDict) -> Claims:
-    """Extract non-secret account claims from a parsed Gemini oauth_creds object.
+    """Extract non-secret account claims from parsed Antigravity credentials.
 
     Identity comes from the ``id_token`` JWT (email / name / Google ``sub``).
     Token expiry comes from ``expiry_date`` (epoch **milliseconds**, Google's
@@ -201,7 +197,8 @@ def _claims_from_auth(auth: JsonDict) -> Claims:
             exp = int(token_expiry)
 
     return {
-        "email": _find_deep(claims, ("email", "preferred_username")),
+        "email": _find_deep(claims, ("email", "preferred_username"))
+        or _string(auth.get("email")),
         "name": _find_deep(claims, ("name", "given_name")),
         "account_id": _string(claims.get("sub")),
         "hosted_domain": _string(claims.get("hd")),
@@ -243,8 +240,6 @@ def _token_key_from_path(path: Path) -> str | None:
 
 
 def _read_active_auth_text() -> str | None:
-    """Raw active-auth JSON text from oauth_creds.json (file is the sole source
-    of truth for Gemini — no keychain to reconcile against)."""
     auth_path = _auth_file()
     if not auth_path.is_file():
         return None
@@ -309,7 +304,7 @@ def _active_profile(active_text: str | None = None) -> Path | None:
 
 
 def _copy_active_auth_to(dest: Path) -> None:
-    """Copy the active Gemini auth to dest. Refuses to write when dest already
+    """Copy the active Antigravity auth to dest. Refuses to write when dest already
     holds a DIFFERENT account — fold-back/sync callers only ever sync the same
     account, and a cross-account write would destroy dest's only token copy."""
     text = _read_active_auth_text()
@@ -327,82 +322,52 @@ def _copy_active_auth_to(dest: Path) -> None:
     dest.chmod(0o600)
 
 
-# ── google_accounts.json (Gemini's own active/previous account tracker) ─────
-
-
-def _set_active_google_account(email: str | None) -> None:
-    """Keep ~/.gemini/google_accounts.json in step with the profile we just
-    activated, so Gemini's own UI shows the right account. Best-effort — a
-    write failure here never fails the switch/save."""
-    if not email:
-        return
-    path = _google_accounts_file()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    except (OSError, ValueError):
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    previous = data.get("active")
-    raw_old = data.get("old")
-    old = (
-        [value for value in raw_old if isinstance(value, str)]
-        if isinstance(raw_old, list)
-        else []
-    )
-    if previous and previous != email and previous not in old:
-        old.append(previous)
-    old = [e for e in old if e != email]
-    data["active"] = email
-    data["old"] = old
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        pass
-
-
-# ── OAuth token refresh (Google installed-app flow, gemini-cli client) ──────
+# ── OAuth token refresh (Google installed-app flow, Antigravity client) ─────
 _OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+_OAUTH_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
+_OAUTH_SCOPES = (
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/userinfo.email",
+)
 
 
-def _oauth_client_credentials() -> tuple[str, str] | None:
-    executable = shutil.which("gemini")
-    if executable is None:
-        return None
-    resolved = Path(executable).resolve()
-    package_root = next(
-        (
-            path
-            for path in (resolved.parent, *resolved.parents)
-            if path.name == "gemini-cli"
-        ),
-        None,
+def _oauth_client_credentials(
+    application_roots: tuple[Path, ...] | None = None,
+) -> tuple[str, str] | None:
+    relative_paths = (
+        "Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm",
+        "Contents/Resources/app/extensions/antigravity/bin/language_server_macos_x64",
+        "Contents/Resources/app/extensions/antigravity/bin/language_server_macos",
+        "Contents/Resources/app/out/main.js",
+        "Contents/Resources/bin/language_server",
+        "Contents/Resources/bin/language_server_macos",
     )
-    if package_root is None:
-        return None
-
-    oauth_file = Path("dist/src/code_assist/oauth2.js")
+    app_roots = application_roots or (
+        Path("/Applications"),
+        Path.home() / "Applications",
+    )
     candidates = [
-        package_root / oauth_file,
-        package_root / "node_modules/@google/gemini-cli-core" / oauth_file,
-        *sorted((package_root / "bundle").glob("*.js")),
+        root / "Antigravity.app" / rel for root in app_roots for rel in relative_paths
     ]
-    id_pattern = re.compile(
-        r"(?:const|let|var)?\s*OAUTH_CLIENT_ID\s*=\s*['\"]([\w.\-]+)['\"]"
-    )
-    secret_pattern = re.compile(
-        r"(?:const|let|var)?\s*OAUTH_CLIENT_SECRET\s*=\s*['\"]([\w\-]+)['\"]"
-    )
+    id_pattern = re.compile(rb"[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com")
+    secret_pattern = re.compile(rb"GOCSPX-[A-Za-z0-9_-]{28}")
     for path in candidates:
         try:
-            content = path.read_text(encoding="utf-8")
+            content = path.read_bytes()
         except OSError:
             continue
-        client_id = id_pattern.search(content)
-        client_secret = secret_pattern.search(content)
-        if client_id and client_secret:
-            return client_id.group(1), client_secret.group(1)
+        client_ids = list(dict.fromkeys(id_pattern.findall(content)))
+        client_secrets = list(dict.fromkeys(secret_pattern.findall(content)))
+        if not client_ids or not client_secrets:
+            continue
+        client_id = client_ids[-1] if len(client_secrets) == 1 else client_ids[0]
+        client_secret = (
+            client_secrets[-1]
+            if len(client_ids) == len(client_secrets) and len(client_secrets) > 1
+            else client_secrets[0]
+        )
+        return client_id.decode("ascii"), client_secret.decode("ascii")
     return None
 
 
@@ -412,7 +377,7 @@ def _oauth_refresh(refresh_token: str) -> tuple[JsonDict | None, str | None]:
     never raises, never logs tokens."""
     credentials = _oauth_client_credentials()
     if credentials is None:
-        return None, "Gemini CLI OAuth configuration not found"
+        return None, "Antigravity OAuth configuration not found"
     client_id, client_secret = credentials
     request = urllib.request.Request(
         _OAUTH_TOKEN_URL,
@@ -491,8 +456,8 @@ def _refresh_file(
             log_yellow(f"   {hint}")
             return None, "revoked"
         log_red(f"❌ Refresh failed for {label}: {error}")
-        if error == "Gemini CLI OAuth configuration not found":
-            log_yellow("   Update or reinstall Gemini CLI, then retry.")
+        if error == "Antigravity OAuth configuration not found":
+            log_yellow("   Install or update Antigravity.app, then retry.")
         else:
             log_yellow("   Token endpoint unreachable — retry later.")
         return None, "transient"
@@ -547,7 +512,7 @@ def _expiry_status(claims: Claims | None) -> tuple[str, str]:
 def _claims_lines(claims: Claims | None) -> list[str]:
     if claims is None:
         return [
-            f"{YELLOW}No auth file found.{RESET} Run: {BOLD}gemini{RESET} and log in"
+            f"{YELLOW}No auth file found.{RESET} Run: {BOLD}agy-accounts login-switch <name>{RESET}"
         ]
 
     has_any = any(
@@ -648,26 +613,17 @@ def _print_accounts_table(rows: list[dict[str, str]]) -> None:
 
 
 def cmd_who() -> int:
-    active_email = None
-    ga = _google_accounts_file()
-    if ga.is_file():
-        try:
-            active_email = json.loads(ga.read_text(encoding="utf-8")).get("active")
-        except (OSError, ValueError):
-            active_email = None
+    active_email = _string((_read_active_claims() or {}).get("email"))
 
     status_lines = []
     if _auth_file().is_file():
         status_lines.append(f"{GREEN}Logged in{RESET}  {DIM}({_auth_file()}){RESET}")
     else:
         status_lines.append(
-            f"{RED}Not logged in{RESET}  {DIM}(no oauth_creds.json — run `gemini` and log in){RESET}"
+            f"{RED}Not logged in{RESET}  {DIM}(run `agy-accounts login-switch <name>`){RESET}"
         )
-    status_lines.append(
-        f"{DIM}Active account{RESET}: {active_email or '—'}"
-        + (f"  {DIM}(not installed){RESET}" if not have("gemini") else "")
-    )
-    _panel("Gemini Login Status", status_lines)
+    status_lines.append(f"{DIM}Active account{RESET}: {active_email or '—'}")
+    _panel("Antigravity Login Status", status_lines)
 
     print()
     _panel("Current Auth Claims", _claims_lines(_read_active_claims()))
@@ -688,11 +644,8 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     _auth_file().write_text(auth_text, encoding="utf-8")
     _auth_file().chmod(0o600)
     _set_current_profile(profile_file)
-    _set_active_google_account(
-        _string((_claims_from_text(auth_text) or {}).get("email"))
-    )
 
-    print(f"{GREEN}✅ Saved Gemini profile:{RESET} {BOLD}{name}{RESET}")
+    print(f"{GREEN}✅ Saved Antigravity profile:{RESET} {BOLD}{name}{RESET}")
     print(f"{DIM}   → {profile_file}{RESET}\n")
     _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
     return 0
@@ -701,8 +654,8 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
 def cmd_save(name: str) -> int:
     auth_text = _read_active_auth_text()
     if auth_text is None:
-        log_red(f"❌ No Gemini auth file found: {_auth_file()}")
-        log_yellow("   Run: gemini  (and log in)")
+        log_red(f"❌ No Antigravity auth file found: {_auth_file()}")
+        log_yellow("   Run: agy-accounts login-switch <profile_name>")
         return 1
     return _save_profile_auth(name, auth_text)
 
@@ -711,7 +664,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
-        log_yellow("⚠️  No saved Gemini profiles.")
+        log_yellow("⚠️  No saved Antigravity profiles.")
         print(
             f"{DIM}   Add one with: agy-accounts save <profile_name>{RESET}",
             file=sys.stderr,
@@ -766,7 +719,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             }
         )
 
-    print(f"{BOLD}Saved Gemini profiles{RESET}  {DIM}({len(rows)}){RESET}")
+    print(f"{BOLD}Saved Antigravity profiles{RESET}  {DIM}({len(rows)}){RESET}")
     _print_accounts_table(rows)
     return 0
 
@@ -800,14 +753,10 @@ def cmd_switch(name: str) -> int:
     shutil.copy2(profile_file, auth_path)
     auth_path.chmod(0o600)
     _set_current_profile(profile_file)
-    _set_active_google_account(_string((_read_claims(profile_file) or {}).get("email")))
 
-    print(f"{GREEN}✅ Switched Gemini profile to:{RESET} {BOLD}{name}{RESET}")
+    print(f"{GREEN}✅ Switched Antigravity profile to:{RESET} {BOLD}{name}{RESET}")
     if backup_path:
         print(f"{DIM}   (previous auth backed up to {backup_path}){RESET}")
-    # ponytail: no self-heal-on-switch refresh — Gemini auto-refreshes its own
-    # short-lived access token on next use; run `agy-accounts refresh` to force it.
-
     print()
     return cmd_who()
 
@@ -815,10 +764,10 @@ def cmd_switch(name: str) -> int:
 def cmd_switch_interactive() -> int:
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
-        log_yellow("⚠️  No saved Gemini profiles available to switch.")
+        log_yellow("⚠️  No saved Antigravity profiles available to switch.")
         return 1
 
-    print(f"{BOLD}Choose a Gemini profile:{RESET}")
+    print(f"{BOLD}Choose an Antigravity profile:{RESET}")
     for index, profile in enumerate(profiles, start=1):
         print(
             f"  {index}) {profile.stem}  {DIM}{_identity_label(_read_claims(profile))}{RESET}"
@@ -852,7 +801,7 @@ def cmd_remove(name: str) -> int:
     profile_file.unlink()
     if was_current:
         _current_profile_marker().unlink(missing_ok=True)
-    print(f"{GREEN}✅ Removed Gemini profile:{RESET} {name}")
+    print(f"{GREEN}✅ Removed Antigravity profile:{RESET} {name}")
     return 0
 
 
@@ -874,7 +823,7 @@ def _refresh_one_profile(
         return 1, kind
 
     if show_summary:
-        print(f"{GREEN}✅ Refreshed Gemini profile:{RESET} {BOLD}{name}{RESET}")
+        print(f"{GREEN}✅ Refreshed Antigravity profile:{RESET} {BOLD}{name}{RESET}")
     synced_active = _sync_refreshed_profile(profile_file)
     if show_summary and synced_active:
         print(f"{DIM}   (same account is active — oauth_creds.json updated too){RESET}")
@@ -891,7 +840,7 @@ def _refresh_all_profiles() -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
-        log_yellow("⚠️  No saved Gemini profiles to refresh.")
+        log_yellow("⚠️  No saved Antigravity profiles to refresh.")
         return 0
 
     revoked = []
@@ -915,17 +864,19 @@ def _refresh_all_profiles() -> int:
 def _refresh_active_auth() -> int:
     auth_path = _auth_file()
     if not auth_path.is_file():
-        log_red(f"❌ No Gemini auth file found: {auth_path}")
-        log_yellow("   Run: gemini  (and log in)")
+        log_red(f"❌ No Antigravity auth file found: {auth_path}")
+        log_yellow("   Run: agy-accounts login-switch <profile_name>")
         return 1
 
     profile_path = _active_profile(_read_active_auth_text())
     refreshed, _kind = _refresh_file(
-        auth_path, "the active auth", relogin_hint="Re-login with: gemini  (and log in)"
+        auth_path,
+        "the active auth",
+        relogin_hint="Re-login with: agy-accounts login-switch <profile_name>",
     )
     if refreshed is None:
         return 1
-    print(f"{GREEN}✅ Refreshed active Gemini auth.{RESET}")
+    print(f"{GREEN}✅ Refreshed active Antigravity auth.{RESET}")
 
     if profile_path is not None:
         _copy_active_auth_to(profile_path)
@@ -952,8 +903,8 @@ def cmd_refresh(target: str | None) -> int:
 def cmd_sync() -> int:
     auth_path = _auth_file()
     if not auth_path.is_file():
-        log_red(f"❌ No Gemini auth file found: {auth_path}")
-        log_yellow("   Run: gemini  (and log in)")
+        log_red(f"❌ No Antigravity auth file found: {auth_path}")
+        log_yellow("   Run: agy-accounts login-switch <profile_name>")
         return 1
 
     profile_path = _active_profile(_read_active_auth_text())
@@ -976,75 +927,142 @@ def cmd_sync() -> int:
     return 0
 
 
-@contextmanager
-def _suppress_interrupt_echo():
-    try:
-        import termios
+class _OAuthCallbackHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        server = cast("_OAuthCallbackServer", self.server)
+        server.oauth_callback = {key: values[0] for key, values in query.items()}
+        body = b"Antigravity login complete. You can close this window."
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-        fd = sys.stdin.fileno()
-        if not os.isatty(fd) or not hasattr(termios, "ECHOCTL"):
-            yield
-            return
-        original = termios.tcgetattr(fd)
-        if not original[3] & termios.ECHOCTL:
-            yield
-            return
-        quiet = original.copy()
-        quiet[3] &= ~termios.ECHOCTL
-        termios.tcsetattr(fd, termios.TCSANOW, quiet)
-    except (ImportError, OSError):
-        yield
+    def log_message(self, format: str, *args: object) -> None:
         return
 
-    try:
-        yield
-    finally:
-        termios.tcsetattr(fd, termios.TCSANOW, original)
+
+class _OAuthCallbackServer(HTTPServer):
+    oauth_callback: dict[str, str] | None = None
 
 
-def _run_isolated_login() -> tuple[str | None, int]:
-    """Drive a fresh Gemini login into an isolated GEMINI_CLI_HOME so the
-    current profile is untouched. Gemini has no headless `login` subcommand —
-    it authenticates on interactive launch — so this starts `gemini` in the
-    temp home; complete the Google login, then exit gemini to harvest the
-    credentials it wrote."""
-    with tempfile.TemporaryDirectory(prefix="agy-accounts-login-") as temp_dir:
-        login_home = Path(temp_dir)
-        env = os.environ.copy()
-        env["GEMINI_CLI_HOME"] = str(login_home)
-        env.pop("GEMINI_ACCOUNT_DIR", None)
-        env.pop("GEMINI_OAUTH_JSON", None)
-        print(
-            f"{DIM}Launching gemini for login — complete the browser sign-in, then exit gemini.{RESET}"
+def _authorization_url(redirect_uri: str, state: str, client_id: str) -> str:
+    return (
+        _OAUTH_AUTH_URL
+        + "?"
+        + urllib.parse.urlencode(
+            {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "response_type": "code",
+                "scope": " ".join(_OAUTH_SCOPES),
+                "access_type": "offline",
+                "prompt": "select_account consent",
+                "state": state,
+            }
         )
-        try:
-            with _suppress_interrupt_echo():
-                login = subprocess.run(["gemini"], env=env)
-        except KeyboardInterrupt:
-            log_yellow("Login cancelled. Your current profile was not changed.")
-            return None, 130
-        if login.returncode != 0:
-            log_red("❌ gemini login did not complete successfully")
-            return None, login.returncode
-        creds = login_home / ".gemini" / "oauth_creds.json"
-        try:
-            return creds.read_text(encoding="utf-8"), 0
-        except OSError as error:
-            log_red(
-                f"❌ gemini login completed without a readable oauth_creds.json: {error}"
-            )
-            return None, 1
+    )
+
+
+def _exchange_auth_code(
+    code: str, redirect_uri: str, client_id: str, client_secret: str
+) -> JsonDict:
+    request = urllib.request.Request(
+        _OAUTH_TOKEN_URL,
+        data=urllib.parse.urlencode(
+            {
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict) or not _string(payload.get("access_token")):
+        raise ValueError("Google token response did not contain an access token")
+    expires_in = payload.get("expires_in")
+    if isinstance(expires_in, int | float):
+        payload["expiry_date"] = int((time.time() + expires_in) * 1000)
+    return payload
+
+
+def _fetch_user_email(access_token: str) -> str | None:
+    request = urllib.request.Request(
+        _OAUTH_USERINFO_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    return _string(payload.get("email")) if isinstance(payload, dict) else None
+
+
+def _run_antigravity_login(timeout: float = 120) -> tuple[str | None, int]:
+    client = _oauth_client_credentials()
+    if client is None:
+        log_red("❌ Antigravity OAuth client not found in Antigravity.app")
+        log_yellow("   Install or update Antigravity.app, then retry.")
+        return None, 1
+
+    client_id, client_secret = client
+    state = secrets.token_urlsafe(32)
+    server = _OAuthCallbackServer(("127.0.0.1", 0), _OAuthCallbackHandler)
+    server.timeout = timeout
+    redirect_uri = f"http://127.0.0.1:{server.server_port}/callback"
+    auth_url = _authorization_url(redirect_uri, state, client_id)
+    print(f"{DIM}Opening Antigravity Google authentication in your browser.{RESET}")
+    if not webbrowser.open(auth_url):
+        log_yellow(f"Open this URL manually:\n{auth_url}")
+    try:
+        server.handle_request()
+    except KeyboardInterrupt:
+        log_yellow("Login cancelled. Your current profile was not changed.")
+        return None, 130
+    finally:
+        server.server_close()
+
+    callback = server.oauth_callback
+    if callback is None:
+        log_red("❌ Antigravity login timed out")
+        return None, 1
+    if callback.get("state") != state:
+        log_red("❌ Google login state mismatch")
+        return None, 1
+    if callback.get("error"):
+        log_red(f"❌ Google login failed: {callback['error']}")
+        return None, 1
+    code = callback.get("code")
+    if not code:
+        log_red("❌ Google login did not return an authorization code")
+        return None, 1
+    try:
+        credentials = _exchange_auth_code(code, redirect_uri, client_id, client_secret)
+        access_token = _string(credentials.get("access_token"))
+        if access_token:
+            email = _fetch_user_email(access_token)
+            if email:
+                credentials["email"] = email
+        return json.dumps(credentials, indent=2) + "\n", 0
+    except (OSError, ValueError) as error:
+        log_red(f"❌ Could not complete Antigravity login: {error}")
+        return None, 1
 
 
 def cmd_login_switch(name: str) -> int:
-    if not ensure_tool("gemini"):
-        return 1
     if _profile_file(name) is None:
         return 1
     outgoing_profile = _active_profile(_read_active_auth_text())
     if outgoing_profile is not None:
         _copy_active_auth_to(outgoing_profile)
-    auth_text, returncode = _run_isolated_login()
+    auth_text, returncode = _run_antigravity_login()
     if auth_text is None:
         return returncode
     return _save_profile_auth(name, auth_text)

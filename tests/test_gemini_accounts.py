@@ -1,8 +1,7 @@
-"""Tests for agy-accounts (Gemini CLI profile manager).
+"""Tests for agy-accounts (Antigravity OAuth profile manager).
 
-All filesystem access is redirected into a temp dir via GEMINI_CLI_HOME (which
-agy-accounts resolves to ``<home>/.gemini``, mirroring the real CLI); the OAuth
-refresh HTTP call is mocked — no network, no real tokens. Run with:
+All filesystem access is redirected into a temp dir via ANTIGRAVITY_HOME; the
+OAuth refresh HTTP call is mocked — no network, no real tokens. Run with:
 ``uv run pytest tests/test_gemini_accounts.py``.
 """
 
@@ -16,6 +15,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from email.message import Message
@@ -59,19 +59,19 @@ class _GeminiHomeMixin(unittest.TestCase):
     def __init__(self, methodName: str = "runTest"):
         super().__init__(methodName)
         self.tmp = tempfile.TemporaryDirectory()
-        self.home = Path(self.tmp.name) / ".gemini"
+        self.home = Path(self.tmp.name) / "antigravity"
 
     def setUp(self):
         self.tmp.cleanup()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.home = Path(self.tmp.name) / ".gemini"
+        self.home = Path(self.tmp.name) / "antigravity"
         env = mock.patch.dict(
-            os.environ, {"GEMINI_CLI_HOME": self.tmp.name}, clear=False
+            os.environ, {"ANTIGRAVITY_HOME": str(self.home)}, clear=False
         )
         env.start()
         self.addCleanup(env.stop)
-        for var in ("GEMINI_ACCOUNT_DIR", "GEMINI_OAUTH_JSON"):
+        for var in ("ANTIGRAVITY_ACCOUNT_DIR", "ANTIGRAVITY_OAUTH_JSON"):
             os.environ.pop(var, None)
         (self.home / "accounts").mkdir(parents=True)
 
@@ -89,10 +89,6 @@ class _GeminiHomeMixin(unittest.TestCase):
         path = self.home / "accounts" / ".current-profile"
         path.write_text(name, encoding="utf-8")
         return path
-
-    def google_accounts(self) -> ga.JsonDict:
-        path = self.home / "google_accounts.json"
-        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
     def run_quiet(self, fn, *args) -> int:
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -179,20 +175,27 @@ class OauthRefreshRequestTests(unittest.TestCase):
         self.assertIsNotNone(error)
         self.assertIn("401", error or "")
 
-    def test_client_credentials_are_loaded_from_installed_cli(self):
+    def test_client_credentials_are_loaded_from_installed_app(self):
         with tempfile.TemporaryDirectory() as tmp:
-            package = Path(tmp) / "gemini-cli"
-            executable = package / "bundle" / "gemini.js"
-            executable.parent.mkdir(parents=True)
-            executable.write_text(
-                "const OAUTH_CLIENT_ID = 'fixture-id';\n"
-                "const OAUTH_CLIENT_SECRET = 'fixture-secret';\n",
-                encoding="utf-8",
+            root = Path(tmp)
+            artifact = root / "Antigravity.app/Contents/Resources/app/out/main.js"
+            artifact.parent.mkdir(parents=True)
+            client_id = "123456-fixture.apps.googleusercontent.com"
+            client_secret = "GOCSPX-" + "x" * 28
+            artifact.write_text(f"{client_id}\n{client_secret}\n", encoding="utf-8")
+            self.assertEqual(
+                ga._oauth_client_credentials((root,)), (client_id, client_secret)
             )
-            with mock.patch.object(ga.shutil, "which", return_value=str(executable)):
-                self.assertEqual(
-                    ga._oauth_client_credentials(), ("fixture-id", "fixture-secret")
-                )
+
+    def test_authorization_url_uses_antigravity_client_and_offline_consent(self):
+        url = ga._authorization_url(
+            "http://127.0.0.1:12345/callback", "state-123", "antigravity-client"
+        )
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        self.assertEqual(query["client_id"], ["antigravity-client"])
+        self.assertEqual(query["access_type"], ["offline"])
+        self.assertEqual(query["prompt"], ["select_account consent"])
+        self.assertEqual(query["state"], ["state-123"])
 
 
 class GeminiUsageTests(_GeminiHomeMixin):
@@ -248,7 +251,7 @@ class GeminiUsageTests(_GeminiHomeMixin):
 
 
 class SaveCommandTests(_GeminiHomeMixin):
-    def test_save_persists_active_auth_and_sets_google_active(self):
+    def test_save_persists_active_auth(self):
         self.write_auth(_creds("sub-w", "w@x.com", refresh_token="rt-live"))
         rc = self.run_quiet(ga.cmd_save, "work")
 
@@ -258,8 +261,6 @@ class SaveCommandTests(_GeminiHomeMixin):
         self.assertEqual(
             (self.home / "accounts" / ".current-profile").read_text(), "work"
         )
-        # Gemini's own account tracker updated to the saved account.
-        self.assertEqual(self.google_accounts()["active"], "w@x.com")
 
     def test_save_without_auth_errors(self):
         rc = self.run_quiet(ga.cmd_save, "nope")
@@ -268,10 +269,7 @@ class SaveCommandTests(_GeminiHomeMixin):
 
     def test_login_switch_saves_isolated_auth(self):
         fresh = json.dumps(_creds("sub-new", "new@x.com", refresh_token="rt-fresh"))
-        with (
-            mock.patch.object(ga, "ensure_tool", return_value=True),
-            mock.patch.object(ga, "_run_isolated_login", return_value=(fresh, 0)),
-        ):
+        with mock.patch.object(ga, "_run_antigravity_login", return_value=(fresh, 0)):
             rc = self.run_quiet(ga.cmd_login_switch, "newacct")
 
         self.assertEqual(rc, 0)
@@ -285,20 +283,16 @@ class SaveCommandTests(_GeminiHomeMixin):
         self.write_auth(_creds("sub-old", "old@x.com", refresh_token="rt-current"))
         self.mark_current("current")
 
-        with (
-            mock.patch.object(ga, "ensure_tool", return_value=True),
-            mock.patch.object(ga.subprocess, "run", side_effect=KeyboardInterrupt),
-        ):
+        with mock.patch.object(ga, "_run_antigravity_login", return_value=(None, 130)):
             rc, _out, err = self.run_capture(ga.cmd_login_switch, "newacct")
 
         self.assertEqual(rc, 130)
-        self.assertIn("Login cancelled", err)
         self.assertEqual(json.loads(current.read_text())["refresh_token"], "rt-current")
         self.assertFalse((self.home / "accounts" / "newacct.json").exists())
 
 
 class SwitchCommandTests(_GeminiHomeMixin):
-    def test_switch_restores_profile_backs_up_and_sets_active(self):
+    def test_switch_restores_profile_and_backs_up(self):
         self.write_profile("work", _creds("sub-w", "w@x.com", refresh_token="rt-work"))
         self.write_auth(_creds("sub-p", "p@x.com", refresh_token="rt-personal"))
 
@@ -311,7 +305,6 @@ class SwitchCommandTests(_GeminiHomeMixin):
         self.assertEqual(
             (self.home / "accounts" / ".current-profile").read_text(), "work"
         )
-        self.assertEqual(self.google_accounts()["active"], "w@x.com")
 
     def test_switch_unknown_profile_errors(self):
         rc = self.run_quiet(ga.cmd_switch, "ghost")

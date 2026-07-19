@@ -65,7 +65,13 @@ def _project_id(access_token: str) -> str | None:
     result = _post(
         access_token,
         _LOAD_CODE_ASSIST_URL,
-        {"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}},
+        {
+            "metadata": {
+                "ideType": "ANTIGRAVITY",
+                "platform": "PLATFORM_UNSPECIFIED",
+                "pluginType": "GEMINI",
+            }
+        },
     )
     if not isinstance(result, dict):
         return None

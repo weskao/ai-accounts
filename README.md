@@ -37,7 +37,7 @@ After install, the following commands are available on `PATH`:
 | `html2md` | Convert HTML files to Markdown via pandoc |
 | `vcadd` | Add Chinese words with 注音符號（Bopomofo）readings to vChewing user dictionary |
 | `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove) |
-| `agy-accounts` | Manage multiple Gemini CLI login profiles (save / list / switch / remove) |
+| `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota |
 
 ## Update
 
@@ -427,25 +427,21 @@ Saved Codex profiles  (2)
 
 ---
 
-## `agy-accounts` — Gemini CLI Account Manager
+## `agy-accounts` — Antigravity Account Manager
 
-Save, list, and switch between multiple [Gemini CLI](https://github.com/google-gemini/gemini-cli)
-login profiles and inspect each profile's Pro, Flash, and Flash Lite quota. Sibling of
-`codex-accounts`, adapted to the Gemini CLI's auth model. Never prints raw tokens — only decoded,
-non-secret `id_token` claims (email, name, Google account ID, expiry).
-Saved profiles under `~/.gemini/accounts/` contain OAuth tokens — treat that directory as secrets.
+Save, list, and switch between multiple Antigravity Google OAuth profiles and inspect each
+profile's Pro, Flash, and Flash Lite quota. This is the replacement path for personal accounts
+that can no longer use Gemini CLI OAuth. It never requires a `GEMINI_API_KEY` and never prints
+raw tokens. The public installed-app OAuth client is discovered from `Antigravity.app` at runtime;
+no client ID or secret is hardcoded in this repository.
 
-> **Scope**: this tool only manages `~/.gemini/oauth_creds.json` (and the sibling
-> `google_accounts.json` account tracker) — it does not touch any other credential store. Gemini
-> stores credentials as a plain file, not a keychain, so `switch` is a local file copy — no
-> network call, safe at any time. Quota checks use the saved Google OAuth access token, not a
-> `GEMINI_API_KEY`. `refresh` reads the installed Gemini CLI's OAuth client configuration at runtime,
-> so no client credential is stored in this repository.
+Credentials use CodexBar's compatible `~/.codexbar/antigravity/` store. `switch` is a local file
+copy and quota checks use the selected Google OAuth access token.
 
 ### agy-accounts Usage
 
 ```sh
-agy-accounts who                   # show the current logged-in Gemini account
+agy-accounts who                   # show the selected Antigravity account
 agy-accounts current               # alias for `who`
 agy-accounts save <name>           # save the current login as a reusable profile
 agy-accounts list                  # list profiles with Pro / Flash / Flash Lite quota
@@ -455,28 +451,19 @@ agy-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browser,
                                    # no name = refresh the active auth + sync it back
 agy-accounts refresh --all         # renew every saved profile in one run
 agy-accounts sync                  # copy the active auth back to its matching profile
-agy-accounts login-switch <name>   # isolated gemini login + save as <name>
+agy-accounts login-switch <name>   # Antigravity Google login + save as <name>
 ```
 
 ### agy-accounts First-time setup
 
-**Prerequisite** — the Gemini CLI must be installed:
+**Prerequisite** — install the Antigravity app:
 
 ```sh
-which gemini || npm install -g @google/gemini-cli
+open https://antigravity.google
 ```
 
-**Single account** — log in once, save the profile:
-
-```sh
-gemini                           # opens browser for authentication, then exit
-agy-accounts save personal       # save the active auth as "personal"
-agy-accounts who                 # confirm which account is active
-```
-
-**Multiple accounts** (e.g. personal + work) — use `login-switch`, which drives an isolated
-`gemini` login (a temp `GEMINI_CLI_HOME`) so the current profile is untouched, then saves the
-result:
+Then add one or more accounts directly. The browser login uses Antigravity's supported OAuth
+client and does not modify Gemini CLI credentials:
 
 ```sh
 agy-accounts login-switch personal   # log into the first account, save as "personal"
@@ -494,9 +481,7 @@ agy-accounts who               # confirm the current account
 
 ### agy-accounts Token upkeep
 
-Saved profiles are snapshots — Gemini keeps refreshing the *active* `oauth_creds.json` while you
-use it, but the copies under `~/.gemini/accounts/` go stale. Two commands keep them fresh, no
-re-login or Gemini API key required:
+Saved profiles are OAuth snapshots. These commands keep them fresh without a Gemini API key:
 
 ```sh
 agy-accounts refresh --all     # renew every saved profile via OAuth refresh
@@ -526,9 +511,9 @@ agy-accounts who                     # confirm which account is currently active
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GEMINI_CLI_HOME` | `~` | Base home Gemini resolves `.gemini/` under |
-| `GEMINI_OAUTH_JSON` | `$GEMINI_CLI_HOME/.gemini/oauth_creds.json` | Active Gemini auth file |
-| `GEMINI_ACCOUNT_DIR` | `$GEMINI_CLI_HOME/.gemini/accounts` | Where saved profiles are stored |
+| `ANTIGRAVITY_HOME` | `~/.codexbar/antigravity` | Active credentials and account store root |
+| `ANTIGRAVITY_OAUTH_JSON` | `$ANTIGRAVITY_HOME/oauth_creds.json` | Selected OAuth credentials |
+| `ANTIGRAVITY_ACCOUNT_DIR` | `$ANTIGRAVITY_HOME/accounts` | Saved profiles |
 
 ---
 
@@ -546,7 +531,7 @@ missing. Most can be auto-installed via Homebrew on first use.
 | `html2md` | `pandoc` |
 | `vcadd` | vChewing input method |
 | `codex-accounts` | `codex` CLI (required for `who`/`login-switch`; `list`/`save`/`switch`/`remove`/`refresh`/`sync` work without it) |
-| `agy-accounts` | `gemini` CLI (required for `login-switch` and `refresh`; other commands work without it) |
+| `agy-accounts` | `Antigravity.app` (OAuth client is discovered at login/refresh time) |
 
 ---
 
@@ -594,7 +579,7 @@ alias codexrefresh='codex-accounts refresh'
 alias codexsync='codex-accounts sync'
 alias codexloginswitch='codex-accounts login-switch'
 
-# Gemini accounts
+# Antigravity accounts
 alias agywho='agy-accounts who'
 alias agycurrent='agy-accounts current'
 alias agysave='agy-accounts save'
