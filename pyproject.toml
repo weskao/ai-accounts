@@ -17,6 +17,7 @@ towebp = "ai_accounts.towebp:main"
 html2md = "ai_accounts.html_to_md:main"
 vcadd = "ai_accounts.vcadd:main"
 codex-accounts = "ai_accounts.codex_accounts:main"
+agy-accounts = "ai_accounts.gemini_accounts:main"
 
 [build-system]
 requires = ["hatchling"]

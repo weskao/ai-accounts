@@ -37,6 +37,7 @@ After install, the following commands are available on `PATH`:
 | `html2md` | Convert HTML files to Markdown via pandoc |
 | `vcadd` | Add Chinese words with 注音符號（Bopomofo）readings to vChewing user dictionary |
 | `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove) |
+| `agy-accounts` | Manage multiple Gemini CLI login profiles (save / list / switch / remove) |
 
 ## Update
 
@@ -426,6 +427,111 @@ Saved Codex profiles  (2)
 
 ---
 
+## `agy-accounts` — Gemini CLI Account Manager
+
+Save, list, and switch between multiple [Gemini CLI](https://github.com/google-gemini/gemini-cli)
+login profiles and inspect each profile's Pro, Flash, and Flash Lite quota. Sibling of
+`codex-accounts`, adapted to the Gemini CLI's auth model. Never prints raw tokens — only decoded,
+non-secret `id_token` claims (email, name, Google account ID, expiry).
+Saved profiles under `~/.gemini/accounts/` contain OAuth tokens — treat that directory as secrets.
+
+> **Scope**: this tool only manages `~/.gemini/oauth_creds.json` (and the sibling
+> `google_accounts.json` account tracker) — it does not touch any other credential store. Gemini
+> stores credentials as a plain file, not a keychain, so `switch` is a local file copy — no
+> network call, safe at any time. Quota checks use the saved Google OAuth access token, not a
+> `GEMINI_API_KEY`. `refresh` reads the installed Gemini CLI's OAuth client configuration at runtime,
+> so no client credential is stored in this repository.
+
+### agy-accounts Usage
+
+```sh
+agy-accounts who                   # show the current logged-in Gemini account
+agy-accounts current               # alias for `who`
+agy-accounts save <name>           # save the current login as a reusable profile
+agy-accounts list                  # list profiles with Pro / Flash / Flash Lite quota
+agy-accounts switch [<name>]       # switch by name; no name = interactive picker
+agy-accounts remove <name>         # delete a saved profile
+agy-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browser, no logout);
+                                   # no name = refresh the active auth + sync it back
+agy-accounts refresh --all         # renew every saved profile in one run
+agy-accounts sync                  # copy the active auth back to its matching profile
+agy-accounts login-switch <name>   # isolated gemini login + save as <name>
+```
+
+### agy-accounts First-time setup
+
+**Prerequisite** — the Gemini CLI must be installed:
+
+```sh
+which gemini || npm install -g @google/gemini-cli
+```
+
+**Single account** — log in once, save the profile:
+
+```sh
+gemini                           # opens browser for authentication, then exit
+agy-accounts save personal       # save the active auth as "personal"
+agy-accounts who                 # confirm which account is active
+```
+
+**Multiple accounts** (e.g. personal + work) — use `login-switch`, which drives an isolated
+`gemini` login (a temp `GEMINI_CLI_HOME`) so the current profile is untouched, then saves the
+result:
+
+```sh
+agy-accounts login-switch personal   # log into the first account, save as "personal"
+agy-accounts login-switch work       # log into the second account, save as "work"
+agy-accounts list                    # verify both profiles are saved
+```
+
+After the initial setup, switch at any time with:
+
+```sh
+agy-accounts switch personal   # activate the "personal" profile
+agy-accounts switch work       # activate the "work" profile
+agy-accounts who               # confirm the current account
+```
+
+### agy-accounts Token upkeep
+
+Saved profiles are snapshots — Gemini keeps refreshing the *active* `oauth_creds.json` while you
+use it, but the copies under `~/.gemini/accounts/` go stale. Two commands keep them fresh, no
+re-login or Gemini API key required:
+
+```sh
+agy-accounts refresh --all     # renew every saved profile via OAuth refresh
+agy-accounts refresh work      # renew just one profile
+agy-accounts refresh           # renew the active auth, then sync it back to its profile
+agy-accounts sync              # no network: copy the (already-fresh) active auth back
+                                # to its matching profile
+```
+
+When a refreshed profile belongs to the currently active account, `refresh` also updates
+`oauth_creds.json` — Google's refresh rotates tokens, so this keeps the live login from being
+stranded with a dead token. If a refresh fails because the refresh token itself has expired or
+been revoked, re-login with `agy-accounts login-switch <name>`.
+
+### agy-accounts Examples
+
+```sh
+agy-accounts login-switch personal   # log into a new account, save it as "personal"
+agy-accounts login-switch work       # log into another account, save it as "work"
+agy-accounts list                    # see all saved profiles, with the active one marked
+agy-accounts switch personal         # switch back to "personal"
+agy-accounts refresh --all           # renew tokens for every saved profile
+agy-accounts who                     # confirm which account is currently active
+```
+
+### agy-accounts Environment Overrides
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GEMINI_CLI_HOME` | `~` | Base home Gemini resolves `.gemini/` under |
+| `GEMINI_OAUTH_JSON` | `$GEMINI_CLI_HOME/.gemini/oauth_creds.json` | Active Gemini auth file |
+| `GEMINI_ACCOUNT_DIR` | `$GEMINI_CLI_HOME/.gemini/accounts` | Where saved profiles are stored |
+
+---
+
 ## External binaries required
 
 Each tool checks its own dependencies and reports a clear error if anything is
@@ -440,6 +546,7 @@ missing. Most can be auto-installed via Homebrew on first use.
 | `html2md` | `pandoc` |
 | `vcadd` | vChewing input method |
 | `codex-accounts` | `codex` CLI (required for `who`/`login-switch`; `list`/`save`/`switch`/`remove`/`refresh`/`sync` work without it) |
+| `agy-accounts` | `gemini` CLI (required for `login-switch` and `refresh`; other commands work without it) |
 
 ---
 
@@ -486,6 +593,17 @@ alias codexremove='codex-accounts remove'
 alias codexrefresh='codex-accounts refresh'
 alias codexsync='codex-accounts sync'
 alias codexloginswitch='codex-accounts login-switch'
+
+# Gemini accounts
+alias agywho='agy-accounts who'
+alias agycurrent='agy-accounts current'
+alias agysave='agy-accounts save'
+alias agylist='agy-accounts list'
+alias agyswitch='agy-accounts switch'
+alias agyremove='agy-accounts remove'
+alias agyrefresh='agy-accounts refresh'
+alias agysync='agy-accounts sync'
+alias agyloginswitch='agy-accounts login-switch'
 ```
 
 ---
