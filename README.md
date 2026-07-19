@@ -537,6 +537,34 @@ agy-accounts refresh --all           # renew tokens for every saved profile
 agy-accounts who                     # confirm which account is currently active
 ```
 
+### agy-accounts Output
+
+- `list` temporarily activates each profile, queries `agy` for quota, and restores the original session:
+
+```text
+❯ agy-accounts list
+Saved Antigravity profiles  (5)
+┌─────────────┬──────────────────────────┬──────┬───────────────────┬────────────────────┬─────────┬─────────────┬────────┐
+│ PROFILE     │ ACCOUNT                  │ PLAN │ GEMINI 1W USED    │ CLAUDE/GPT 1W USED │ UPDATED │ SESSION     │ STATE  │
+├─────────────┼──────────────────────────┼──────┼───────────────────┼────────────────────┼─────────┼─────────────┼────────┤
+│ personal    │ alex.nova@gmail.com      │ Pro  │   3% · 6d 18h 12m │   0% · 6d 23h 59m  │ 02:14   │ refreshable │ ACTIVE │
+│ work        │ casey.demo@gmail.com     │ Pro  │  52% · 4d  2h 37m │  38% · 5d  9h 22m  │ 02:14   │ browser     │ —      │
+│ side        │ jordan.test@gmail.com    │ Pro  │ 100% · 1d 14h 55m │  71% · 3d 17h 48m  │ 02:14   │ refreshable │ —      │
+│ research    │ morgan.example@gmail.com │ Free │  29% · 5d  7h 19m │   0% · 6d 23h 59m  │ 02:14   │ api-key     │ —      │
+│ backup      │ riley.sample@gmail.com   │ Pro  │   0% · 6d 23h 59m │   0% · 6d 23h 59m  │ 02:14   │ expired     │ —      │
+└─────────────┴──────────────────────────┴──────┴───────────────────┴────────────────────┴─────────┴─────────────┴────────┘
+```
+
+Session types:
+- `refreshable` — valid refresh token; `agy` renews the access token automatically
+- `browser` — session was restored from a browser login snapshot (no refresh token stored)
+- `api-key` — profile uses a Gemini API key instead of an OAuth session
+- `expired` — refresh token has expired; re-login required (`agy-accounts login-switch <name>`)
+
+- `who` and `switch` render a bordered "Current Auth Claims" panel with token expiry color-coded
+  (green = valid, yellow = expiring within 24 h, red = `EXPIRED`).
+- `switch` backs up the previous Keychain session (timestamped, `chmod 600`) before overwriting it.
+
 ### agy-accounts Environment Overrides
 
 | Variable | Default | Purpose |
