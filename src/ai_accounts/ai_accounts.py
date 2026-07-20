@@ -2,17 +2,18 @@
 
 Fans a subcommand out to all three per-provider tools (codex-accounts,
 claude-accounts, agy-accounts) so one command covers every provider. ``list``
-runs the providers in parallel and captures their tables (its output embeds
-ANSI unconditionally, so color survives the pipe); every other command runs
-the providers one at a time with live stdio, so interactive flows (switch
-pickers, login-switch) and TTY-gated color keep working.
+runs the providers in parallel and prints each provider's table as soon as
+it finishes fetching (its output embeds ANSI unconditionally, so color
+survives the pipe); every other command runs the providers one at a time
+with live stdio, so interactive flows (switch pickers, login-switch) and
+TTY-gated color keep working.
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ._utils import RESET, Spinner, log_red
 
@@ -48,10 +49,12 @@ USAGE
   ai-accounts -h | --help            Show this help
 
 Each command is forwarded to codex-accounts, claude-accounts, and agy-accounts.
-`list` runs them concurrently and prints each table in a fixed order; every
-other command runs them one provider at a time with live output, so interactive
-pickers and login flows work and color is preserved. Any argument after the
-command (e.g. a profile name or `--all`) is passed through to each provider.
+`list` runs them concurrently and prints each table as soon as it finishes
+(fastest provider first), with a spinner tracking how many are still
+fetching in between; every other command runs them one provider at a time
+with live output, so interactive pickers and login flows work and color is
+preserved. Any argument after the command (e.g. a profile name or `--all`) is
+passed through to each provider.
 """
 
 
@@ -70,22 +73,37 @@ def _run_list(module: str) -> subprocess.CompletedProcess[str]:
 
 
 def cmd_list() -> int:
-    with Spinner(f"Fetching accounts from {len(_TOOLS)} providers…"):
-        with ThreadPoolExecutor(max_workers=len(_TOOLS)) as pool:
-            results = list(pool.map(lambda tool: _run_list(tool[1]), _TOOLS))
-
+    # Print each provider's table the moment it finishes, instead of waiting
+    # for the slowest one. A fresh Spinner between prints tracks how many are
+    # still outstanding, so the count shrinks live as results land; once the
+    # last provider prints, no spinner remains.
     exit_code = 0
-    for (label, _), result in zip(_TOOLS, results):
-        _header(label)
-        stdout = (result.stdout or "").strip("\n")
-        if stdout:
-            print(stdout)
-        stderr = (result.stderr or "").strip("\n")
-        if stderr:
-            print(stderr, file=sys.stderr)
-        if result.returncode != 0:
-            exit_code = result.returncode
-        print()
+    total = len(_TOOLS)
+    with ThreadPoolExecutor(max_workers=total) as pool:
+        futures = {pool.submit(_run_list, module): label for label, module in _TOOLS}
+        pending = as_completed(futures)
+        remaining = total
+        while remaining > 0:
+            message = (
+                f"Fetching accounts from {total} providers…"
+                if remaining == total
+                else f"Fetching remaining {remaining} provider{'' if remaining == 1 else 's'}…"
+            )
+            with Spinner(message):
+                future = next(pending)
+            remaining -= 1
+            label = futures[future]
+            result = future.result()
+            _header(label)
+            stdout = (result.stdout or "").strip("\n")
+            if stdout:
+                print(stdout)
+            stderr = (result.stderr or "").strip("\n")
+            if stderr:
+                print(stderr, file=sys.stderr)
+            if result.returncode != 0:
+                exit_code = result.returncode
+            print()
     return exit_code
 
 

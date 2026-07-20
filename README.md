@@ -718,15 +718,18 @@ ai-accounts -h | --help            Show this help
 ```
 
 Bare `ai-accounts` (no arguments) prints this help. `list` runs the three
-providers **concurrently** and captures their tables in a fixed order. Every
-other command runs the providers **one at a time with live output**, so
-interactive flows (switch pickers, `login-switch`) and color work unchanged;
-any argument after the command (a profile name, `--all`, …) is passed through
-to each provider. Per-provider errors are printed inline without aborting the
-others, and the exit code is non-zero if any provider's command failed.
-`list` shows its own spinner on a TTY while the three providers are queried
-concurrently (their own inner spinners stay off, since their output is
-captured rather than run on a live terminal).
+providers **concurrently** and prints each one's table as soon as it
+finishes — fastest provider first, not a fixed order — with a spinner in
+between tracking how many are still outstanding (`Fetching remaining 2
+providers…`, then `1`, …) until the last table lands and the spinner
+disappears for good. Every other command runs the providers **one at a time
+with live output**, so interactive flows (switch pickers, `login-switch`) and
+color work unchanged; any argument after the command (a profile name,
+`--all`, …) is passed through to each provider. Per-provider errors are
+printed inline without aborting the others, and the exit code is non-zero if
+any provider's command failed. `list`'s spinner only shows on a TTY (their
+own inner spinners stay off, since their output is captured rather than run
+on a live terminal).
 
 ---
 
