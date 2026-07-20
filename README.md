@@ -65,6 +65,7 @@ After install, the following commands are available on `PATH`:
 | `html2md` | Convert HTML files to Markdown via pandoc |
 | `vcadd` | Add Chinese words with 注音符號（Bopomofo）readings to vChewing user dictionary (macOS) |
 | `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove) |
+| `claude-accounts` | Manage multiple Claude Code login profiles and inspect usage |
 | `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota (macOS) |
 
 ## Update
@@ -333,12 +334,46 @@ vcadd 人工智慧 機器學習  # add multiple words at once
 
 ---
 
+## Account profile storage
+
+All three account managers (`codex-accounts`, `claude-accounts`, `agy-accounts`)
+keep their saved profiles in one central, hidden folder under your **home
+directory**:
+
+```text
+$HOME/
+└── .ai-accounts/
+    ├── claude/accounts/          # claude-accounts profiles
+    ├── codex/accounts/           # codex-accounts profiles
+    └── antigravity/accounts/     # agy-accounts profiles
+```
+
+The path is resolved from the running user's home directory at runtime
+(`~/.ai-accounts` on macOS/Linux, `C:\Users\<name>\.ai-accounts` on Windows), so it
+works the same on all three platforms and is completely independent of where
+this repository or the installed tools live — moving or reinstalling ai-accounts
+never touches the stored profiles.
+
+The location is deliberately **outside** the app dotdirs (`~/.claude`,
+`~/.codex`): if you version-control a dotdir as a dotfiles repo, the OAuth
+token snapshots that profiles contain can never end up in a commit. A store
+found at a legacy in-dotdir location (`~/.claude/accounts`,
+`~/.codex/accounts`) is moved to the central location automatically the first
+time a command touches it, with a one-line notice.
+
+Treat `~/.ai-accounts` as secrets — every `<name>.json` profile holds live auth
+tokens. Each tool's location can be overridden individually via
+`CODEX_ACCOUNT_DIR` / `CLAUDE_ACCOUNT_DIR` / `ANTIGRAVITY_ACCOUNT_DIR` (see
+each tool's Environment Overrides section).
+
+---
+
 ## `codex-accounts` — Codex CLI Account Manager
 
 Save, list, and switch between multiple [Codex CLI](https://github.com/openai/codex) login
-profiles. Never prints raw tokens — only decoded, non-secret claims (email, name, account ID,
-org ID, expiry). Saved profiles under `~/.codex/accounts/` contain auth tokens — treat that
-directory as secrets.
+profiles. Never prints raw tokens — only decoded, non-secret claims (email, name, plan,
+account ID, org ID, expiry). Saved profiles under `~/.ai-accounts/codex/accounts/` contain auth
+tokens — treat that directory as secrets.
 
 > **Scope**: this tool only manages `~/.codex/auth.json` — it does **not** touch OpenAI API
 > keys or any other credential store. When Codex is configured with `auth_mode: chatgpt`
@@ -454,7 +489,52 @@ Saved Codex profiles  (2)
 | --- | --- | --- |
 | `CODEX_HOME` | `~/.codex` | Base Codex config directory |
 | `CODEX_AUTH_JSON` | `$CODEX_HOME/auth.json` | Active Codex auth file |
-| `CODEX_ACCOUNT_DIR` | `$CODEX_HOME/accounts` | Where saved profiles are stored |
+| `CODEX_ACCOUNT_DIR` | `~/.ai-accounts/codex/accounts` | Where saved profiles are stored |
+
+---
+
+## `claude-accounts` — Claude Code Account Manager
+
+Save, list, and switch between multiple [Claude Code](https://claude.com/claude-code) login
+profiles. Never prints raw tokens — only non-secret claims (plan tier with rate multiplier,
+scopes, expiry). Works on macOS, Windows, and Linux; on macOS the login-keychain mirror that
+Claude Code reads is kept in step automatically.
+
+Claude's OAuth token is opaque (no email/name inside), so profiles are told apart by the
+plan tier (e.g. `team · 5x`, `Max · 20x`) and a short token fingerprint instead of an
+account identity.
+
+### claude-accounts Usage
+
+```sh
+claude-accounts who                   # show the current logged-in account
+claude-accounts current               # alias for `who`
+claude-accounts save <name>           # save the current login as a reusable profile
+claude-accounts list                  # list saved profiles with 5h/1w usage (table view)
+claude-accounts switch [<name>]       # switch by name; no name = interactive picker
+claude-accounts remove <name>         # delete a saved profile
+claude-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browser, no logout)
+claude-accounts refresh --all         # renew every saved profile in one run
+claude-accounts sync                  # copy the active auth back to its matching profile
+claude-accounts login-switch <name>   # `claude auth login` + save as <name>
+```
+
+### claude-accounts First-time setup
+
+```sh
+claude-accounts login-switch personal   # log into the first account, save as "personal"
+claude-accounts login-switch work       # log into the second account, save as "work"
+claude-accounts list                    # verify both profiles are saved
+claude-accounts switch personal         # jump back to the first account
+```
+
+### claude-accounts Environment Overrides
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | Base Claude Code config directory |
+| `CLAUDE_CREDENTIALS_JSON` | `$CLAUDE_CONFIG_DIR/.credentials.json` | Active Claude credentials file |
+| `CLAUDE_ACCOUNT_DIR` | `~/.ai-accounts/claude/accounts` | Where saved profiles are stored |
 
 ---
 
