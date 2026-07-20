@@ -32,8 +32,10 @@ from pathlib import Path
 from typing import Final
 
 from . import claude_usage
-from .usage_format import align_usage_cells, capitalize_first, format_unix_time_compact, format_usage_window
+from .usage_format import capitalize_first, format_unix_time_compact, format_usage_window
+from ._present import _ANSI_RE, accounts_table, choose_profile, ok, panel, usage_color
 from ._utils import (
+    BOLD,
     DIM,
     GREEN,
     RED,
@@ -52,10 +54,6 @@ from ._utils import (
 # Claude paid tiers, low → high (Free is left uncolored by the caller).
 _PLAN_TIERS = ("pro", "team", "max")
 
-BOLD = "\033[1m"
-CYAN = "\033[1;36m"
-
-_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 _OAUTH_KEY: Final = "claudeAiOauth"
 _IDENTITY_KEY: Final = "ai-accountsAccount"  # non-secret identity snapshot (email/name)
 
@@ -595,21 +593,6 @@ def _token_expired_or_soon(claims: dict | None) -> bool:
 
 # ── terminal rendering ───────────────────────────────────────────────────
 
-def _visible_len(s: str) -> int:
-    return len(_ANSI_RE.sub("", s))
-
-
-def _panel(title: str, lines: list[str], accent: str = CYAN, width: int = 64) -> None:
-    """Bordered header/footer rule around left-aligned content — legible even
-    with embedded ANSI color codes since only the header/footer are measured."""
-    width = max(width, _visible_len(title) + 8)
-    top_dashes = width - _visible_len(title) - 4
-    print(f"{accent}┌─ {BOLD}{title}{RESET}{accent} {'─' * top_dashes}┐{RESET}")
-    for line in lines or [f"{DIM}(none){RESET}"]:
-        print(f"{accent}│{RESET}  {line}")
-    print(f"{accent}└{'─' * (width - 1)}┘{RESET}")
-
-
 def _expiry_status(claims: dict | None) -> tuple[str, str]:
     if not claims or not claims.get("expires_str"):
         return "—", DIM
@@ -660,62 +643,34 @@ def _claims_lines(claims: dict | None) -> list[str]:
     return lines
 
 
-def _usage_color(percentage: int) -> str:
-    if percentage >= 80:
-        return RED + BOLD
-    if percentage >= 50:
-        return YELLOW
-    return GREEN
-
-
 def _usage_cell(window: claude_usage.UsageWindow | None, window_kind: str) -> str:
     if window is None:
         return f"{DIM}—{RESET}"
-    percent = f"{_usage_color(window.percentage)}{window.percentage}%{RESET}"
+    percent = f"{usage_color(window.percentage)}{window.percentage}%{RESET}"
     return format_usage_window(window, window_kind, percent)
 
 
+# Hide the usage/account columns entirely when every row renders "—" (usage
+# unfetchable, or no profile has an identity snapshot yet).
+_TABLE_COLUMNS = [
+    ("PROFILE", "profile"),
+    ("ACCOUNT", "account"),
+    ("PLAN", "plan"),
+    ("5H USED", "usage_5h"),
+    ("1W USED", "usage_1week"),
+    ("UPDATED", "usage_updated"),
+    ("EXPIRES", "expires"),
+    ("STATE", "status"),
+]
+
+
 def _print_accounts_table(rows: list[dict]) -> None:
-    columns = [
-        ("PROFILE", "profile"),
-        ("ACCOUNT", "account"),
-        ("PLAN", "plan"),
-        ("5H USED", "usage_5h"),
-        ("1W USED", "usage_1week"),
-        ("UPDATED", "usage_updated"),
-        ("EXPIRES", "expires"),
-        ("STATE", "status"),
-    ]
-    # Hide columns that are "—" (empty) in every row: usage when unfetchable, and
-    # ACCOUNT until at least one profile has an identity snapshot.
-    optional = {"usage_5h", "usage_1week", "account"}
-    for key in ("usage_5h", "usage_1week"):
-        align_usage_cells(rows, key)
-    columns = [
-        (header, key)
-        for header, key in columns
-        if key not in optional
-        or any(_ANSI_RE.sub("", row[key]) != "—" for row in rows)
-    ]
-    headers, keys = zip(*columns, strict=True)
-    widths = [
-        max(_visible_len(h), max((_visible_len(r[k]) for r in rows), default=0))
-        for h, k in zip(headers, keys)
-    ]
-
-    def rule(left: str, mid: str, right: str) -> str:
-        return left + mid.join("─" * (w + 2) for w in widths) + right
-
-    def row(cells: list[str]) -> str:
-        parts = [f" {cell}{' ' * (w - _visible_len(cell))} " for cell, w in zip(cells, widths)]
-        return "│" + "│".join(parts) + "│"
-
-    print(rule("┌", "┬", "┐"))
-    print(row([f"{BOLD}{h}{RESET}" for h in headers]))
-    print(rule("├", "┼", "┤"))
-    for r in rows:
-        print(row([r[k] for k in keys]))
-    print(rule("└", "┴", "┘"))
+    accounts_table(
+        rows,
+        _TABLE_COLUMNS,
+        optional_columns={"usage_5h", "usage_1week", "account"},
+        align_keys=("usage_5h", "usage_1week"),
+    )
 
 
 # ── commands ─────────────────────────────────────────────────────────────
@@ -730,10 +685,10 @@ def cmd_who() -> int:
             f"{RED}claude command not found{RESET}  "
             f"{DIM}(install: curl -fsSL https://claude.ai/install.sh | bash){RESET}"
         ]
-    _panel("Claude Login Status", status_lines)
+    panel("Claude Login Status", status_lines)
 
     print()
-    _panel("Current Auth Claims", _claims_lines(_read_active_claims()))
+    panel("Current Auth Claims", _claims_lines(_read_active_claims()))
     return 0
 
 
@@ -747,9 +702,9 @@ def _save_profile_oauth(name: str, oauth: dict, identity: dict | None = None) ->
     _write_active_oauth(oauth)
     _set_current_profile(profile_file)
 
-    print(f"{GREEN}✅ Saved Claude profile:{RESET} {BOLD}{name}{RESET}")
+    ok("Saved Claude profile", name)
     print(f"{DIM}   → {profile_file}{RESET}\n")
-    _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+    panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
     return 0
 
 
@@ -865,7 +820,7 @@ def cmd_switch(name: str) -> int:
     _write_active_oauth(oauth)
     _set_current_profile(profile_file)
 
-    print(f"{GREEN}✅ Switched Claude profile to:{RESET} {BOLD}{name}{RESET}")
+    ok("Switched Claude profile to", name)
     print(f"{DIM}   Claude Code will use this account on its next launch.{RESET}")
 
     # Self-heal an expired snapshot in place so Claude Code starts with a live
@@ -902,25 +857,13 @@ def cmd_switch_interactive() -> int:
         log_yellow("⚠️  No saved Claude profiles available to switch.")
         return 1
 
-    print(f"{BOLD}Choose a Claude profile:{RESET}")
-    for index, profile in enumerate(profiles, start=1):
-        print(f"  {index}) {profile.stem}  {DIM}{_plan_label(_read_claims(profile))}{RESET}")
-
-    try:
-        selection = input("Select account number: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        log_yellow("Switch cancelled.")
+    chosen = choose_profile(
+        "a Claude",
+        [(profile.stem, _plan_label(_read_claims(profile))) for profile in profiles],
+    )
+    if chosen is None:
         return 1
-
-    if not selection.isdecimal():
-        log_red("❌ Enter one of the account numbers shown above.")
-        return 1
-    selected_index = int(selection) - 1
-    if selected_index < 0 or selected_index >= len(profiles):
-        log_red("❌ Enter one of the account numbers shown above.")
-        return 1
-    return cmd_switch(profiles[selected_index].stem)
+    return cmd_switch(chosen)
 
 
 def cmd_remove(name: str) -> int:
@@ -934,7 +877,7 @@ def cmd_remove(name: str) -> int:
     profile_file.unlink()
     if was_current:
         _current_profile_marker().unlink(missing_ok=True)
-    print(f"{GREEN}✅ Removed Claude profile:{RESET} {name}")
+    ok("Removed Claude profile", name, bold=False)
     return 0
 
 
@@ -964,11 +907,11 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
         synced_active = True
 
     if show_summary:
-        print(f"{GREEN}✅ Refreshed Claude profile:{RESET} {BOLD}{name}{RESET}")
+        ok("Refreshed Claude profile", name)
         if synced_active:
             print(f"{DIM}   (same account is active — live credentials updated too){RESET}")
         print()
-        _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+        panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
     return 0, None
 
 
@@ -998,7 +941,7 @@ def _refresh_all_profiles() -> int:
         log_yellow(f"⚠️  Transient failure, retry later: {', '.join(transient)}")
     if revoked or transient:
         return 1
-    print(f"{GREEN}✅ All {len(profiles)} profile(s) refreshed.{RESET}")
+    ok(f"All {len(profiles)} profile(s) refreshed.")
     return 0
 
 
@@ -1014,7 +957,7 @@ def _refresh_active_auth() -> int:
     if new_oauth is None:
         return 1
     _write_active_oauth(new_oauth)
-    print(f"{GREEN}✅ Refreshed active Claude auth.{RESET}")
+    ok("Refreshed active Claude auth.")
 
     if profile_path is not None:
         _write_profile(profile_path, new_oauth)
@@ -1024,7 +967,7 @@ def _refresh_active_auth() -> int:
         log_yellow("⚠️  No unambiguous current profile — run: claude-accounts switch <name>")
 
     print()
-    _panel("Current Auth Claims", _claims_lines(_read_active_claims()), accent=GREEN)
+    panel("Current Auth Claims", _claims_lines(_read_active_claims()), accent=GREEN)
     return 0
 
 
@@ -1051,9 +994,9 @@ def cmd_sync() -> int:
 
     _write_profile(profile_path, oauth)
     _set_current_profile(profile_path)
-    print(f"{GREEN}✅ Synced active auth → profile:{RESET} {BOLD}{profile_path.stem}{RESET}")
+    ok("Synced active auth → profile", profile_path.stem)
     print()
-    _panel(f"Profile: {profile_path.stem}", _claims_lines(_read_claims(profile_path)), accent=GREEN)
+    panel(f"Profile: {profile_path.stem}", _claims_lines(_read_claims(profile_path)), accent=GREEN)
     return 0
 
 
