@@ -529,6 +529,34 @@ claude-accounts list                    # verify both profiles are saved
 claude-accounts switch personal         # jump back to the first account
 ```
 
+### claude-accounts Output
+
+- `list` renders a bordered table with plan tier (and rate multiplier), 5h/1w usage,
+  refresh time, token expiry, and active state:
+
+```text
+❯ claude-accounts list
+Saved Claude profiles  (2)
+┌──────────┬──────────────────────────────────┬───────────┬──────────────┬──────────────────┬─────────┬─────────────┬────────┐
+│ PROFILE  │ ACCOUNT                          │ PLAN      │ 5H USED      │ 1W USED          │ UPDATED │ EXPIRES     │ STATE  │
+├──────────┼──────────────────────────────────┼───────────┼──────────────┼──────────────────┼─────────┼─────────────┼────────┤
+│ personal │ Wes Kao <wes.personal@gmail.com> │ team · 5x │  4% · 3h 59m │ 22% · 4d 23h 59m │ 12:56   │ refreshable │ —      │
+│ work     │ Wes Kao <wes@acme.com>           │ Max · 20x │ 61% · 1h 12m │ 48% · 3d  6h  3m │ 12:56   │ refreshable │ ACTIVE │
+└──────────┴──────────────────────────────────┴───────────┴──────────────┴──────────────────┴─────────┴─────────────┴────────┘
+```
+
+- The `ACCOUNT` column shows the profile's email/name. Claude's OAuth token carries no
+  identity, so it is snapshotted from `~/.claude.json` when you `save` (or `login-switch`)
+  that account — the one moment it provably matches. Profiles saved before this existed
+  show `—` until their next `save`; the column is hidden entirely when no profile has one.
+- The `EXPIRES` column shows `refreshable` (green) when the profile carries a refresh
+  token — the short-lived access-token expiry is renewed automatically, so it is not a
+  concern. Only a profile without a usable refresh token shows a raw expiry time,
+  color-coded (green = valid, yellow = expiring within 24h, red = `EXPIRED`).
+- `who` and `switch` render a bordered "Current Auth Claims" panel; expiry is shown the
+  same way, with the state also spelled out in text, not color alone.
+- `switch` backs up the previous credentials (timestamped, `chmod 600`) before overwriting.
+
 ### claude-accounts Environment Overrides
 
 | Variable | Default | Purpose |

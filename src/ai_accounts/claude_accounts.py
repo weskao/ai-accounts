@@ -51,6 +51,7 @@ CYAN = "\033[1;36m"
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 _OAUTH_KEY: Final = "claudeAiOauth"
+_IDENTITY_KEY: Final = "ai-accountsAccount"  # non-secret identity snapshot (email/name)
 
 HELP = """claude-accounts — manage multiple Claude Code login profiles
 
@@ -100,6 +101,13 @@ def _account_dir() -> Path:
 
 def _creds_file() -> Path:
     return Path(os.environ.get("CLAUDE_CREDENTIALS_JSON", str(_claude_home() / ".credentials.json")))
+
+
+def _config_json() -> Path:
+    """Claude Code's global config file, holding the live account's identity.
+    Lives inside CLAUDE_CONFIG_DIR when set, else at ~/.claude.json."""
+    env = os.environ.get("CLAUDE_CONFIG_DIR")
+    return (Path(env) / ".claude.json") if env else (Path.home() / ".claude.json")
 
 
 def _profile_file(name: str) -> Path | None:
@@ -245,8 +253,10 @@ def _mirror_active_oauth_to_keychain(oauth: dict) -> None:
 
 # ── non-secret claims ───────────────────────────────────────────────────────
 # Claude's OAuth access token is opaque (no JWT identity), so unlike codex/agy
-# there is no email, name, or stable account id to show — only the plan tier,
-# scopes, and expiry the credentials carry directly.
+# the token carries no email or name — only the plan tier, scopes, and expiry.
+# The account's email/name lives in Claude Code's ~/.claude.json (`oauthAccount`),
+# which only ever describes the *live* account; we snapshot it into each profile
+# at save time (when it provably matches) so `list` can show it per-profile.
 
 def _format_unix_time(value: object) -> str | None:
     if not isinstance(value, (int, float)):
@@ -298,6 +308,42 @@ def _read_claims(path: Path) -> dict | None:
 def _read_active_claims() -> dict | None:
     oauth = _read_active_oauth()
     return _claims_from_oauth(oauth) if oauth is not None else None
+
+
+def _read_active_identity() -> dict | None:
+    """Email/name of the live account, from ~/.claude.json's `oauthAccount`.
+    None when the config file is missing/unreadable or carries no identity."""
+    try:
+        data = json.loads(_config_json().read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    account = data.get("oauthAccount") if isinstance(data, dict) else None
+    if not isinstance(account, dict):
+        return None
+    ident = {"email": account.get("emailAddress"), "name": account.get("displayName")}
+    return ident if ident["email"] or ident["name"] else None
+
+
+def _read_profile_identity(path: Path) -> dict | None:
+    """Identity snapshot stored in a profile at save time (None for older, bare
+    profiles saved before this was captured — they backfill on next save)."""
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    ident = obj.get(_IDENTITY_KEY) if isinstance(obj, dict) else None
+    return ident if isinstance(ident, dict) else None
+
+
+def _identity_label(ident: dict | None) -> str | None:
+    """`name <email>` (or whichever is present) for the ACCOUNT column. None
+    when no identity is known, so the column can hide when empty everywhere."""
+    if not ident:
+        return None
+    email, name = ident.get("email"), ident.get("name")
+    if name and email:
+        return f"{name} <{email}>"
+    return email or name or None
 
 
 def _plan_label(claims: dict | None) -> str:
@@ -407,10 +453,17 @@ def _active_profile(active_oauth: dict | None = None) -> Path | None:
     return matches[0] if active_token is not None and len(matches) == 1 else None
 
 
-def _write_profile(profile_file: Path, oauth: dict) -> None:
+def _write_profile(profile_file: Path, oauth: dict, identity: dict | None = None) -> None:
     _account_dir().mkdir(parents=True, exist_ok=True)
     _account_dir().chmod(0o700)
-    profile_file.write_text(json.dumps(oauth, indent=2) + "\n", encoding="utf-8")
+    # Wrapped shape so the non-secret identity rides alongside the token; a fresh
+    # `identity` wins, else any previously stored one survives token rotation
+    # (refresh/fold pass none — they must not drop the email captured at save).
+    container: dict = {_OAUTH_KEY: oauth}
+    ident = identity or _read_profile_identity(profile_file)
+    if ident:
+        container[_IDENTITY_KEY] = ident
+    profile_file.write_text(json.dumps(container, indent=2) + "\n", encoding="utf-8")
     profile_file.chmod(0o600)
 
 
@@ -597,6 +650,7 @@ def _usage_cell(window: claude_usage.UsageWindow | None, window_kind: str) -> st
 def _print_accounts_table(rows: list[dict]) -> None:
     columns = [
         ("PROFILE", "profile"),
+        ("ACCOUNT", "account"),
         ("PLAN", "plan"),
         ("5H USED", "usage_5h"),
         ("1W USED", "usage_1week"),
@@ -604,13 +658,15 @@ def _print_accounts_table(rows: list[dict]) -> None:
         ("EXPIRES", "expires"),
         ("STATE", "status"),
     ]
-    optional_usage = {"usage_5h", "usage_1week"}
-    for key in optional_usage:
+    # Hide columns that are "—" (empty) in every row: usage when unfetchable, and
+    # ACCOUNT until at least one profile has an identity snapshot.
+    optional = {"usage_5h", "usage_1week", "account"}
+    for key in ("usage_5h", "usage_1week"):
         align_usage_cells(rows, key)
     columns = [
         (header, key)
         for header, key in columns
-        if key not in optional_usage
+        if key not in optional
         or any(_ANSI_RE.sub("", row[key]) != "—" for row in rows)
     ]
     headers, keys = zip(*columns, strict=True)
@@ -653,11 +709,11 @@ def cmd_who() -> int:
     return 0
 
 
-def _save_profile_oauth(name: str, oauth: dict) -> int:
+def _save_profile_oauth(name: str, oauth: dict, identity: dict | None = None) -> int:
     profile_file = _profile_file(name)
     if profile_file is None:
         return 1
-    _write_profile(profile_file, oauth)
+    _write_profile(profile_file, oauth, identity)
     # Converge the live stores so the file and keychain mirror match this profile
     # (a fresh `claude auth login` may have written only one of them).
     _write_active_oauth(oauth)
@@ -675,7 +731,9 @@ def cmd_save(name: str) -> int:
         log_red(f"❌ No Claude credentials found: {_creds_file()}")
         log_yellow("   Run: claude auth login")
         return 1
-    return _save_profile_oauth(name, oauth)
+    # The user is already running as this account, so ~/.claude.json's identity
+    # provably matches — the one moment its email/name can be trusted outright.
+    return _save_profile_oauth(name, oauth, _read_active_identity())
 
 
 def cmd_list(*, fetch_usage: bool = True) -> int:
@@ -697,6 +755,16 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
         status = f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}"
         expires_text, color = _list_expiry_status(claims)
 
+        # Stored snapshot wins (captured when .claude.json provably matched). Live
+        # identity is only a fallback for an active profile with none yet — a
+        # pre-feature profile backfills on next save.
+        # ponytail: live fallback can misattribute if switched-without-relaunch;
+        # self-corrects on next save/login-switch.
+        identity = _read_profile_identity(profile_path)
+        if identity is None and is_active:
+            identity = _read_active_identity()
+        account_label = _identity_label(identity)
+
         usage = empty_usage
         access_token = oauth.get("accessToken")
         if fetch_usage and isinstance(access_token, str) and access_token:
@@ -708,6 +776,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
         rows.append(
             {
                 "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
+                "account": account_label if account_label else f"{DIM}—{RESET}",
                 "plan": _plan_cell(claims) if claims else f"{RED}(unreadable){RESET}",
                 "usage_5h": _usage_cell(usage.five_hour, "5h"),
                 "usage_1week": _usage_cell(usage.seven_day, "1week"),
@@ -949,6 +1018,12 @@ def cmd_login_switch(name: str) -> int:
     if outgoing_profile is not None:
         _fold_active_into_profile(outgoing_profile)
 
+    # Snapshot the identity BEFORE the browser login. `claude auth login` may not
+    # refresh ~/.claude.json's oauthAccount until Claude Code's next session, so
+    # only trust the post-login identity if it actually changed — otherwise it is
+    # the outgoing account's stale email and must not be saved (backfills later).
+    identity_before = _read_active_identity()
+
     print(
         f"{DIM}Launching `claude auth login`. Complete the browser sign-in; "
         f"the new account will be saved as '{name}'.{RESET}"
@@ -969,7 +1044,9 @@ def cmd_login_switch(name: str) -> int:
         _restore_active_oauth(outgoing_oauth)
         log_red("❌ Login completed without readable Claude credentials")
         return 1
-    return _save_profile_oauth(name, new_oauth)
+    identity_after = _read_active_identity()
+    identity = identity_after if identity_after and identity_after != identity_before else None
+    return _save_profile_oauth(name, new_oauth, identity)
 
 
 def _restore_active_oauth(oauth: dict | None) -> None:

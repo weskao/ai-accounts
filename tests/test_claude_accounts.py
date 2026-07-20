@@ -279,9 +279,9 @@ class ProfileCommandTests(_HomeMixin):
     def test_save_captures_only_the_oauth_blob(self) -> None:
         self.set_active(_oauth(access="live", refresh="rt-live"))
         self.assertEqual(self.quiet(ca.cmd_save, "work"), 0)
-        saved = json.loads((self.home / "accounts" / "work.json").read_text())
-        self.assertEqual(saved["refreshToken"], "rt-live")
-        self.assertNotIn("mcpOAuth", saved)  # profile is account-only
+        container = json.loads((self.home / "accounts" / "work.json").read_text())
+        self.assertEqual(container["claudeAiOauth"]["refreshToken"], "rt-live")
+        self.assertNotIn("mcpOAuth", container)  # profile is account-only
         self.assertEqual((self.home / "accounts" / ".current-profile").read_text(), "work")
 
     def test_save_without_credentials_errors(self) -> None:
@@ -306,7 +306,8 @@ class ProfileCommandTests(_HomeMixin):
         self.set_active(_oauth(access="at-rotated", refresh="rt-old"))
         self.mark_current("old")
         self.quiet(ca.cmd_switch, "new")
-        old = json.loads((self.home / "accounts" / "old.json").read_text())
+        old = ca._read_profile_oauth(self.home / "accounts" / "old.json")
+        assert old is not None
         self.assertEqual(old["accessToken"], "at-rotated")
 
     def test_switch_missing_profile_errors(self) -> None:
@@ -343,6 +344,34 @@ class ProfileCommandTests(_HomeMixin):
         self.assertNotIn("5H USED", text)
         self.assertNotIn("1W USED", text)
 
+    def test_list_shows_account_from_stored_identity(self) -> None:
+        path = self.home / "accounts" / "work.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": _oauth(access="at-a", refresh="rt-a"),
+                    "ai-accountsAccount": {"email": "wes@example.com", "name": "Wes"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        empty = cu.UsageSnapshot(None, None, None, None, "HTTP 401")
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=empty):
+            _, output, _ = self.capture(ca.cmd_list)
+        text = ca._ANSI_RE.sub("", output)
+        self.assertIn("ACCOUNT", text)
+        self.assertIn("Wes <wes@example.com>", text)
+
+    def test_save_snapshots_identity_from_config_json(self) -> None:
+        self.set_active(_oauth(access="live", refresh="rt-live"))
+        (self.home / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": "a@b.co", "displayName": "AB"}}),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.quiet(ca.cmd_save, "work"), 0)
+        stored = ca._read_profile_identity(self.home / "accounts" / "work.json")
+        self.assertEqual(stored, {"email": "a@b.co", "name": "AB"})
+
     def test_remove_current_profile_clears_marker(self) -> None:
         self.write_profile("work", _oauth())
         self.mark_current("work")
@@ -354,7 +383,7 @@ class ProfileCommandTests(_HomeMixin):
         self.set_active(_oauth(access="at-live", refresh="rt-1"))
         self.mark_current("work")
         self.assertEqual(self.quiet(ca.cmd_sync), 0)
-        self.assertEqual(json.loads(profile.read_text())["accessToken"], "at-live")
+        self.assertEqual(ca._read_profile_oauth(profile)["accessToken"], "at-live")
 
 
 class RefreshTests(_HomeMixin):
@@ -363,7 +392,8 @@ class RefreshTests(_HomeMixin):
         refreshed = {"access_token": "rotated", "refresh_token": "rt-2", "expires_in": 3600}
         with mock.patch.object(ca, "_oauth_refresh", return_value=(refreshed, None)):
             self.assertEqual(self.quiet(ca.cmd_refresh, "work"), 0)
-        saved = json.loads(profile.read_text())
+        saved = ca._read_profile_oauth(profile)
+        assert saved is not None
         self.assertEqual(saved["accessToken"], "rotated")
         self.assertEqual(saved["refreshToken"], "rt-2")
 
@@ -375,7 +405,7 @@ class RefreshTests(_HomeMixin):
         refreshed = {"access_token": "rotated", "expires_in": 3600}  # endpoint reuses refresh token
         with mock.patch.object(ca, "_oauth_refresh", return_value=(refreshed, None)):
             self.assertEqual(self.quiet(ca.cmd_refresh, None), 0)
-        self.assertEqual(json.loads(profile.read_text())["accessToken"], "rotated")
+        self.assertEqual(ca._read_profile_oauth(profile)["accessToken"], "rotated")
         active = self.active_oauth()
         assert active is not None
         self.assertEqual(active["accessToken"], "rotated")
@@ -400,8 +430,48 @@ class LoginSwitchTests(_HomeMixin):
         ):
             self.assertEqual(self.quiet(ca.cmd_login_switch, "new"), 0)
         self.assertEqual(run.call_args.args[0], ["claude", "auth", "login"])
-        saved = json.loads((self.home / "accounts" / "new.json").read_text())
+        saved = ca._read_profile_oauth(self.home / "accounts" / "new.json")
+        assert saved is not None
         self.assertEqual(saved["refreshToken"], "rt-new")
+
+    def _config_account(self, email: str, name: str) -> None:
+        (self.home / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": email, "displayName": name}}),
+            encoding="utf-8",
+        )
+
+    def test_login_switch_stores_identity_when_config_refreshes(self) -> None:
+        self._config_account("old@x.co", "Old")  # outgoing account
+        fresh = _oauth(access="at-new", refresh="rt-new")
+
+        def run_login(*args, **kwargs):
+            self.set_active(fresh)
+            self._config_account("new@x.co", "New")  # login refreshed the config
+            return mock.Mock(returncode=0)
+
+        with (
+            mock.patch.object(ca, "ensure_tool", return_value=True),
+            mock.patch.object(ca.subprocess, "run", side_effect=run_login),
+        ):
+            self.assertEqual(self.quiet(ca.cmd_login_switch, "new"), 0)
+        stored = ca._read_profile_identity(self.home / "accounts" / "new.json")
+        self.assertEqual(stored, {"email": "new@x.co", "name": "New"})
+
+    def test_login_switch_skips_stale_config_identity(self) -> None:
+        self._config_account("old@x.co", "Old")  # config never updates during login
+        fresh = _oauth(access="at-new", refresh="rt-new")
+
+        def run_login(*args, **kwargs):
+            self.set_active(fresh)  # new token, but oauthAccount stays stale
+            return mock.Mock(returncode=0)
+
+        with (
+            mock.patch.object(ca, "ensure_tool", return_value=True),
+            mock.patch.object(ca.subprocess, "run", side_effect=run_login),
+        ):
+            self.assertEqual(self.quiet(ca.cmd_login_switch, "new"), 0)
+        # The stale outgoing email must NOT be attributed to the new profile.
+        self.assertIsNone(ca._read_profile_identity(self.home / "accounts" / "new.json"))
 
     def test_cancelled_login_restores_previous_session(self) -> None:
         self.set_active(_oauth(access="at-old", refresh="rt-old"))
