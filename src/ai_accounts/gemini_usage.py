@@ -97,17 +97,41 @@ def _parse_summary(payload: JsonDict) -> tuple[UsageWindow | None, ...]:
     return tuple(result)
 
 
+def _plan_label(status: JsonDict) -> str | None:
+    """Real subscription tier for the PLAN column.
+
+    Antigravity's free preview grants Pro *features* to everyone, so
+    ``planInfo.planName``/``teamsTier`` are both "Pro" regardless of billing.
+    ``userStatus.userTier`` is the actual subscription (``id="free-tier"``,
+    ``name="Antigravity Starter Quota"`` for free; a distinct object for paid).
+    """
+    tier = status.get("userTier")
+    if isinstance(tier, dict):
+        if tier.get("id") == "free-tier":
+            return "Free"
+        # ponytail: show the paid tier's name verbatim (e.g. "Google AI Pro") —
+        # no id→label map, since we can't verify paid-account shapes.
+        name = tier.get("name")
+        if isinstance(name, str) and name:
+            return name
+        tier_id = tier.get("id")
+        if isinstance(tier_id, str) and tier_id:
+            return tier_id
+    # Fall back to planName only when userTier is absent/malformed.
+    plan_status = status.get("planStatus")
+    plan_info = plan_status.get("planInfo") if isinstance(plan_status, dict) else None
+    plan = plan_info.get("planName") if isinstance(plan_info, dict) else None
+    return plan if isinstance(plan, str) else None
+
+
 def _identity(payload: JsonDict) -> tuple[str | None, str | None]:
     status = payload.get("userStatus")
     if not isinstance(status, dict):
         return None, None
     email = status.get("email")
-    plan_status = status.get("planStatus")
-    plan_info = plan_status.get("planInfo") if isinstance(plan_status, dict) else None
-    plan = plan_info.get("planName") if isinstance(plan_info, dict) else None
     return (
         email if isinstance(email, str) else None,
-        plan if isinstance(plan, str) else None,
+        _plan_label(status),
     )
 
 

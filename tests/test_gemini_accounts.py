@@ -249,7 +249,29 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(other_week.percentage, 0)
         self.assertIsNone(other_session)
 
-    def test_identity_reads_status_payload(self) -> None:
+    def test_identity_labels_free_tier_not_pro(self) -> None:
+        # Antigravity's free preview reports planName "Pro" for everyone;
+        # userTier is the real subscription and must win.
+        payload: gu.JsonDict = {
+            "userStatus": {
+                "email": "a@x.com",
+                "userTier": {"id": "free-tier", "name": "Antigravity Starter Quota"},
+                "planStatus": {"planInfo": {"planName": "Pro"}},
+            }
+        }
+        self.assertEqual(gu._identity(payload), ("a@x.com", "Free"))
+
+    def test_identity_uses_user_tier_name_for_paid(self) -> None:
+        payload: gu.JsonDict = {
+            "userStatus": {
+                "email": "a@x.com",
+                "userTier": {"id": "pro-tier", "name": "Google AI Pro"},
+                "planStatus": {"planInfo": {"planName": "Pro"}},
+            }
+        }
+        self.assertEqual(gu._identity(payload), ("a@x.com", "Google AI Pro"))
+
+    def test_identity_falls_back_to_plan_name_without_user_tier(self) -> None:
         payload: gu.JsonDict = {
             "userStatus": {
                 "email": "a@x.com",

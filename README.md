@@ -636,6 +636,11 @@ Saved Antigravity profiles  (5)
 └─────────────┴──────────────────────────┴──────┴───────────────────┴────────────────────┴─────────┴─────────────┴────────┘
 ```
 
+The `PLAN` column shows the real subscription tier from `agy`'s `userTier`
+(`Free` for the Antigravity free preview, or the paid tier's name such as
+`Google AI Pro`) — not the `Pro` feature label that the free preview reports
+for every account.
+
 Session types:
 - `refreshable` — valid refresh token; `agy` renews the access token automatically
 - `browser` — session was restored from a browser login snapshot (no refresh token stored)
