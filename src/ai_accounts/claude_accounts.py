@@ -94,7 +94,7 @@ Treat that directory as secrets — saved profiles contain Claude OAuth tokens.
 # ── paths ─────────────────────────────────────────────────────────────────
 
 def _claude_home() -> Path:
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 
 
 def _account_dir() -> Path:

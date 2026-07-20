@@ -124,7 +124,10 @@ class StoragePathTests(unittest.TestCase):
             self.assertFalse(legacy.exists())
 
     def test_config_dir_override(self) -> None:
-        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "/x/cfg"}, clear=True):
+        with (
+            mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "/x/cfg"}, clear=True),
+            mock.patch.object(ca.Path, "home", side_effect=AssertionError("home queried")),
+        ):
             self.assertEqual(ca._creds_file(), Path("/x/cfg/.credentials.json"))
 
 

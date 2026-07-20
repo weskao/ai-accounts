@@ -211,6 +211,7 @@ class UsageTests(unittest.TestCase):
         ):
             self.assertEqual(gu._ports(123), [63833, 63834])
 
+    @unittest.skipIf(gu.pty is None, "requires POSIX pseudo-terminal support")
     def test_background_pty_has_a_terminal_size(self) -> None:
         with mock.patch.object(gu.pty, "openpty", return_value=(10, 11)), mock.patch.object(
             gu.fcntl, "ioctl"
@@ -280,6 +281,7 @@ class UsageTests(unittest.TestCase):
         }
         self.assertEqual(gu._identity(payload), ("a@x.com", "Pro"))
 
+    @unittest.skipIf(os.name == "nt", "Windows returns the platform error first")
     def test_fetch_usage_without_agy_reports_error(self) -> None:
         with mock.patch.object(gu.shutil, "which", return_value=None):
             self.assertEqual(gu.fetch_usage().error, "agy not found")

@@ -310,6 +310,7 @@ class SaveCommandTests(_CodexHomeMixin):
             [mock.call(5, 0, [0, 0, 0, 0, 0, 0, []]), mock.call(5, 0, original)],
         )
 
+    @mock.patch.object(ca.platform, "system", new=lambda: "Darwin")
     def test_login_switch_fresh_file_login_beats_stale_keychain_and_updates_it(self):
         # The observed live disaster: `codex login` wrote the fresh login to
         # auth.json ONLY; the keychain still held the previous account's
@@ -446,7 +447,8 @@ class RefreshCommandTests(_CodexHomeMixin):
         self.assertEqual(data["tokens"]["id_token"], "idt-new")
         self.assertEqual(data["tokens"]["refresh_token"], "rt-new")
         self.assertNotEqual(data["last_refresh"], "2026-01-01T00:00:00.000000Z")
-        self.assertEqual(profile.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(profile.stat().st_mode & 0o777, 0o600)
 
     def test_refresh_profile_keeps_same_account_profile_independent(self):
         # Given: two named profiles for one account with independent token chains.
@@ -709,7 +711,8 @@ class SyncCommandTests(_CodexHomeMixin):
         rc = self.run_quiet(ca.cmd_sync)
         self.assertEqual(rc, 0)
         self.assertEqual(profile.read_text(), auth.read_text())
-        self.assertEqual(profile.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(profile.stat().st_mode & 0o777, 0o600)
 
     def test_sync_without_matching_profile_errors(self):
         self.write_auth(_auth_payload("acct-x", "x@x.com"))
@@ -1411,6 +1414,7 @@ class SwitchExpiredFallbackTests(_CodexHomeMixin):
         relogin.assert_not_called()  # 5xx is transient, not a revoked token
 
 
+@mock.patch.object(ca.platform, "system", new=lambda: "Darwin")
 class KeychainMirrorTests(_CodexHomeMixin):
     """On macOS codex reads its OAuth credentials from the login keychain
     ("Codex Auth") in preference to auth.json. Any write to the active auth
