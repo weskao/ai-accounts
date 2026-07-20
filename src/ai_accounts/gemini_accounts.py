@@ -14,6 +14,7 @@ from typing import TypeAlias
 
 from . import gemini_usage
 from ._utils import (
+    BLUE,
     DIM,
     GREEN,
     RED,
@@ -762,7 +763,9 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
                 )
                 usage = empty_usage
                 if fetch_usage:
-                    spinner.update(f"Fetching Antigravity usage… ({index}/{len(profile_claims)}) {name}")
+                    spinner.update(
+                        f"Fetching Antigravity usage… {DIM}({index}/{len(profile_claims)}){RESET} {BLUE}{BOLD}{name}{RESET}"
+                    )
                     profile_text = profile_path.read_text(encoding="utf-8")
                     if _write_cli_auth_text(profile_text):
                         usage = _validated_usage(
