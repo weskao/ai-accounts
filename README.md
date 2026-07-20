@@ -67,7 +67,8 @@ After install, the following commands are available on `PATH`:
 | `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove) |
 | `claude-accounts` | Manage multiple Claude Code login profiles and inspect usage |
 | `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota (macOS) |
-| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `who`, `refresh`, `sync`, …) to all three `*-accounts` |
+| `grok-accounts` | Manage multiple Grok Build CLI OAuth profiles (save / list / switch / refresh) |
+| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `who`, `refresh`, `sync`, …) to all four `*-accounts` |
 
 ## Update
 
@@ -337,7 +338,7 @@ vcadd 人工智慧 機器學習  # add multiple words at once
 
 ## Account profile storage
 
-All three account managers (`codex-accounts`, `claude-accounts`, `agy-accounts`)
+All four account managers (`codex-accounts`, `claude-accounts`, `agy-accounts`, `grok-accounts`)
 keep their saved profiles in one central, hidden folder under your **home
 directory**:
 
@@ -346,7 +347,8 @@ $HOME/
 └── .ai-accounts/
     ├── claude/accounts/          # claude-accounts profiles
     ├── codex/accounts/           # codex-accounts profiles
-    └── antigravity/accounts/     # agy-accounts profiles
+    ├── antigravity/accounts/     # agy-accounts profiles
+    └── grok/accounts/            # grok-accounts profiles
 ```
 
 The path is resolved from the running user's home directory at runtime
@@ -364,7 +366,8 @@ time a command touches it, with a one-line notice.
 
 Treat `~/.ai-accounts` as secrets — every `<name>.json` profile holds live auth
 tokens. Each tool's location can be overridden individually via
-`CODEX_ACCOUNT_DIR` / `CLAUDE_ACCOUNT_DIR` / `ANTIGRAVITY_ACCOUNT_DIR` (see
+`CODEX_ACCOUNT_DIR` / `CLAUDE_ACCOUNT_DIR` / `ANTIGRAVITY_ACCOUNT_DIR` /
+`GROK_ACCOUNT_DIR` (see
 each tool's Environment Overrides section).
 
 ---
@@ -696,10 +699,61 @@ Session types:
 
 ---
 
+## `grok-accounts` — Grok Build Account Manager
+
+Save, list, and switch between multiple [Grok Build CLI](https://x.ai/cli)
+OAuth profiles. It manages only Grok Build's `~/.grok/auth.json`; saved profile
+snapshots live under `~/.ai-accounts/grok/accounts/`, outside the Grok config
+directory. Tokens are never printed.
+
+### grok-accounts Usage
+
+```sh
+grok-accounts who                   # show the current logged-in Grok account
+grok-accounts current               # alias for `who`
+grok-accounts save <name>           # save the current login as a reusable profile
+grok-accounts list                  # list saved profiles
+grok-accounts switch [<name>]       # switch by name; no name = interactive picker
+grok-accounts remove <name>         # delete a saved profile
+grok-accounts refresh [<name>]      # let Grok refresh the active/profile session
+grok-accounts refresh --all         # refresh every saved profile through Grok
+grok-accounts sync                  # copy the active auth back to its matching profile
+grok-accounts login-switch <name>   # fresh browser login + save as <name>
+```
+
+### grok-accounts First-time setup
+
+Install the official Grok Build CLI, log in, then save the profile:
+
+```sh
+curl -fsSL https://x.ai/cli/install.sh | bash
+grok login --oauth
+grok-accounts save personal
+grok-accounts who
+```
+
+For another account, use `grok-accounts login-switch work`; then switch at any
+time with `grok-accounts switch personal` or `grok-accounts switch work`.
+
+`refresh` deliberately runs `grok models` under the selected session. This
+lets Grok Build refresh and rotate its own OAuth credentials without ai-accounts
+depending on a private xAI token endpoint. The original active session is
+restored after refreshing an inactive profile.
+
+### grok-accounts Environment Overrides
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GROK_HOME` | `~/.grok` | Base Grok Build config directory |
+| `GROK_AUTH_JSON` | `$GROK_HOME/auth.json` | Active Grok Build OAuth file |
+| `GROK_ACCOUNT_DIR` | `~/.ai-accounts/grok/accounts` | Where saved profiles are stored |
+
+---
+
 ## `ai-accounts` — All-provider Account Front-end
 
-Forwards a subcommand to all three per-provider tools (`codex-accounts`,
-`claude-accounts`, `agy-accounts`) at once, so one command drives every
+Forwards a subcommand to all four per-provider tools (`codex-accounts`,
+`claude-accounts`, `agy-accounts`, `grok-accounts`) at once, so one command drives every
 provider. It exposes the same command surface as the per-provider tools.
 
 ### ai-accounts Usage
@@ -717,11 +771,11 @@ ai-accounts login-switch <name>    Fresh login + save as <name>, every provider 
 ai-accounts -h | --help            Show this help
 ```
 
-Bare `ai-accounts` (no arguments) prints this help. `list` runs the three
+Bare `ai-accounts` (no arguments) prints this help. `list` runs the four
 providers **concurrently** and prints each one's table as soon as it
 finishes — fastest provider first, not a fixed order — with a spinner in
-between tracking how many are still outstanding (`Fetching remaining 2
-providers…`, then `1`, …) until the last table lands and the spinner
+between tracking how many are still outstanding (`Fetching remaining 3
+providers…`, then `2`, `1`, …) until the last table lands and the spinner
 disappears for good. Every other command runs the providers **one at a time
 with live output**, so interactive flows (switch pickers, `login-switch`) and
 color work unchanged; any argument after the command (a profile name,
@@ -750,6 +804,7 @@ package-manager command.
 | `vcadd` | macOS only | vChewing input method |
 | `codex-accounts` | macOS / Windows / Linux | `codex` CLI for `who` and `login-switch` |
 | `agy-accounts` | macOS only | Official `agy` CLI and macOS Keychain |
+| `grok-accounts` | macOS / Windows / Linux | Official `grok` CLI for refresh and login |
 
 ---
 

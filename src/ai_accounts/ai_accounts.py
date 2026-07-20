@@ -1,7 +1,7 @@
 """ai-accounts — drive every AI account tool at once.
 
-Fans a subcommand out to all three per-provider tools (codex-accounts,
-claude-accounts, agy-accounts) so one command covers every provider. ``list``
+Fans a subcommand out to all four per-provider tools (codex-accounts,
+claude-accounts, agy-accounts, grok-accounts) so one command covers every provider. ``list``
 runs the providers in parallel and prints each provider's table as soon as
 it finishes fetching (its output embeds ANSI unconditionally, so color
 survives the pipe); every other command runs the providers one at a time
@@ -26,12 +26,23 @@ _TOOLS: list[tuple[str, str]] = [
     ("codex-accounts", "ai_accounts.codex_accounts"),
     ("claude-accounts", "ai_accounts.claude_accounts"),
     ("agy-accounts", "ai_accounts.gemini_accounts"),
+    ("grok-accounts", "ai_accounts.grok_accounts"),
 ]
 
 # Subcommands every per-provider tool understands (shared surface). Anything
 # outside this set is rejected rather than blindly forwarded.
 _COMMANDS = frozenset(
-    {"who", "current", "save", "list", "switch", "remove", "refresh", "sync", "login-switch"}
+    {
+        "who",
+        "current",
+        "save",
+        "list",
+        "switch",
+        "remove",
+        "refresh",
+        "sync",
+        "login-switch",
+    }
 )
 
 HELP = """ai-accounts — drive every AI account tool at once
@@ -48,7 +59,7 @@ USAGE
   ai-accounts login-switch <name>    Fresh login + save as <name>, every provider (interactive)
   ai-accounts -h | --help            Show this help
 
-Each command is forwarded to codex-accounts, claude-accounts, and agy-accounts.
+Each command is forwarded to codex-accounts, claude-accounts, agy-accounts, and grok-accounts.
 `list` runs them concurrently and prints each table as soon as it finishes
 (fastest provider first), with a spinner tracking how many are still
 fetching in between; every other command runs them one provider at a time
