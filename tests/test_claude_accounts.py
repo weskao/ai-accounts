@@ -68,16 +68,16 @@ class ClaimsTests(unittest.TestCase):
         self.assertNotIn("SECRET-REFRESH", text)
 
     def test_plan_cell_appends_rate_multiplier(self) -> None:
-        # A Team seat rate-limited at max_5x reads as "team · 5x" so it is
+        # A Team seat rate-limited at max_5x reads as "Team · 5x" so it is
         # distinguishable from, say, a Max 20x seat at a glance.
         claims = ca._claims_from_oauth(_oauth(sub="team", tier="default_claude_max_5x"))
-        self.assertEqual(ca._plan_cell(claims), "team · 5x")
+        self.assertEqual(ca._plan_cell(claims), "Team · 5x")
         big = ca._claims_from_oauth(_oauth(sub="Max", tier="default_claude_max_20x"))
         self.assertEqual(ca._plan_cell(big), "Max · 20x")
 
     def test_plan_cell_without_multiplier_shows_plan_only(self) -> None:
         claims = ca._claims_from_oauth(_oauth(sub="pro", tier="default_claude_pro"))
-        self.assertEqual(ca._plan_cell(claims), "pro")
+        self.assertEqual(ca._plan_cell(claims), "Pro")
 
     def test_list_expiry_reports_refreshable_over_soon(self) -> None:
         # A near-expiry access token that is refreshable must not read as "soon":
@@ -195,6 +195,15 @@ class WireFormatTests(unittest.TestCase):
         self.assertIn("refresh_token=rt-xyz", body)
         self.assertIn(f"client_id={ca._OAUTH_CLIENT_ID}", body)
 
+    def test_oauth_refresh_403_is_revoked_not_transient(self) -> None:
+        # A 403 means the endpoint was reached and rejected the token — relogin,
+        # not a "retry later" transient. Regression: it used to fall through to
+        # the generic "HTTP N from token endpoint" transient bucket.
+        err = ca.urllib.error.HTTPError(ca._OAUTH_TOKEN_URL, 403, "Forbidden", {}, io.BytesIO(b""))
+        with mock.patch.object(ca.urllib.request, "urlopen", side_effect=err):
+            _, msg = ca._oauth_refresh("rt-xyz")
+        self.assertTrue(ca._is_revoked_error(msg), msg)
+
     def test_usage_request_sends_oauth_beta_header_and_bearer(self) -> None:
         captured: dict = {}
 
@@ -289,7 +298,9 @@ class ProfileCommandTests(_HomeMixin):
 
     def test_switch_activates_profile_and_preserves_mcp_tokens(self) -> None:
         self.set_active(_oauth(access="at-a", refresh="rt-a"))
-        self.write_profile("work", _oauth(access="at-w", refresh="rt-w"))
+        # Far-future expiry so the switch's in-place refresh doesn't fire — this
+        # test is about mcp-token preservation, not token refresh.
+        self.write_profile("work", _oauth(access="at-w", refresh="rt-w", expires_in_ms=30 * 24 * 3600 * 1000))
         self.assertEqual(self.quiet(ca.cmd_switch, "work"), 0)
         active = self.active_oauth()
         assert active is not None

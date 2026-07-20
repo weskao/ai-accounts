@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Final
 
 from . import claude_usage
-from .usage_format import align_usage_cells, format_unix_time_compact, format_usage_window
+from .usage_format import align_usage_cells, capitalize_first, format_unix_time_compact, format_usage_window
 from ._utils import (
     DIM,
     GREEN,
@@ -348,7 +348,7 @@ def _identity_label(ident: dict | None) -> str | None:
 
 def _plan_label(claims: dict | None) -> str:
     plan = (claims or {}).get("plan")
-    return str(plan) if plan else "(Claude account)"
+    return capitalize_first(str(plan)) if plan else "(Claude account)"
 
 
 def _rate_multiplier(claims: dict | None) -> str | None:
@@ -516,6 +516,8 @@ def _oauth_refresh(refresh_token: str) -> tuple[dict | None, str | None]:
             pass
         if exc.code in (400, 401) and "invalid_grant" in detail:
             return None, "revoked: refresh token rejected (invalid_grant)"
+        if exc.code in (401, 403):  # endpoint reached but rejected the token — relogin, not retry
+            return None, f"revoked: token endpoint returned HTTP {exc.code}"
         return None, f"HTTP {exc.code} from token endpoint"
     except urllib.error.URLError as exc:
         return None, f"network error: {exc.reason}"
