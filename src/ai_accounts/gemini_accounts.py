@@ -25,6 +25,7 @@ from ._utils import (
 from .usage_format import (
     UsageWindow,
     align_usage_cells,
+    capitalize_first,
     format_unix_time_compact,
     format_usage_window,
 )
@@ -771,7 +772,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
                     if claims
                     else usage.email or f"{RED}(unreadable){RESET}",
                     "account_id": _short_id(_string((claims or {}).get("account_id"))),
-                    "plan": usage.plan or f"{DIM}—{RESET}",
+                    "plan": capitalize_first(usage.plan) or f"{DIM}—{RESET}",
                     "gemini_5h": _usage_cell(usage.gemini_session),
                     "gemini_weekly": _usage_cell(usage.gemini_weekly),
                     "other_5h": _usage_cell(usage.other_session),

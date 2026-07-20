@@ -888,7 +888,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             {
                 "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
                 "account": _identity_label(claims) if claims else f"{RED}(unreadable){RESET}",
-                "plan": (claims or {}).get("plan") or f"{DIM}—{RESET}",
+                "plan": usage_format.capitalize_first((claims or {}).get("plan")) or f"{DIM}—{RESET}",
                 "account_id": _short_id((claims or {}).get("account_id")),
                 "usage_5h": _usage_cell(usage.hourly, "5h"),
                 "usage_1week": _usage_cell(usage.weekly, "1week"),

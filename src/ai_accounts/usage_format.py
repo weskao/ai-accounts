@@ -61,6 +61,14 @@ def align_usage_cells(rows: list[dict[str, str]], key: str) -> None:
         )
 
 
+def capitalize_first(text: str | None) -> str | None:
+    """Upper-case only the first character, leaving the rest untouched — unlike
+    ``str.capitalize()``, which would lower-case "Google AI Pro" to "Google ai pro"."""
+    if not text:
+        return text
+    return text[:1].upper() + text[1:]
+
+
 def _load_json(path: Path) -> JsonDict | None:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
