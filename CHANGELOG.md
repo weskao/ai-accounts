@@ -1,3 +1,42 @@
+## [2.0.0] - 2026-07-20
+
+### 🚀 Features
+
+- **claude-accounts:** Add claude profile manager
+- **codex-accounts:** Show chatgpt plan tier
+- **codex-accounts:** [**breaking**] Central profile store
+- **ai-accounts:** Add all-provider account lister
+- **claude-accounts:** Show account email in list
+- **ai-accounts:** [**breaking**] Forward all subcommands to every provider
+- **accounts:** Capitalize plan label first letter in list output
+- **accounts:** Color-code PLAN column by tier rank
+
+### 🐛 Bug Fixes
+
+- **agy-accounts:** Show real subscription tier in PLAN
+- **claude-accounts:** Treat token-endpoint 401/403 as revoked, not transient
+
+### 🚜 Refactor
+
+- **ai-accounts:** [**breaking**] Rename codex_usage to usage_format
+
+### 📚 Documentation
+
+- **agy-accounts:** Add output section for list, who, and switch commands
+- **readme:** Document central ~/.ai-accounts profile store
+- **claude.md:** Require README sync on user-visible changes
+- **readme:** Document codex-accounts PLAN column
+- **claude.md:** Note claude_usage.py in shared-helper map
+- Reflect usage_format rename and ai-accounts forwarding
+- **readme:** Capitalize plan labels in list examples
+
+### 🧪 Testing
+
+- **cross-platform:** Pin resolve_account_dir behavior
+
+### ⚙️ Miscellaneous Tasks
+
+- Ignore account profile stores
 ## [1.0.0] - 2026-07-19
 
 ### 🚀 Features
@@ -7,6 +46,10 @@
 ### 🐛 Bug Fixes
 
 - **platform:** Support clean cross-platform setup
+
+### 📚 Documentation
+
+- **changelog:** Release v1.0.0
 
 ### ⚙️ Miscellaneous Tasks
 
