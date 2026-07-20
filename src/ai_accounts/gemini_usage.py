@@ -254,7 +254,10 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
             usage = fetch_usage_from_pid(process.pid)
             if usage is not None:
                 break
-            time.sleep(0.25)
+            # ponytail: poll cost is ~0 (lsof + localhost conn-refused), so a
+            # tight interval only trims readiness-detection latency; the ~3s
+            # floor is agy's own boot-to-RPC warmup, untunable from outside.
+            time.sleep(0.1)
     finally:
         if process.poll() is None:
             process.terminate()

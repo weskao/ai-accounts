@@ -166,13 +166,16 @@ def fetch_parallel(
     fn: Callable,
     spinner: "Spinner | None" = None,
     message: str = "",
+    labels: Sequence[str] | None = None,
 ) -> list:
     """Map ``fn`` over ``items`` concurrently, returning results in input order.
 
     Independent per-item network fetches (one usage call per account) run on a
     small thread pool instead of serially. When ``spinner`` is given, its label
-    updates with a ``(done/total)`` counter as each item finishes. Exceptions
-    from ``fn`` propagate — callers keep the sequential contract of returning
+    updates with a ``(done/total)`` counter as each item finishes; ``labels``
+    (aligned with ``items``) adds the just-finished item's name to the label,
+    matching the sequential tools' spinner format. Exceptions from ``fn``
+    propagate — callers keep the sequential contract of returning
     error-carrying results rather than raising.
     """
     total = len(items)
@@ -183,10 +186,12 @@ def fetch_parallel(
         futures = {pool.submit(fn, item): index for index, item in enumerate(items)}
         done = 0
         for future in as_completed(futures):
-            results[futures[future]] = future.result()
+            index = futures[future]
+            results[index] = future.result()
             done += 1
             if spinner is not None:
-                spinner.update(f"{message} {DIM}({done}/{total}){RESET}")
+                name = f" {MAGENTA}{labels[index]}{RESET}" if labels else ""
+                spinner.update(f"{message} {DIM}({done}/{total}){RESET}{name}")
     return results
 
 

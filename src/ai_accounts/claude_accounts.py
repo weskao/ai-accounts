@@ -787,7 +787,13 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
     if fetch_usage:
         spinner = Spinner("Fetching Claude usage…")
         with spinner:
-            usages = fetch_parallel(profile_oauth, _fetch, spinner, "Fetching Claude usage…")
+            usages = fetch_parallel(
+                profile_oauth,
+                _fetch,
+                spinner,
+                "Fetching Claude usage…",
+                labels=[p.stem for p, _ in profile_oauth],
+            )
     else:
         usages = [empty_usage] * len(profiles)
 

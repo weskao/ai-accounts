@@ -897,7 +897,13 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
     if fetch_usage:
         spinner = Spinner("Fetching Codex usage…")
         with spinner:
-            usages = fetch_parallel(profile_claims, _fetch, spinner, "Fetching Codex usage…")
+            usages = fetch_parallel(
+                profile_claims,
+                _fetch,
+                spinner,
+                "Fetching Codex usage…",
+                labels=[p.stem for p, _ in profile_claims],
+            )
     else:
         usages = [empty_usage] * len(profile_claims)
 
