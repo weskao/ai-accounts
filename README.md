@@ -757,14 +757,15 @@ Saved Grok profiles  (2)
 ┌──────────┬──────────────────────────────────┬──────┬───────────────┬───────────┬──────────────┬──────────────┬──────────┬─────────────────┬────────┐
 │ PROFILE  │ ACCOUNT                          │ TYPE │ ID            │ TEAM      │ CREATED      │ EXPIRES      │ DATA     │ SESSION         │ STATE  │
 ├──────────┼──────────────────────────────────┼──────┼───────────────┼───────────┼──────────────┼──────────────┼──────────┼─────────────────┼────────┤
-│ gkm22190 │ Casey Demo <casey.demo@x.ai>     │ User │ principa…0abc │ team-91d2 │ May 15 18:00 │ Jul 22 08:00 │ standard │ OAUTH · refresh │ ACTIVE │
-│ gkm85663 │ Alex Example <alex.example@x.ai> │ User │ principa…9c21 │ team-4b7e │ Jun 01 11:04 │ Aug 02 11:04 │ opt-out  │ OIDC · refresh  │ —      │
+│ demo-one │ Casey Demo <casey.demo@x.ai>     │ User │ principa…0abc │ team-91d2 │ May 15 18:00 │ Jul 22 08:00 │ standard │ OAUTH · refresh │ ACTIVE │
+│ demo-two │ Alex Example <alex.example@x.ai> │ User │ principa…9c21 │ team-4b7e │ Jun 01 11:04 │ Aug 02 11:04 │ opt-out  │ OIDC · refresh  │ —      │
 └──────────┴──────────────────────────────────┴──────┴───────────────┴───────────┴──────────────┴──────────────┴──────────┴─────────────────┴────────┘
 ```
 
 - `who` and `switch` render two bordered cyan panels — a "Grok Login Status" panel and a "Current Auth Claims" panel — matching the layout and accent color of `codex-accounts`, `claude-accounts`, and `agy-accounts`.
-- `save` and `switch` also print a bordered green "Profile: <name>" claims panel after the
-  ✅ confirmation line, same as the other three account tools.
+- `save` also prints a bordered green "Profile: <name>" claims panel after the
+  ✅ confirmation line, same as the other three account tools; `switch` follows its
+  ✅ line with the `who` panels instead.
 - `switch` without a `<name>` argument opens an interactive picker ("Choose a Grok profile:",
   numbered `1)`, `2)`, …) — the same picker grammar as `codex-accounts`, `claude-accounts`,
   and `agy-accounts`.
