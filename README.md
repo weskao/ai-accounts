@@ -745,6 +745,11 @@ lets Grok Build refresh and rotate its own OAuth credentials without ai-accounts
 depending on a private xAI token endpoint. The original active session is
 restored after refreshing an inactive profile.
 
+### grok-accounts Output
+
+- `grok-accounts -h` displays current Grok model and pricing reference: grok-4.5 (500k context, agentic tool calling), API pricing, and consumer plan tiers (Free, SuperGrok).
+- `who` and `switch` render a bordered "Current Grok Auth" panel in a distinctive magenta accent color, distinguishing it visually from the cyan panels of `codex-accounts`, `claude-accounts`, and `agy-accounts`.
+
 ### grok-accounts Environment Overrides
 
 | Variable | Default | Purpose |

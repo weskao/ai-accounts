@@ -11,11 +11,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._utils import DIM, GREEN, RESET, log_red, log_yellow, resolve_account_dir
+from ._utils import DIM, GREEN, MAGENTA, RESET, log_red, log_yellow, resolve_account_dir
 
 BOLD = "\033[1m"
-CYAN = "\033[1;36m"
 JsonDict = dict[str, Any]
+
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 HELP = """grok-accounts — manage multiple Grok Build CLI login profiles
 
@@ -31,6 +32,22 @@ USAGE
   grok-accounts sync                  Copy the active auth back to its matching profile
   grok-accounts login-switch <name>   Fresh Grok OAuth login + save as <name>
   grok-accounts -h | --help           Show this help
+
+EXAMPLES
+  grok-accounts login-switch personal
+  grok-accounts login-switch work
+  grok-accounts list
+  grok-accounts switch
+  grok-accounts switch personal
+  grok-accounts refresh --all
+  grok-accounts who
+
+MODEL
+  grok-4.5 (flagship, 500k context) — agentic tool calling, minimal
+  hallucinations, configurable reasoning; xAI's pick for code and everything
+  else. API: $2.00 / 1M input tokens, $6.00 / 1M output tokens.
+  Consumer plans: Free ($0/mo), SuperGrok ($30/mo, unlocks Grok 4.5 + higher
+  limits). Grok Build CLI docs: docs.x.ai/build/
 
 Profiles live under ~/.ai-accounts/grok/accounts/<name>.json (override with
 $GROK_ACCOUNT_DIR). Treat that directory as secrets — profiles contain OAuth
@@ -58,7 +75,7 @@ def _account_dir() -> Path:
 def _profile_file(name: str) -> Path | None:
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
     if not safe:
-        log_red("Profile name cannot be empty")
+        log_red("❌ Profile name cannot be empty")
         return None
     return _account_dir() / f"{safe}.json"
 
@@ -94,7 +111,7 @@ def _write_json(path: Path, payload: JsonDict) -> bool:
         path.chmod(0o600)
         return True
     except OSError as exc:
-        log_red(f"Could not write {path}: {exc}")
+        log_red(f"❌ Could not write {path}: {exc}")
         if temporary is not None:
             temporary.unlink(missing_ok=True)
         return False
@@ -197,7 +214,9 @@ def _timestamp(value: str) -> str:
 
 
 def _short_id(value: object) -> str:
-    text = str(value or "—")
+    if not value or value == "—":
+        return f"{DIM}—{RESET}"
+    text = str(value)
     return f"{text[:8]}…{text[-4:]}" if len(text) > 16 else text
 
 
@@ -205,44 +224,46 @@ def _retention(value: object) -> str:
     return "opt-out" if value is True else "standard" if value is False else "—"
 
 
-def _panel(title: str, lines: list[tuple[str, str]]) -> None:
-    width = max(
-        [len(title) + 4, *(len(label) + len(value) + 5 for label, value in lines)]
-    )
-    print(f"{CYAN}┌{'─' * width}┐{RESET}")
-    print(
-        f"{CYAN}│{RESET} {BOLD}{title}{RESET}{' ' * (width - len(title) - 1)}{CYAN}│{RESET}"
-    )
-    print(f"{CYAN}├{'─' * width}┤{RESET}")
-    for label, value in lines:
-        text = f" {label}: {value}"
-        print(f"{CYAN}│{RESET}{text}{' ' * (width - len(text))}{CYAN}│{RESET}")
-    print(f"{CYAN}└{'─' * width}┘{RESET}")
+def _visible_len(s: str) -> int:
+    return len(_ANSI_RE.sub("", s))
+
+
+def _panel(title: str, lines: list[str], accent: str = MAGENTA, width: int = 64) -> None:
+    """Bordered header/footer rule around left-aligned content — legible even
+    with embedded ANSI color codes since only the header/footer are measured."""
+    width = max(width, _visible_len(title) + 8)
+    top_dashes = width - _visible_len(title) - 4
+    print(f"{accent}┌─ {BOLD}{title}{RESET}{accent} {'─' * top_dashes}┐{RESET}")
+    for line in lines or [f"{DIM}(none){RESET}"]:
+        print(f"{accent}│{RESET}  {line}")
+    print(f"{accent}└{'─' * (width - 1)}┘{RESET}")
+
+
+def _claims_lines(claims: JsonDict, profile: Path | None) -> list[str]:
+    name = claims["name"]
+    account = f"{name} <{claims['email']}>" if name else claims["email"]
+    session = "refreshable" if claims["refreshable"] else "browser login"
+    return [
+        f"{BOLD}Account{RESET}       : {account}",
+        f"{DIM}Principal{RESET}     : {claims['principal_id']}",
+        f"{DIM}Team{RESET}          : {claims['team_id']}",
+        f"{DIM}Session{RESET}       : {session}",
+        f"{DIM}Expires{RESET}       : {_expiry_status(claims['expires_at'])}",
+        f"{DIM}Profile{RESET}       : {profile.stem if profile else 'untracked'}",
+    ]
 
 
 def cmd_who() -> int:
     payload = _read_json(_auth_file())
     if payload is None:
-        log_yellow("No Grok login found. Run: grok login --oauth")
+        log_yellow("⚠️  No Grok login found. Run: grok login --oauth")
         return 1
     claims = _claims(payload)
     if not claims:
-        log_red(f"Grok auth file has no recognized OAuth entry: {_auth_file()}")
+        log_red(f"❌ Grok auth file has no recognized OAuth entry: {_auth_file()}")
         return 1
     profile = _active_profile(payload)
-    name = claims["name"]
-    account = f"{name} <{claims['email']}>" if name else claims["email"]
-    _panel(
-        "Current Grok Auth",
-        [
-            ("Account", account),
-            ("Principal", claims["principal_id"]),
-            ("Team", claims["team_id"]),
-            ("Session", "refreshable" if claims["refreshable"] else "browser login"),
-            ("Expires", _expiry_status(claims["expires_at"])),
-            ("Profile", profile.stem if profile else "untracked"),
-        ],
-    )
+    _panel("Current Grok Auth", _claims_lines(claims, profile))
     return 0
 
 
@@ -250,45 +271,25 @@ def cmd_save(name: str) -> int:
     profile = _profile_file(name)
     payload = _read_json(_auth_file())
     if profile is None or payload is None or not _claims(payload):
-        log_red("No valid Grok OAuth login found. Run: grok login --oauth")
+        log_red("❌ No valid Grok OAuth login found. Run: grok login --oauth")
         return 1
     if not _write_json(profile, payload):
         return 1
     _set_marker(profile)
-    print(f"{GREEN}Saved Grok profile:{RESET} {BOLD}{profile.stem}{RESET}")
+    print(f"{GREEN}✅ Saved Grok profile:{RESET} {BOLD}{profile.stem}{RESET}")
     return 0
 
 
 def cmd_list() -> int:
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
-        log_yellow("No saved Grok profiles.")
+        log_yellow("⚠️  No saved Grok profiles.")
         print(
             f"{DIM}   Add one with: grok-accounts save <profile_name>{RESET}",
             file=sys.stderr,
         )
         return 0
     active = _active_profile()
-    rows = []
-    for path in profiles:
-        claims = _claims(_read_json(path))
-        account = claims.get("email", "unreadable")
-        if claims.get("name"):
-            account = f"{claims['name']} <{account}>"
-        rows.append(
-            (
-                path.stem,
-                account,
-                claims.get("principal_type", "—"),
-                _short_id(claims.get("principal_id")),
-                _short_id(claims.get("team_id")),
-                _timestamp(str(claims.get("created_at", ""))),
-                _expiry_status(str(claims.get("expires_at", ""))),
-                f"{claims.get('auth_mode', '—')} · {'refresh' if claims['refreshable'] else 'browser'}",
-                _retention(claims.get("retention_opt_out")),
-                "ACTIVE" if path == active else "—",
-            )
-        )
     headers = (
         "PROFILE",
         "ACCOUNT",
@@ -297,30 +298,50 @@ def cmd_list() -> int:
         "TEAM",
         "CREATED",
         "EXPIRES",
-        "SESSION",
         "DATA",
+        "SESSION",
         "STATE",
     )
-    widths = [
-        max(len(headers[index]), *(len(str(row[index])) for row in rows))
-        for index in range(len(headers))
-    ]
-    border = "┼".join("─" * (width + 2) for width in widths)
-    print(f"Saved Grok profiles  ({len(rows)})")
-    print(f"┌{border.replace('┼', '┬')}┐")
-    print(
-        "│"
-        + "│".join(f" {headers[i]:<{widths[i]}} " for i in range(len(headers)))
-        + "│"
-    )
-    print(f"├{border}┤")
-    for row in rows:
-        print(
-            "│"
-            + "│".join(f" {str(row[i]):<{widths[i]}} " for i in range(len(headers)))
-            + "│"
+    rows = []
+    for path in profiles:
+        claims = _claims(_read_json(path))
+        account = claims.get("email", "unreadable")
+        if claims.get("name"):
+            account = f"{claims['name']} <{account}>"
+        is_active = path == active
+        rows.append(
+            [
+                f"{GREEN}{BOLD}{path.stem}{RESET}" if is_active else path.stem,
+                account,
+                claims.get("principal_type", "—"),
+                _short_id(claims.get("principal_id")),
+                _short_id(claims.get("team_id")),
+                _timestamp(str(claims.get("created_at", ""))),
+                _expiry_status(str(claims.get("expires_at", ""))),
+                _retention(claims.get("retention_opt_out")),
+                f"{claims.get('auth_mode', '—')} · {'refresh' if claims['refreshable'] else 'browser'}",
+                f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
+            ]
         )
-    print(f"└{border.replace('┼', '┴')}┘")
+    widths = [
+        max(_visible_len(headers[i]), max((_visible_len(str(row[i])) for row in rows), default=0))
+        for i in range(len(headers))
+    ]
+
+    def rule(left: str, mid: str, right: str) -> str:
+        return left + mid.join("─" * (w + 2) for w in widths) + right
+
+    def row(cells: list[str]) -> str:
+        parts = [f" {cell}{' ' * (w - _visible_len(str(cell)))} " for cell, w in zip(cells, widths)]
+        return "│" + "│".join(parts) + "│"
+
+    print(f"{BOLD}Saved Grok profiles{RESET}  {DIM}({len(rows)}){RESET}")
+    print(rule("┌", "┬", "┐"))
+    print(row([f"{BOLD}{h}{RESET}" for h in headers]))
+    print(rule("├", "┼", "┤"))
+    for r in rows:
+        print(row(r))
+    print(rule("└", "┴", "┘"))
     return 0
 
 
@@ -336,21 +357,21 @@ def cmd_switch(name: str) -> int:
     profile = _profile_file(name)
     payload = _read_json(profile) if profile is not None else None
     if profile is None or payload is None or not _claims(payload):
-        log_red(f"Profile is unreadable or missing: {name}")
+        log_red(f"❌ Profile is unreadable or missing: {name}")
         return 1
     if not _backup_active():
         return 1
     if not _write_json(_auth_file(), payload):
         return 1
     _set_marker(profile)
-    print(f"{GREEN}Switched Grok profile:{RESET} {BOLD}{profile.stem}{RESET}")
+    print(f"{GREEN}✅ Switched Grok profile:{RESET} {BOLD}{profile.stem}{RESET}")
     return cmd_who()
 
 
 def cmd_switch_interactive() -> int:
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
-        log_yellow("No saved Grok profiles.")
+        log_yellow("⚠️  No saved Grok profiles.")
         return 1
     for index, profile in enumerate(profiles, start=1):
         print(f"  {index}. {profile.stem}")
@@ -358,7 +379,7 @@ def cmd_switch_interactive() -> int:
         selected = input("Choose Grok profile: ").strip()
         index = int(selected) - 1
     except (EOFError, ValueError):
-        log_red("Invalid selection")
+        log_red("❌ Invalid selection")
         return 1
     return cmd_switch(profiles[index].stem) if 0 <= index < len(profiles) else 1
 
@@ -366,16 +387,16 @@ def cmd_switch_interactive() -> int:
 def cmd_remove(name: str) -> int:
     profile = _profile_file(name)
     if profile is None or not profile.is_file():
-        log_red(f"Profile not found: {name}")
+        log_red(f"❌ Profile not found: {name}")
         return 1
     try:
         profile.unlink()
     except OSError as exc:
-        log_red(f"Could not remove profile: {exc}")
+        log_red(f"❌ Could not remove profile: {exc}")
         return 1
     if _active_profile() is None:
         _marker_file().unlink(missing_ok=True)
-    print(f"Removed Grok profile: {profile.stem}")
+    print(f"{GREEN}✅ Removed Grok profile:{RESET} {profile.stem}")
     return 0
 
 
@@ -383,13 +404,13 @@ def _run_grok_refresh() -> int:
     executable = shutil.which("grok")
     if executable is None:
         log_red(
-            "Grok Build CLI is required. Install it: curl -fsSL https://x.ai/cli/install.sh | bash"
+            "❌ Grok Build CLI is required. Install it: curl -fsSL https://x.ai/cli/install.sh | bash"
         )
         return 1
     result = subprocess.run([executable, "models"], capture_output=True, text=True)
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()
-        log_red(f"Grok could not refresh this session{f': {detail}' if detail else ''}")
+        log_red(f"❌ Grok could not refresh this session{f': {detail}' if detail else ''}")
         return result.returncode
     return 0
 
@@ -398,7 +419,7 @@ def _refresh_profile(profile: Path) -> int:
     original = _read_json(_auth_file())
     payload = _read_json(profile)
     if payload is None:
-        log_red(f"Profile is unreadable: {profile.stem}")
+        log_red(f"❌ Profile is unreadable: {profile.stem}")
         return 1
     try:
         if not _write_json(_auth_file(), payload):
@@ -423,7 +444,7 @@ def cmd_refresh(target: str | None) -> int:
             sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
         )
         if not profiles:
-            log_yellow("No saved Grok profiles.")
+            log_yellow("⚠️  No saved Grok profiles.")
             return 0
         status = 0
         for profile in profiles:
@@ -438,7 +459,7 @@ def cmd_refresh(target: str | None) -> int:
             else 1
         )
     if _read_json(_auth_file()) is None:
-        log_red("No Grok login found. Run: grok login --oauth")
+        log_red("❌ No Grok login found. Run: grok login --oauth")
         return 1
     status = _run_grok_refresh()
     profile = _active_profile()
@@ -446,7 +467,7 @@ def cmd_refresh(target: str | None) -> int:
     if status == 0 and profile is not None and refreshed is not None:
         _write_json(profile, refreshed)
         print(
-            f"{GREEN}Refreshed and synced Grok profile:{RESET} {BOLD}{profile.stem}{RESET}"
+            f"{GREEN}✅ Refreshed and synced Grok profile:{RESET} {BOLD}{profile.stem}{RESET}"
         )
     return status
 
@@ -455,12 +476,12 @@ def cmd_sync() -> int:
     payload = _read_json(_auth_file())
     profile = _active_profile(payload)
     if payload is None or profile is None:
-        log_yellow("No unambiguous current profile — run: grok-accounts switch <name>")
+        log_yellow("⚠️  No unambiguous current profile — run: grok-accounts switch <name>")
         return 1
     if not _write_json(profile, payload):
         return 1
     _set_marker(profile)
-    print(f"{GREEN}Synced active auth → profile:{RESET} {BOLD}{profile.stem}{RESET}")
+    print(f"{GREEN}✅ Synced active auth → profile:{RESET} {BOLD}{profile.stem}{RESET}")
     return 0
 
 
@@ -468,7 +489,7 @@ def cmd_login_switch(name: str) -> int:
     executable = shutil.which("grok")
     if executable is None:
         log_red(
-            "Grok Build CLI is required. Install it: curl -fsSL https://x.ai/cli/install.sh | bash"
+            "❌ Grok Build CLI is required. Install it: curl -fsSL https://x.ai/cli/install.sh | bash"
         )
         return 1
     subprocess.run([executable, "logout"])
@@ -498,7 +519,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_sync()
     if command == "login-switch" and rest:
         return cmd_login_switch(rest[0])
-    log_red(f"Unknown or incomplete command: {command}")
+    log_red(f"❌ Unknown or incomplete command: {command}")
     print(HELP)
     return 1
 
