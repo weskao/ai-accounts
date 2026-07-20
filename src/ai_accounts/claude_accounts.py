@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Final
 
 from . import claude_usage
-from .codex_usage import align_usage_cells, format_unix_time_compact, format_usage_window
+from .usage_format import align_usage_cells, format_unix_time_compact, format_usage_window
 from ._utils import (
     DIM,
     GREEN,

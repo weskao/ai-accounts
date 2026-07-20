@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final
 
-from . import codex_usage
+from . import usage_format
 from ._utils import (
     DIM,
     GREEN,
@@ -508,7 +508,7 @@ def _list_expiry_status(claims: dict | None) -> tuple[str, str]:
         return "—", DIM
     now = datetime.now().timestamp()
     exp = claims["expires_epoch"]
-    text = codex_usage.format_unix_time_compact(int(exp))
+    text = usage_format.format_unix_time_compact(int(exp))
     if exp <= now:
         return f"{text} expired", RED
     if exp - now < 24 * 3600:
@@ -728,11 +728,11 @@ def _usage_color(percentage: int) -> str:
     return GREEN
 
 
-def _usage_cell(window: codex_usage.UsageWindow | None, window_kind: str) -> str:
+def _usage_cell(window: usage_format.UsageWindow | None, window_kind: str) -> str:
     if window is None:
         return f"{DIM}—{RESET}"
     percent = f"{_usage_color(window.percentage)}{window.percentage}%{RESET}"
-    return codex_usage.format_usage_window(window, window_kind, percent)
+    return usage_format.format_usage_window(window, window_kind, percent)
 
 
 def _align_usage_cells(rows: list[dict[str, str]], key: str) -> None:
@@ -854,7 +854,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             primary = active_profile if active_profile in group else group[0]
             same_account_profiles.update(profile for profile in group if profile != primary)
 
-    empty_usage = codex_usage.UsageSnapshot(
+    empty_usage = usage_format.UsageSnapshot(
         hourly=None,
         weekly=None,
         refreshed_at=None,
@@ -881,7 +881,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
                 and _token_key_from_path(_auth_file()) == _token_key_from_text(active_text)
             ):
                 usage_path = _auth_file()
-            usage = codex_usage.fetch_usage(usage_path)
+            usage = usage_format.fetch_usage(usage_path)
             if usage.error and usage.error.startswith(("HTTP 401", "HTTP 403")):
                 usage = empty_usage
         rows.append(
@@ -892,7 +892,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
                 "account_id": _short_id((claims or {}).get("account_id")),
                 "usage_5h": _usage_cell(usage.hourly, "5h"),
                 "usage_1week": _usage_cell(usage.weekly, "1week"),
-                "usage_updated": codex_usage.format_refreshed_at(usage),
+                "usage_updated": usage_format.format_refreshed_at(usage),
                 "expires": f"{color}{expires_text}{RESET}",
                 "status": status,
             }

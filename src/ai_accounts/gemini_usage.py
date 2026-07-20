@@ -23,7 +23,7 @@ else:
     import pty
     import termios
 
-from .codex_usage import UsageWindow, format_unix_time_compact
+from .usage_format import UsageWindow, format_unix_time_compact
 
 JsonValue: TypeAlias = (
     None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]

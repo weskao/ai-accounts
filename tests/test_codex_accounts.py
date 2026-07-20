@@ -21,7 +21,7 @@ from pathlib import Path
 from unittest import mock
 
 from ai_accounts import codex_accounts as ca
-from ai_accounts import codex_usage
+from ai_accounts import usage_format
 
 
 def _jwt(payload: dict) -> str:
@@ -808,7 +808,7 @@ class UsageRequestTests(_CodexHomeMixin):
         opener = mock.Mock()
         opener.open.side_effect = fake_open
         with mock.patch("urllib.request.build_opener", return_value=opener):
-            usage = codex_usage.fetch_usage(auth)
+            usage = usage_format.fetch_usage(auth)
 
         self.assertEqual(captured["url"], "https://chatgpt.com/backend-api/wham/usage")
         self.assertEqual(captured["timeout"], 20)
@@ -837,13 +837,13 @@ class UsageRequestTests(_CodexHomeMixin):
                 },
             }
         }
-        snapshot = codex_usage._snapshot(payload)
+        snapshot = usage_format._snapshot(payload)
         self.assertIsNone(snapshot.hourly)
         self.assertIsNotNone(snapshot.weekly)
         self.assertEqual(snapshot.weekly.percentage, 58)
-        self.assertEqual(codex_usage.format_usage_window(snapshot.hourly, "5h"), "-")
+        self.assertEqual(usage_format.format_usage_window(snapshot.hourly, "5h"), "-")
         self.assertRegex(
-            codex_usage.format_usage_window(snapshot.weekly, "1week"),
+            usage_format.format_usage_window(snapshot.weekly, "1week"),
             r"^\d+% · \d+d \d+h \d+m$",
         )
 
@@ -856,7 +856,7 @@ class UsageRequestTests(_CodexHomeMixin):
                 "secondary_window": {"used_percent": 34, "limit_window_seconds": 604_800},
             }
         }
-        snapshot = codex_usage._snapshot(payload)
+        snapshot = usage_format._snapshot(payload)
         self.assertEqual(snapshot.hourly.percentage, 12)
         self.assertEqual(snapshot.weekly.percentage, 34)
 
@@ -869,7 +869,7 @@ class UsageRequestTests(_CodexHomeMixin):
                 "secondary_window": {"used_percent": 34},
             }
         }
-        snapshot = codex_usage._snapshot(payload)
+        snapshot = usage_format._snapshot(payload)
         self.assertEqual(snapshot.hourly.percentage, 12)
         self.assertEqual(snapshot.weekly.percentage, 34)
 
@@ -878,13 +878,13 @@ class UsageRequestTests(_CodexHomeMixin):
         opener = mock.Mock()
         opener.open.side_effect = OSError("offline")
         with mock.patch("urllib.request.build_opener", return_value=opener):
-            usage = codex_usage.fetch_usage(auth)
+            usage = usage_format.fetch_usage(auth)
         self.assertEqual(usage.error, "network error")
 
     def test_fetch_usage_does_not_follow_redirects_with_bearer_token(self):
         auth = self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
         err = urllib.error.HTTPError(
-            codex_usage.USAGE_URL,
+            usage_format.USAGE_URL,
             302,
             "Found",
             {"Location": "https://example.invalid/steal"},
@@ -893,10 +893,10 @@ class UsageRequestTests(_CodexHomeMixin):
         opener = mock.Mock()
         opener.open.side_effect = err
         with mock.patch("urllib.request.build_opener", return_value=opener) as build_opener:
-            usage = codex_usage.fetch_usage(auth)
+            usage = usage_format.fetch_usage(auth)
 
         self.assertEqual(usage.error, "HTTP 302 from usage endpoint")
-        self.assertIs(build_opener.call_args.args[0], codex_usage._NoRedirectHandler)
+        self.assertIs(build_opener.call_args.args[0], usage_format._NoRedirectHandler)
 
     def test_fetch_usage_treats_window_without_used_percent_as_unknown(self):
         auth = self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
@@ -916,49 +916,49 @@ class UsageRequestTests(_CodexHomeMixin):
         opener = mock.Mock()
         opener.open.return_value = FakeResponse()
         with mock.patch("urllib.request.build_opener", return_value=opener):
-            usage = codex_usage.fetch_usage(auth)
+            usage = usage_format.fetch_usage(auth)
 
         self.assertIsNone(usage.hourly)
-        self.assertEqual(codex_usage.format_usage_window(usage.hourly, "5h"), "-")
+        self.assertEqual(usage_format.format_usage_window(usage.hourly, "5h"), "-")
 
     def test_usage_window_formats_reset_countdown_5h(self):
-        window = codex_usage.UsageWindow(
+        window = usage_format.UsageWindow(
             percentage=50,
             reset_time=1_800_000_000,
             window_minutes=300,
         )
-        with mock.patch.object(codex_usage.time, "time", return_value=1_799_982_480):
-            self.assertEqual(codex_usage.format_usage_window(window, "5h"), "50% · 4h 52m")
+        with mock.patch.object(usage_format.time, "time", return_value=1_799_982_480):
+            self.assertEqual(usage_format.format_usage_window(window, "5h"), "50% · 4h 52m")
 
     def test_usage_window_formats_reset_countdown_1week(self):
-        window = codex_usage.UsageWindow(
+        window = usage_format.UsageWindow(
             percentage=58,
             reset_time=1_800_000_000,
             window_minutes=10_080,
         )
-        with mock.patch.object(codex_usage.time, "time", return_value=1_799_902_500):
-            self.assertEqual(codex_usage.format_usage_window(window, "1week"), "58% · 1d 3h 5m")
+        with mock.patch.object(usage_format.time, "time", return_value=1_799_902_500):
+            self.assertEqual(usage_format.format_usage_window(window, "1week"), "58% · 1d 3h 5m")
 
     def test_usage_window_shows_zero_units(self):
-        window_5h = codex_usage.UsageWindow(percentage=0, reset_time=1_800_000_120, window_minutes=300)
-        window_1w = codex_usage.UsageWindow(percentage=0, reset_time=1_800_003_600, window_minutes=10_080)
-        with mock.patch.object(codex_usage.time, "time", return_value=1_800_000_000):
-            self.assertEqual(codex_usage.format_usage_window(window_5h, "5h"), "0% · 0h 2m")
-            self.assertEqual(codex_usage.format_usage_window(window_1w, "1week"), "0% · 0d 1h 0m")
+        window_5h = usage_format.UsageWindow(percentage=0, reset_time=1_800_000_120, window_minutes=300)
+        window_1w = usage_format.UsageWindow(percentage=0, reset_time=1_800_003_600, window_minutes=10_080)
+        with mock.patch.object(usage_format.time, "time", return_value=1_800_000_000):
+            self.assertEqual(usage_format.format_usage_window(window_5h, "5h"), "0% · 0h 2m")
+            self.assertEqual(usage_format.format_usage_window(window_1w, "1week"), "0% · 0d 1h 0m")
 
     def test_usage_cell_matches_required_shape_with_ansi_stripped(self):
-        window_5h = codex_usage.UsageWindow(percentage=58, reset_time=1_800_000_000, window_minutes=300)
-        window_1w = codex_usage.UsageWindow(percentage=58, reset_time=1_800_000_000, window_minutes=10_080)
-        with mock.patch.object(codex_usage.time, "time", return_value=1_799_982_480):
+        window_5h = usage_format.UsageWindow(percentage=58, reset_time=1_800_000_000, window_minutes=300)
+        window_1w = usage_format.UsageWindow(percentage=58, reset_time=1_800_000_000, window_minutes=10_080)
+        with mock.patch.object(usage_format.time, "time", return_value=1_799_982_480):
             cell_5h = ca._ANSI_RE.sub("", ca._usage_cell(window_5h, "5h"))
             cell_1w = ca._ANSI_RE.sub("", ca._usage_cell(window_1w, "1week"))
         self.assertRegex(cell_5h, r"^\d+% · \d+h \d+m$")
         self.assertRegex(cell_1w, r"^\d+% · \d+d \d+h \d+m$")
 
     def test_usage_cell_colors_percent_thresholds(self):
-        low = codex_usage.UsageWindow(percentage=0, reset_time=None, window_minutes=300)
-        mid = codex_usage.UsageWindow(percentage=50, reset_time=None, window_minutes=300)
-        high = codex_usage.UsageWindow(percentage=80, reset_time=None, window_minutes=300)
+        low = usage_format.UsageWindow(percentage=0, reset_time=None, window_minutes=300)
+        mid = usage_format.UsageWindow(percentage=50, reset_time=None, window_minutes=300)
+        high = usage_format.UsageWindow(percentage=80, reset_time=None, window_minutes=300)
 
         self.assertIn(ca.GREEN, ca._usage_cell(low, "5h"))
         self.assertIn(ca.YELLOW, ca._usage_cell(mid, "5h"))
@@ -986,13 +986,13 @@ class UsageRequestTests(_CodexHomeMixin):
     def test_list_includes_usage_columns(self):
         self.write_auth(_auth_payload("acct-w", "w@x.com"))
         self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
-        usage = codex_usage.UsageSnapshot(
-            hourly=codex_usage.UsageWindow(
+        usage = usage_format.UsageSnapshot(
+            hourly=usage_format.UsageWindow(
                 percentage=12,
                 reset_time=1_800_000_000,
                 window_minutes=300,
             ),
-            weekly=codex_usage.UsageWindow(
+            weekly=usage_format.UsageWindow(
                 percentage=34,
                 reset_time=1_800_003_600,
                 window_minutes=10_080,
@@ -1002,7 +1002,7 @@ class UsageRequestTests(_CodexHomeMixin):
         )
 
         out = io.StringIO()
-        with mock.patch.object(codex_usage, "fetch_usage", return_value=usage) as fetch_usage, \
+        with mock.patch.object(usage_format, "fetch_usage", return_value=usage) as fetch_usage, \
                 mock.patch.object(ca, "_oauth_refresh") as oauth_refresh, \
                 redirect_stdout(out), redirect_stderr(io.StringIO()):
             rc = ca.cmd_list()
@@ -1042,9 +1042,9 @@ class UsageRequestTests(_CodexHomeMixin):
 
         with mock.patch.object(ca, "_read_keychain_auth", return_value=live_text), \
                 mock.patch.object(
-                    codex_usage,
+                    usage_format,
                     "fetch_usage",
-                    return_value=codex_usage.UsageSnapshot(
+                    return_value=usage_format.UsageSnapshot(
                         hourly=None,
                         weekly=None,
                         refreshed_at=None,
@@ -1072,9 +1072,9 @@ class UsageRequestTests(_CodexHomeMixin):
         with mock.patch.object(ca, "_read_keychain_auth", return_value=None), \
                 mock.patch.object(ca, "_oauth_refresh") as oauth_refresh, \
                 mock.patch.object(
-                    codex_usage,
+                    usage_format,
                     "fetch_usage",
-                    return_value=codex_usage.UsageSnapshot(
+                    return_value=usage_format.UsageSnapshot(
                         hourly=None,
                         weekly=None,
                         refreshed_at=None,
@@ -1096,9 +1096,9 @@ class UsageRequestTests(_CodexHomeMixin):
         with mock.patch.object(ca, "_read_keychain_auth", return_value=None), \
                 mock.patch.object(ca, "_oauth_refresh") as oauth_refresh, \
                 mock.patch.object(
-                    codex_usage,
+                    usage_format,
                     "fetch_usage",
-                    return_value=codex_usage.UsageSnapshot(
+                    return_value=usage_format.UsageSnapshot(
                         hourly=None,
                         weekly=None,
                         refreshed_at=None,
@@ -1117,13 +1117,13 @@ class UsageRequestTests(_CodexHomeMixin):
     def test_refresh_all_summary_fetches_current_usage(self):
         self.write_profile("a", _auth_payload("acct-a", "a@x.com"))
         new = {"access_token": _jwt({"exp": int(time.time()) + 864000})}
-        usage = codex_usage.UsageSnapshot(
-            hourly=codex_usage.UsageWindow(
+        usage = usage_format.UsageSnapshot(
+            hourly=usage_format.UsageWindow(
                 percentage=12,
                 reset_time=1_800_000_000,
                 window_minutes=300,
             ),
-            weekly=codex_usage.UsageWindow(
+            weekly=usage_format.UsageWindow(
                 percentage=34,
                 reset_time=1_800_003_600,
                 window_minutes=10_080,
@@ -1132,7 +1132,7 @@ class UsageRequestTests(_CodexHomeMixin):
             error=None,
         )
         with mock.patch.object(ca, "_oauth_refresh", return_value=(new, None)), \
-                mock.patch.object(codex_usage, "fetch_usage", return_value=usage) as fetch_usage:
+                mock.patch.object(usage_format, "fetch_usage", return_value=usage) as fetch_usage:
             rc, out, _err = self.run_capture(ca.cmd_refresh, "--all")
 
         self.assertEqual(rc, 0)

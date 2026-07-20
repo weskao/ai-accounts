@@ -3,7 +3,7 @@
 Reads the subscription usage windows (5-hour session + 7-day) from the OAuth
 usage endpoint using a profile's ``accessToken``. Never prints tokens — only
 the returned utilization percentages and reset times. Shares the table/format
-helpers with ``codex_usage`` so every account tool renders usage identically.
+helpers with ``usage_format`` so every account tool renders usage identically.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, TypeAlias
 
-from .codex_usage import UsageWindow, format_unix_time_compact
+from .usage_format import UsageWindow, format_unix_time_compact
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonDict: TypeAlias = dict[str, JsonValue]

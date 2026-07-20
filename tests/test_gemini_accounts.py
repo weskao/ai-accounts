@@ -13,7 +13,7 @@ from unittest import mock
 
 from ai_accounts import gemini_accounts as ga
 from ai_accounts import gemini_usage as gu
-from ai_accounts.codex_usage import UsageWindow
+from ai_accounts.usage_format import UsageWindow
 
 
 def _jwt(payload: ga.JsonDict) -> str:

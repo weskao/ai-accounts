@@ -22,7 +22,7 @@ from ._utils import (
     log_red,
     log_yellow,
 )
-from .codex_usage import (
+from .usage_format import (
     UsageWindow,
     align_usage_cells,
     format_unix_time_compact,
