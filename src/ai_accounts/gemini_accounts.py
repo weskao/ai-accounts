@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import TypeAlias
 
 from . import gemini_usage
+from ._present import _ANSI_RE, accounts_table, choose_profile, ok, panel, usage_color
 from ._utils import (
+    BOLD,
     DIM,
     GREEN,
     MAGENTA,
@@ -28,7 +30,6 @@ from ._utils import (
 )
 from .usage_format import (
     UsageWindow,
-    align_usage_cells,
     capitalize_first,
     format_unix_time_compact,
     format_usage_window,
@@ -44,11 +45,6 @@ Claims: TypeAlias = dict[str, str | int | bool | None]
 def _string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
-
-BOLD = "\033[1m"
-CYAN = "\033[1;36m"
-
-_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 HELP = """agy-accounts — manage multiple Antigravity OAuth profiles
 
@@ -475,21 +471,6 @@ def _copy_active_auth_to(dest: Path) -> None:
 # ── terminal rendering ───────────────────────────────────────────────────
 
 
-def _visible_len(s: str) -> int:
-    return len(_ANSI_RE.sub("", s))
-
-
-def _panel(title: str, lines: list[str], accent: str = CYAN, width: int = 64) -> None:
-    """Bordered header/footer rule around left-aligned content — legible even
-    with embedded ANSI color codes since only the header/footer are measured."""
-    width = max(width, _visible_len(title) + 8)
-    top_dashes = width - _visible_len(title) - 4
-    print(f"{accent}┌─ {BOLD}{title}{RESET}{accent} {'─' * top_dashes}┐{RESET}")
-    for line in lines or [f"{DIM}(none){RESET}"]:
-        print(f"{accent}│{RESET}  {line}")
-    print(f"{accent}└{'─' * (width - 1)}┘{RESET}")
-
-
 def _expiry_status(claims: Claims | None) -> tuple[str, str]:
     """(display text, color) — color carries meaning but text never relies on it alone."""
     if not claims or not claims.get("expires_str"):
@@ -581,71 +562,39 @@ def _plan_cell(plan: str | None) -> str:
 def _usage_cell(window: UsageWindow | None) -> str:
     if window is None:
         return f"{DIM}—{RESET}"
-    color = (
-        RED + BOLD
-        if window.percentage >= 80
-        else YELLOW
-        if window.percentage >= 50
-        else GREEN
-    )
-    percent = f"{color}{window.percentage}%{RESET}"
+    percent = f"{usage_color(window.percentage)}{window.percentage}%{RESET}"
     if window.reset_time is None:
         return percent
     window_kind = "5h" if window.window_minutes == 5 * 60 else "weekly"
     return format_usage_window(window, window_kind, percent)
 
 
+# Optional columns hide entirely when every row renders "—" for that key; the
+# four usage columns right-align via the shared renderer's align_keys. The
+# shared renderer owns borders/widths/padding.
+_TABLE_COLUMNS = [
+    ("PROFILE", "profile"),
+    ("ACCOUNT", "account"),
+    ("ID", "account_id"),
+    ("PLAN", "plan"),
+    ("GEMINI 5H USED", "gemini_5h"),
+    ("GEMINI 1W USED", "gemini_weekly"),
+    ("CLAUDE/GPT 5H USED", "other_5h"),
+    ("CLAUDE/GPT 1W USED", "other_weekly"),
+    ("UPDATED", "usage_updated"),
+    ("SESSION", "expires"),
+    ("STATE", "status"),
+]
+_OPTIONAL_COLUMNS = frozenset(
+    {"account_id", "gemini_5h", "gemini_weekly", "other_5h", "other_weekly"}
+)
+_ALIGN_KEYS = ("gemini_5h", "gemini_weekly", "other_5h", "other_weekly")
+
+
 def _print_accounts_table(rows: list[dict[str, str]]) -> None:
-    columns = [
-        ("PROFILE", "profile"),
-        ("ACCOUNT", "account"),
-        ("ID", "account_id"),
-        ("PLAN", "plan"),
-        ("GEMINI 5H USED", "gemini_5h"),
-        ("GEMINI 1W USED", "gemini_weekly"),
-        ("CLAUDE/GPT 5H USED", "other_5h"),
-        ("CLAUDE/GPT 1W USED", "other_weekly"),
-        ("UPDATED", "usage_updated"),
-        ("SESSION", "expires"),
-        ("STATE", "status"),
-    ]
-    optional_keys = {
-        "account_id",
-        "gemini_5h",
-        "gemini_weekly",
-        "other_5h",
-        "other_weekly",
-    }
-    for key in optional_keys - {"account_id"}:
-        align_usage_cells(rows, key)
-    columns = [
-        (header, key)
-        for header, key in columns
-        if key not in optional_keys
-        or any(_ANSI_RE.sub("", row[key]) != "—" for row in rows)
-    ]
-    headers, keys = zip(*columns, strict=True)
-    widths = [
-        max(_visible_len(h), max((_visible_len(r[k]) for r in rows), default=0))
-        for h, k in zip(headers, keys)
-    ]
-
-    def rule(left: str, mid: str, right: str) -> str:
-        return left + mid.join("─" * (w + 2) for w in widths) + right
-
-    def row(cells: list[str]) -> str:
-        parts = [
-            f" {cell}{' ' * (w - _visible_len(cell))} "
-            for cell, w in zip(cells, widths)
-        ]
-        return "│" + "│".join(parts) + "│"
-
-    print(rule("┌", "┬", "┐"))
-    print(row([f"{BOLD}{h}{RESET}" for h in headers]))
-    print(rule("├", "┼", "┤"))
-    for r in rows:
-        print(row([r[k] for k in keys]))
-    print(rule("└", "┴", "┘"))
+    accounts_table(
+        rows, _TABLE_COLUMNS, optional_columns=_OPTIONAL_COLUMNS, align_keys=_ALIGN_KEYS
+    )
 
 
 # ── commands ─────────────────────────────────────────────────────────────
@@ -669,10 +618,10 @@ def cmd_who() -> int:
             f"{RED}Not logged in{RESET}  {DIM}(run `agy-accounts login-switch <name>`){RESET}"
         )
     status_lines.append(f"{DIM}Active account{RESET}: {active_email or '—'}")
-    _panel("Antigravity Login Status", status_lines)
+    panel("Antigravity Login Status", status_lines)
 
     print()
-    _panel("Current Auth Claims", _claims_lines(claims))
+    panel("Current Auth Claims", _claims_lines(claims))
     return 0
 
 
@@ -691,9 +640,9 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     _auth_file().chmod(0o600)
     _set_current_profile(profile_file)
 
-    print(f"{GREEN}✅ Saved Antigravity profile:{RESET} {BOLD}{name}{RESET}")
+    ok("Saved Antigravity profile", name)
     print(f"{DIM}   → {profile_file}{RESET}\n")
-    _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+    panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
     return 0
 
 
@@ -836,7 +785,7 @@ def cmd_switch(name: str) -> int:
         return 1
     _set_current_profile(profile_file)
 
-    print(f"{GREEN}✅ Switched Antigravity profile to:{RESET} {BOLD}{name}{RESET}")
+    ok("Switched Antigravity profile to", name)
     print(f"{DIM}   agy will use this account on its next launch.{RESET}")
     print()
     return cmd_who()
@@ -848,27 +797,13 @@ def cmd_switch_interactive() -> int:
         log_yellow("⚠️  No saved Antigravity profiles available to switch.")
         return 1
 
-    print(f"{BOLD}Choose an Antigravity profile:{RESET}")
-    for index, profile in enumerate(profiles, start=1):
-        print(
-            f"  {index}) {profile.stem}  {DIM}{_identity_label(_read_claims(profile))}{RESET}"
-        )
-
-    try:
-        selection = input("Select account number: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        log_yellow("Switch cancelled.")
+    chosen = choose_profile(
+        "an Antigravity",
+        [(profile.stem, _identity_label(_read_claims(profile))) for profile in profiles],
+    )
+    if chosen is None:
         return 1
-
-    if not selection.isdecimal():
-        log_red("❌ Enter one of the account numbers shown above.")
-        return 1
-    selected_index = int(selection) - 1
-    if selected_index < 0 or selected_index >= len(profiles):
-        log_red("❌ Enter one of the account numbers shown above.")
-        return 1
-    return cmd_switch(profiles[selected_index].stem)
+    return cmd_switch(chosen)
 
 
 def cmd_remove(name: str) -> int:
@@ -882,7 +817,7 @@ def cmd_remove(name: str) -> int:
     profile_file.unlink()
     if was_current:
         _current_profile_marker().unlink(missing_ok=True)
-    print(f"{GREEN}✅ Removed Antigravity profile:{RESET} {name}")
+    ok("Removed Antigravity profile", name, bold=False)
     return 0
 
 
@@ -921,10 +856,10 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
         return 1, "agy"
 
     if show_summary:
-        print(f"{GREEN}✅ Refreshed Antigravity profile:{RESET} {BOLD}{name}{RESET}")
+        ok("Refreshed Antigravity profile", name)
     if show_summary:
         print()
-        _panel(
+        panel(
             f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN
         )
     return 0, None
@@ -947,7 +882,7 @@ def _refresh_all_profiles() -> int:
     if failed:
         log_red(f"❌ agy refresh failed: {', '.join(failed)}")
         return 1
-    print(f"{GREEN}✅ All {len(profiles)} profile(s) refreshed.{RESET}")
+    ok(f"All {len(profiles)} profile(s) refreshed.")
     return 0
 
 
@@ -967,7 +902,7 @@ def _refresh_active_auth() -> int:
         log_red(f"❌ agy refresh failed: {usage.error}")
         return 1
     refreshed_text = _read_active_auth_text()
-    print(f"{GREEN}✅ Refreshed active Antigravity auth.{RESET}")
+    ok("Refreshed active Antigravity auth.")
 
     if profile_path is not None and refreshed_text is not None:
         saved = json.loads(profile_path.read_text(encoding="utf-8"))
@@ -984,7 +919,7 @@ def _refresh_active_auth() -> int:
         )
 
     print()
-    _panel("Current Auth Claims", _claims_lines(_read_claims(_auth_file())), accent=GREEN)
+    panel("Current Auth Claims", _claims_lines(_read_claims(_auth_file())), accent=GREEN)
     return 0
 
 
@@ -1011,11 +946,9 @@ def cmd_sync() -> int:
 
     _copy_active_auth_to(profile_path)
     _set_current_profile(profile_path)
-    print(
-        f"{GREEN}✅ Synced active auth → profile:{RESET} {BOLD}{profile_path.stem}{RESET}"
-    )
+    ok("Synced active auth → profile", profile_path.stem)
     print()
-    _panel(
+    panel(
         f"Profile: {profile_path.stem}",
         _claims_lines(_read_claims(profile_path)),
         accent=GREEN,
