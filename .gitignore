@@ -11,3 +11,8 @@ build/
 .claude/ecc/install-state.json
 .claude/skills/ecc/
 
+# Account-tool profile stores hold live OAuth tokens — never commit them, even
+# if a *_ACCOUNT_DIR override or a stray run drops a store inside the repo tree.
+accounts/
+.current-profile
+
