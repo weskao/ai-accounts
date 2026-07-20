@@ -1,8 +1,11 @@
-"""ai-accounts — list every AI account profile at once.
+"""ai-accounts — drive every AI account tool at once.
 
-Fans out the per-provider ``list`` commands (codex-accounts, claude-accounts,
-agy-accounts) in parallel and prints their tables back-to-back, so one command
-shows every saved profile + usage without waiting for each provider serially.
+Fans a subcommand out to all three per-provider tools (codex-accounts,
+claude-accounts, agy-accounts) so one command covers every provider. ``list``
+runs the providers in parallel and captures their tables (its output embeds
+ANSI unconditionally, so color survives the pipe); every other command runs
+the providers one at a time with live stdio, so interactive flows (switch
+pickers, login-switch) and TTY-gated color keep working.
 """
 
 from __future__ import annotations
@@ -16,25 +19,44 @@ from ._utils import RESET, log_red
 BOLD = "\033[1m"
 CYAN = "\033[1;36m"
 
-# (display label, importable module). Each module is `python -m`-runnable with a
-# `list` command; its table output embeds ANSI unconditionally, so capturing via
-# a pipe preserves color — no pty needed, and it works cross-platform.
+# (display label, importable module). Each module is `python -m`-runnable and
+# understands the same subcommand set as the others.
 _TOOLS: list[tuple[str, str]] = [
     ("codex-accounts", "ai_accounts.codex_accounts"),
     ("claude-accounts", "ai_accounts.claude_accounts"),
     ("agy-accounts", "ai_accounts.gemini_accounts"),
 ]
 
-HELP = """ai-accounts — list every AI account profile at once
+# Subcommands every per-provider tool understands (shared surface). Anything
+# outside this set is rejected rather than blindly forwarded.
+_COMMANDS = frozenset(
+    {"who", "current", "save", "list", "switch", "remove", "refresh", "sync", "login-switch"}
+)
+
+HELP = """ai-accounts — drive every AI account tool at once
 
 USAGE
-  ai-accounts             List all provider profiles (providers run in parallel)
-  ai-accounts list        Same as above
-  ai-accounts -h | --help Show this help
+  ai-accounts                        Show this help (the available commands)
+  ai-accounts list                   List all provider profiles (providers run in parallel)
+  ai-accounts who | current          Show the active account for every provider
+  ai-accounts refresh [<name>|--all] Refresh tokens across every provider
+  ai-accounts sync                   Sync active auth back to its profile, every provider
+  ai-accounts save <name>            Save the current login as <name> in every provider
+  ai-accounts switch [<name>]        Switch profile in every provider (interactive, one at a time)
+  ai-accounts remove <name>          Remove profile <name> from every provider
+  ai-accounts login-switch <name>    Fresh login + save as <name>, every provider (interactive)
+  ai-accounts -h | --help            Show this help
 
-Runs `codex-accounts list`, `claude-accounts list`, and `agy-accounts list`
-concurrently, then prints each provider's table in a fixed order.
+Each command is forwarded to codex-accounts, claude-accounts, and agy-accounts.
+`list` runs them concurrently and prints each table in a fixed order; every
+other command runs them one provider at a time with live output, so interactive
+pickers and login flows work and color is preserved. Any argument after the
+command (e.g. a profile name or `--all`) is passed through to each provider.
 """
+
+
+def _header(label: str) -> None:
+    print(f"{BOLD}{CYAN}━━━ {label} ━━━{RESET}")
 
 
 def _run_list(module: str) -> subprocess.CompletedProcess[str]:
@@ -53,7 +75,7 @@ def cmd_list() -> int:
 
     exit_code = 0
     for (label, _), result in zip(_TOOLS, results):
-        print(f"{BOLD}{CYAN}━━━ {label} ━━━{RESET}")
+        _header(label)
         stdout = (result.stdout or "").strip("\n")
         if stdout:
             print(stdout)
@@ -66,17 +88,35 @@ def cmd_list() -> int:
     return exit_code
 
 
+def cmd_forward(argv: list[str]) -> int:
+    # Everything but `list`: run one provider at a time with inherited stdio so
+    # interactive prompts work and TTY-gated color is preserved. `argv` (command
+    # + any extra args) is passed through verbatim to each provider.
+    exit_code = 0
+    for label, module in _TOOLS:
+        _header(label)
+        result = subprocess.run([sys.executable, "-m", module, *argv])
+        if result.returncode != 0:
+            exit_code = result.returncode
+        print()
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] in ("-h", "--help"):
+    if not argv or argv[0] in ("-h", "--help"):
         print(HELP)
         return 0
-    if not argv or argv[0] == "list":
-        return cmd_list()
 
-    log_red(f"❌ Unknown command: {argv[0]}")
-    print(HELP)
-    return 1
+    command = argv[0]
+    if command not in _COMMANDS:
+        log_red(f"❌ Unknown command: {command}")
+        print(HELP)
+        return 1
+
+    if command == "list":
+        return cmd_list()
+    return cmd_forward(argv)
 
 
 if __name__ == "__main__":

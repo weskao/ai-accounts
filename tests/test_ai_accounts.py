@@ -55,6 +55,34 @@ class AiAccountsTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(aa.main(["bogus"]), 1)
 
+    def test_no_args_prints_help_without_running_providers(self) -> None:
+        buf = io.StringIO()
+        with mock.patch.object(aa.subprocess, "run") as run:
+            with redirect_stdout(buf):
+                rc = aa.main([])
+        self.assertEqual(rc, 0)
+        self.assertIn("USAGE", buf.getvalue())
+        run.assert_not_called()
+
+    def test_forward_passes_command_and_args_to_every_provider(self) -> None:
+        calls = []
+
+        def run(cmd, *a, **k):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        with mock.patch.object(aa.subprocess, "run", side_effect=run):
+            with redirect_stdout(io.StringIO()):
+                rc = aa.main(["refresh", "--all"])
+        self.assertEqual(rc, 0)
+        modules = [c[2] for c in calls]  # cmd = [python, -m, <module>, ...]
+        self.assertEqual(
+            modules,
+            ["ai_accounts.codex_accounts", "ai_accounts.claude_accounts", "ai_accounts.gemini_accounts"],
+        )
+        for c in calls:
+            self.assertEqual(c[-2:], ["refresh", "--all"])
+
 
 if __name__ == "__main__":
     unittest.main()
