@@ -466,17 +466,17 @@ codex-accounts who                     # confirm which account is currently acti
 
 ### codex-accounts Output
 
-- `list` renders a bordered table with usage, refresh time, auth expiry, and active state:
+- `list` renders a bordered table with plan tier, usage, refresh time, auth expiry, and active state:
 
 ```text
 ❯ codex-accounts list
 Saved Codex profiles  (2)
-┌────────────┬─────────────────────────────────────┬───────────────┬─────────┬────────────────────┬─────────┬──────────────┬────────┐
-│ PROFILE    │ ACCOUNT                             │ ID            │ 5H USED │ 1W USED            │ UPDATED │ AUTH         │ STATE  │
-├────────────┼─────────────────────────────────────┼───────────────┼─────────┼────────────────────┼─────────┼──────────────┼────────┤
-│ personal   │ Alex Example <alex@example.test>    │ 71b55315…61bc │ —       │  97% ·  2d  5h 27m │ 11:39   │ Jul 26 04:44 │ —      │
-│ work       │ Casey Demo <casey@example.test>     │ 4847e557…c28d │ —       │  18% ·  6d  6h 59m │ 11:39   │ Jul 26 04:44 │ ACTIVE │
-└────────────┴─────────────────────────────────────┴───────────────┴─────────┴────────────────────┴─────────┴──────────────┴────────┘
+┌──────────┬──────────────────────────────────┬──────┬───────────────┬─────────┬────────────────────┬─────────┬──────────────┬────────┐
+│ PROFILE  │ ACCOUNT                          │ PLAN │ ID            │ 5H USED │ 1W USED            │ UPDATED │ AUTH         │ STATE  │
+├──────────┼──────────────────────────────────┼──────┼───────────────┼─────────┼────────────────────┼─────────┼──────────────┼────────┤
+│ personal │ Alex Example <alex@example.test> │ pro  │ 71b55315…61bc │ —       │  97% ·  2d  5h 27m │ 11:39   │ Jul 26 04:44 │ —      │
+│ work     │ Casey Demo <casey@example.test>  │ plus │ 4847e557…c28d │ —       │  18% ·  6d  6h 59m │ 11:39   │ Jul 26 04:44 │ ACTIVE │
+└──────────┴──────────────────────────────────┴──────┴───────────────┴─────────┴────────────────────┴─────────┴──────────────┴────────┘
 ```
 
 - `who` and `switch` render a bordered "Current Auth Claims" panel; expiry is color-coded
