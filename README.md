@@ -588,6 +588,11 @@ live in ai-accounts's own `~/.ai-accounts/antigravity/` store.
 and restores the original session. It shows plan, Gemini weekly/5-hour use, Claude/GPT
 weekly/5-hour use, refresh time, and active state.
 
+Unlike `codex-accounts list` / `claude-accounts list`, this fetch runs strictly
+one profile at a time — not a missed optimization but a hard constraint of how
+`agy` reads its session from a single shared macOS Keychain entry. See
+[`docs/agy-parallel-limitation.md`](docs/agy-parallel-limitation.md) for why.
+
 ### agy-accounts Usage
 
 ```sh
