@@ -67,6 +67,7 @@ After install, the following commands are available on `PATH`:
 | `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove) |
 | `claude-accounts` | Manage multiple Claude Code login profiles and inspect usage |
 | `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota (macOS) |
+| `ai-accounts` | List every AI account profile at once (runs the three `*-accounts list` in parallel) |
 
 ## Update
 
@@ -653,6 +654,27 @@ Session types:
 | `ANTIGRAVITY_OAUTH_JSON` | `$ANTIGRAVITY_HOME/oauth_creds.json` | Active Keychain session mirror |
 | `ANTIGRAVITY_ACCOUNT_DIR` | `$ANTIGRAVITY_HOME/accounts` | Saved profiles |
 | `ANTIGRAVITY_CLI_PATH` | resolved from `PATH` | Override the `agy` executable used for quota checks |
+
+---
+
+## `ai-accounts` — All-provider Account Lister
+
+Runs `codex-accounts list`, `claude-accounts list`, and `agy-accounts list`
+**in parallel** and prints each provider's table back-to-back in a fixed order,
+so one command surfaces every saved AI profile and its usage without waiting for
+each provider serially.
+
+### ai-accounts Usage
+
+```text
+ai-accounts             List all provider profiles (providers run in parallel)
+ai-accounts list        Same as above
+ai-accounts -h | --help Show this help
+```
+
+Each provider runs as an isolated subprocess, so per-provider errors (e.g.
+`agy-accounts` on non-macOS) are printed inline without aborting the others.
+The exit code is non-zero if any provider's `list` failed.
 
 ---
 
