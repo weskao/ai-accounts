@@ -474,8 +474,8 @@ Saved Codex profiles  (2)
 ┌──────────┬──────────────────────────────────┬──────┬───────────────┬─────────┬────────────────────┬─────────┬──────────────┬────────┐
 │ PROFILE  │ ACCOUNT                          │ PLAN │ ID            │ 5H USED │ 1W USED            │ UPDATED │ AUTH         │ STATE  │
 ├──────────┼──────────────────────────────────┼──────┼───────────────┼─────────┼────────────────────┼─────────┼──────────────┼────────┤
-│ personal │ Alex Example <alex@example.test> │ pro  │ 71b55315…61bc │ —       │  97% ·  2d  5h 27m │ 11:39   │ Jul 26 04:44 │ —      │
-│ work     │ Casey Demo <casey@example.test>  │ plus │ 4847e557…c28d │ —       │  18% ·  6d  6h 59m │ 11:39   │ Jul 26 04:44 │ ACTIVE │
+│ personal │ Alex Example <alex@example.test> │ Pro  │ 71b55315…61bc │ —       │  97% ·  2d  5h 27m │ 11:39   │ Jul 26 04:44 │ —      │
+│ work     │ Casey Demo <casey@example.test>  │ Plus │ 4847e557…c28d │ —       │  18% ·  6d  6h 59m │ 11:39   │ Jul 26 04:44 │ ACTIVE │
 └──────────┴──────────────────────────────────┴──────┴───────────────┴─────────┴────────────────────┴─────────┴──────────────┴────────┘
 ```
 
@@ -502,7 +502,7 @@ scopes, expiry). Works on macOS, Windows, and Linux; on macOS the login-keychain
 Claude Code reads is kept in step automatically.
 
 Claude's OAuth token is opaque (no email/name inside), so profiles are told apart by the
-plan tier (e.g. `team · 5x`, `Max · 20x`) and a short token fingerprint instead of an
+plan tier (e.g. `Team · 5x`, `Max · 20x`) and a short token fingerprint instead of an
 account identity.
 
 ### claude-accounts Usage
@@ -540,7 +540,7 @@ Saved Claude profiles  (2)
 ┌──────────┬──────────────────────────────────┬───────────┬──────────────┬──────────────────┬─────────┬─────────────┬────────┐
 │ PROFILE  │ ACCOUNT                          │ PLAN      │ 5H USED      │ 1W USED          │ UPDATED │ EXPIRES     │ STATE  │
 ├──────────┼──────────────────────────────────┼───────────┼──────────────┼──────────────────┼─────────┼─────────────┼────────┤
-│ personal │ Wes Kao <wes.personal@gmail.com> │ team · 5x │  4% · 3h 59m │ 22% · 4d 23h 59m │ 12:56   │ refreshable │ —      │
+│ personal │ Wes Kao <wes.personal@gmail.com> │ Team · 5x │  4% · 3h 59m │ 22% · 4d 23h 59m │ 12:56   │ refreshable │ —      │
 │ work     │ Wes Kao <wes@acme.com>           │ Max · 20x │ 61% · 1h 12m │ 48% · 3d  6h  3m │ 12:56   │ refreshable │ ACTIVE │
 └──────────┴──────────────────────────────────┴───────────┴──────────────┴──────────────────┴─────────┴─────────────┴────────┘
 ```
