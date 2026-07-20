@@ -13,7 +13,8 @@ import shutil
 import subprocess
 import sys
 import threading
-from typing import Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, Sequence
 
 YELLOW = "\033[1;33m"
 GREEN = "\033[1;32m"
@@ -158,6 +159,35 @@ class Spinner:
         if self._thread is not None:
             self._stop.set()
             self._thread.join()
+
+
+def fetch_parallel(
+    items: Sequence,
+    fn: Callable,
+    spinner: "Spinner | None" = None,
+    message: str = "",
+) -> list:
+    """Map ``fn`` over ``items`` concurrently, returning results in input order.
+
+    Independent per-item network fetches (one usage call per account) run on a
+    small thread pool instead of serially. When ``spinner`` is given, its label
+    updates with a ``(done/total)`` counter as each item finishes. Exceptions
+    from ``fn`` propagate — callers keep the sequential contract of returning
+    error-carrying results rather than raising.
+    """
+    total = len(items)
+    if total == 0:
+        return []
+    results: list = [None] * total
+    with ThreadPoolExecutor(max_workers=min(total, 8)) as pool:
+        futures = {pool.submit(fn, item): index for index, item in enumerate(items)}
+        done = 0
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
+            done += 1
+            if spinner is not None:
+                spinner.update(f"{message} {DIM}({done}/{total}){RESET}")
+    return results
 
 
 def have(cmd: str) -> bool:

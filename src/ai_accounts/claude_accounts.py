@@ -16,7 +16,6 @@ merges it into the live file — the MCP tokens are never touched.
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 import getpass
 import hashlib
 import json
@@ -42,6 +41,7 @@ from ._utils import (
     YELLOW,
     Spinner,
     ensure_tool,
+    fetch_parallel,
     have,
     log_red,
     log_yellow,
@@ -766,48 +766,61 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
 
     active_profile = _active_profile()
     empty_usage = claude_usage.UsageSnapshot(None, None, None, None, None)
+
+    # Read each profile's oauth/claims once; both the parallel fetch and the row
+    # build below reuse it.
+    profile_oauth = [(p, _read_profile_oauth(p) or {}) for p in profiles]
+
+    def _fetch(item: tuple[Path, dict]) -> claude_usage.UsageSnapshot:
+        # Independent per account: HTTP call with that account's token, no disk
+        # write, so these run concurrently without racing the credentials file.
+        _profile_path, oauth = item
+        access_token = oauth.get("accessToken")
+        if not (isinstance(access_token, str) and access_token):
+            return empty_usage
+        claims = _claims_from_oauth(oauth) if oauth else None
+        usage = claude_usage.fetch_usage(access_token, plan=(claims or {}).get("plan"))
+        if usage.error and usage.error.startswith(("HTTP 401", "HTTP 403")):
+            return empty_usage
+        return usage
+
+    if fetch_usage:
+        spinner = Spinner("Fetching Claude usage…")
+        with spinner:
+            usages = fetch_parallel(profile_oauth, _fetch, spinner, "Fetching Claude usage…")
+    else:
+        usages = [empty_usage] * len(profiles)
+
     rows = []
-    spinner = Spinner("Fetching Claude usage…")
-    with spinner if fetch_usage else nullcontext():
-        for index, profile_path in enumerate(profiles, 1):
-            name = profile_path.stem
-            oauth = _read_profile_oauth(profile_path) or {}
-            claims = _claims_from_oauth(oauth) if oauth else None
-            is_active = profile_path == active_profile
-            status = f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}"
-            expires_text, color = _list_expiry_status(claims)
+    for (profile_path, oauth), usage in zip(profile_oauth, usages):
+        name = profile_path.stem
+        claims = _claims_from_oauth(oauth) if oauth else None
+        is_active = profile_path == active_profile
+        status = f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}"
+        expires_text, color = _list_expiry_status(claims)
 
-            # Stored snapshot wins (captured when .claude.json provably matched). Live
-            # identity is only a fallback for an active profile with none yet — a
-            # pre-feature profile backfills on next save.
-            # ponytail: live fallback can misattribute if switched-without-relaunch;
-            # self-corrects on next save/login-switch.
-            identity = _read_profile_identity(profile_path)
-            if identity is None and is_active:
-                identity = _read_active_identity()
-            account_label = _identity_label(identity)
+        # Stored snapshot wins (captured when .claude.json provably matched). Live
+        # identity is only a fallback for an active profile with none yet — a
+        # pre-feature profile backfills on next save.
+        # ponytail: live fallback can misattribute if switched-without-relaunch;
+        # self-corrects on next save/login-switch.
+        identity = _read_profile_identity(profile_path)
+        if identity is None and is_active:
+            identity = _read_active_identity()
+        account_label = _identity_label(identity)
 
-            usage = empty_usage
-            access_token = oauth.get("accessToken")
-            if fetch_usage and isinstance(access_token, str) and access_token:
-                spinner.update(f"Fetching Claude usage… ({index}/{len(profiles)}) {name}")
-                plan = (claims or {}).get("plan")
-                usage = claude_usage.fetch_usage(access_token, plan=plan)
-                if usage.error and usage.error.startswith(("HTTP 401", "HTTP 403")):
-                    usage = empty_usage
-
-            rows.append(
-                {
-                    "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
-                    "account": account_label if account_label else f"{DIM}—{RESET}",
-                    "plan": _plan_row_cell(claims),
-                    "usage_5h": _usage_cell(usage.five_hour, "5h"),
-                    "usage_1week": _usage_cell(usage.seven_day, "1week"),
-                    "usage_updated": claude_usage.format_refreshed_at(usage),
-                    "expires": f"{color}{expires_text}{RESET}",
-                    "status": status,
-                }
-            )
+        rows.append(
+            {
+                "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
+                "account": account_label if account_label else f"{DIM}—{RESET}",
+                "plan": _plan_row_cell(claims),
+                "usage_5h": _usage_cell(usage.five_hour, "5h"),
+                "usage_1week": _usage_cell(usage.seven_day, "1week"),
+                "usage_updated": claude_usage.format_refreshed_at(usage),
+                "expires": f"{color}{expires_text}{RESET}",
+                "status": status,
+            }
+        )
 
     print(f"{BOLD}Saved Claude profiles{RESET}  {DIM}({len(rows)}){RESET}")
     _print_accounts_table(rows)
