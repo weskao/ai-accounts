@@ -31,7 +31,7 @@ Before writing any new helper, **first check [`src/ai-accounts/_utils.py`](src/a
 
 `_utils.py` holds cross-*platform* concerns. Domain logic shared between the account tools (`codex-accounts`, `claude-accounts`, `agy-accounts`) lives elsewhere — check before reimplementing:
 
-- **Usage / table formatting**: [`codex_usage.py`](src/ai-accounts/codex_usage.py) (`UsageWindow`, `format_usage_window`, `align_usage_cells`, `format_unix_time_compact`) — imported by `gemini_accounts.py` and `claude_accounts.py`.
+- **Usage / table formatting**: [`codex_usage.py`](src/ai-accounts/codex_usage.py) (`UsageWindow`, `format_usage_window`, `align_usage_cells`, `format_unix_time_compact`) — imported by `gemini_accounts.py`, `claude_accounts.py`, and `claude_usage.py`. `gemini_usage.py`/`claude_usage.py` hold only per-provider `fetch_usage` API logic, not formatting — don't duplicate these helpers there.
 - **Profile store**: each tool keeps profiles as `<name>.json` files plus a `.current-profile` marker under the central `~/.ai-accounts/<app>/accounts/` dir (override via `CODEX_ACCOUNT_DIR` / `CLAUDE_ACCOUNT_DIR` / `ANTIGRAVITY_ACCOUNT_DIR`), resolved through `_utils.resolve_account_dir` — kept out of the app dotdirs so dotfiles repos never swallow token snapshots.
 
 ## Commands
