@@ -6,6 +6,10 @@ success-message grammar are the reference the sibling tools adopt). Everything
 here is pure presentation — no auth, no I/O beyond ``print``/``input`` — so the
 per-provider modules stay focused on their own auth logic.
 
+These helpers render whatever they are given and do NOT redact: callers must
+pre-filter to non-secret claim fields (never pass tokens, refresh tokens, or
+raw auth payloads into panel lines, table cells, picker items, or messages).
+
 Cross-cutting color/log primitives live in ``_utils``; the usage-cell
 formatting/alignment (shared with the non-interactive usage modules) lives in
 ``usage_format``. This module composes those, it does not duplicate them.
@@ -76,6 +80,8 @@ def accounts_table(
         if key not in optional_columns
         or any(_ANSI_RE.sub("", row[key]) != "—" for row in rows)
     ]
+    if not columns:
+        return
     headers, keys = zip(*columns, strict=True)
     widths = [
         max(visible_len(h), max((visible_len(r[k]) for r in rows), default=0))
