@@ -1,3 +1,24 @@
+## [2.1.0] - 2026-07-20
+
+### 🚀 Features
+
+- **accounts:** Show spinner while list fetches usage
+- **accounts:** Show account name in antigravity usage spinner
+- **accounts:** Unify list spinner labels; tighten agy readiness poll
+- **accounts:** Stream ai-accounts list results as they land
+
+### 🐛 Bug Fixes
+
+- **utils:** Fall back to ascii spinner on non-braille terminals
+
+### 📚 Documentation
+
+- Record why agy-accounts list can't parallelize usage fetches
+- Spec for ai-accounts list per-provider progress rows
+
+### ⚡ Performance
+
+- **accounts:** Fetch usage in parallel across profiles
 ## [2.0.0] - 2026-07-20
 
 ### 🚀 Features
@@ -37,6 +58,7 @@
 ### ⚙️ Miscellaneous Tasks
 
 - Ignore account profile stores
+- **release:** Bump version to 2.0.0
 ## [1.0.0] - 2026-07-19
 
 ### 🚀 Features
