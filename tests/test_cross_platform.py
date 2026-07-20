@@ -8,8 +8,11 @@ clipboard or package managers. Run with: ``python -m unittest discover tests``.
 from __future__ import annotations
 
 import io
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stderr
+from pathlib import Path
 from unittest import mock
 
 from ai_accounts import _utils as u
@@ -144,6 +147,60 @@ class EnsureToolTests(_PlatformMixin, unittest.TestCase):
     def test_unknown_package_has_generic_hint(self):
         self.force_platform(linux=True)
         self.assertIn("package manager", u._install_hint("totally-unknown-tool"))
+
+
+class ResolveAccountDirTests(unittest.TestCase):
+    """The central profile-store resolver uses only os.environ / pathlib /
+    shutil — no POSIX-only calls — so behavior is identical on macOS,
+    Windows, and Linux. These tests pin that behavior."""
+
+    def test_env_override_wins_and_skips_migration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = root / "dot" / "accounts"
+            legacy.mkdir(parents=True)
+            (legacy / "a.json").write_text("{}", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"X_ACCOUNT_DIR": str(root / "override")}):
+                resolved = u.resolve_account_dir("X_ACCOUNT_DIR", root / "central", legacy)
+            self.assertEqual(resolved, root / "override")
+            self.assertTrue((legacy / "a.json").exists())  # legacy untouched
+
+    def test_default_used_when_env_unset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                resolved = u.resolve_account_dir("X_ACCOUNT_DIR", root / "central", root / "legacy")
+            self.assertEqual(resolved, root / "central")
+
+    def test_legacy_store_moves_to_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = root / "dot" / "accounts"
+            legacy.mkdir(parents=True)
+            (legacy / "a.json").write_text("{}", encoding="utf-8")
+            (legacy / ".current-profile").write_text("a", encoding="utf-8")
+            central = root / "central" / "accounts"
+            with mock.patch.dict(os.environ, {}, clear=True), redirect_stderr(io.StringIO()):
+                resolved = u.resolve_account_dir("X_ACCOUNT_DIR", central, legacy)
+            self.assertEqual(resolved, central)
+            self.assertTrue((central / "a.json").is_file())
+            self.assertEqual((central / ".current-profile").read_text(encoding="utf-8"), "a")
+            self.assertFalse(legacy.exists())
+
+    def test_existing_default_never_clobbered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = root / "legacy"
+            legacy.mkdir()
+            (legacy / "old.json").write_text("{}", encoding="utf-8")
+            central = root / "central"
+            central.mkdir()
+            (central / "new.json").write_text("{}", encoding="utf-8")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                resolved = u.resolve_account_dir("X_ACCOUNT_DIR", central, legacy)
+            self.assertEqual(resolved, central)
+            self.assertTrue((central / "new.json").exists())
+            self.assertTrue((legacy / "old.json").exists())  # never merged/overwritten
 
 
 class PlatformLimitedCommandTests(unittest.TestCase):
