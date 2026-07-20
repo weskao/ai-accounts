@@ -38,9 +38,14 @@ def _auth_payload(
     refresh_token: str = "rt-old",
     expires_in: int = 10 * 24 * 3600,
     last_refresh: str = "2026-01-01T00:00:00.000000Z",
+    plan: str | None = None,
 ) -> dict:
     exp = int(time.time()) + expires_in
-    token = _jwt({"email": email, "exp": exp, "account_id": account_id})
+    jwt_claims: dict = {"email": email, "exp": exp, "account_id": account_id}
+    if plan:
+        # Real tokens namespace the plan under the auth claim URL.
+        jwt_claims["https://api.openai.com/auth"] = {"chatgpt_plan_type": plan}
+    token = _jwt(jwt_claims)
     return {
         "tokens": {
             "id_token": token,
@@ -958,7 +963,7 @@ class UsageRequestTests(_CodexHomeMixin):
         self.assertIn(ca.RED, ca._usage_cell(high, "5h"))
 
     def test_usage_table_aligns_weekly_units_to_widest_value(self):
-        keys = ("profile", "account", "account_id", "usage_5h", "usage_updated", "expires", "status")
+        keys = ("profile", "account", "plan", "account_id", "usage_5h", "usage_updated", "expires", "status")
         rows = [
             dict.fromkeys(keys, "x") | {"usage_1week": f"{ca.YELLOW}58%{ca.RESET} · 2d 13h 8m"},
             dict.fromkeys(keys, "x") | {"usage_1week": f"{ca.GREEN}9%{ca.RESET} · 6d 14h 40m"},
@@ -1009,6 +1014,21 @@ class UsageRequestTests(_CodexHomeMixin):
         self.assertIn("34%", text)
         fetch_usage.assert_called_once()
         oauth_refresh.assert_not_called()
+
+    def test_list_shows_chatgpt_plan_type(self):
+        # chatgpt_plan_type from the namespaced JWT claim surfaces as a PLAN
+        # column ("plus"/"pro"/"team"); tokens without it show a placeholder.
+        self.write_profile("payg", _auth_payload("acct-a", "a@x.com"))
+        self.write_profile("pro", _auth_payload("acct-b", "b@x.com", plan="pro"))
+        claims = ca._read_claims(self.home / "accounts" / "pro.json")
+        self.assertIsNotNone(claims)
+        self.assertEqual((claims or {}).get("plan"), "pro")
+
+        rc, out, _err = self.run_capture(lambda: ca.cmd_list(fetch_usage=False))
+        self.assertEqual(rc, 0)
+        text = ca._ANSI_RE.sub("", out)
+        self.assertIn("PLAN", text)
+        self.assertIn("pro", text)
 
     def test_list_marks_active_and_fetches_each_profile_once(self):
         self.write_auth(_auth_payload("acct-a", "a@x.com", refresh_token="rt-stale"))

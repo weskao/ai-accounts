@@ -263,6 +263,10 @@ def _claims_from_auth(auth: dict) -> dict:
     return {
         "email": _find_deep(claims, ("email", "preferred_username", "upn")),
         "name": _find_deep(claims, ("name", "given_name")),
+        # ChatGPT plan tier ("plus" / "pro" / "team" / …), namespaced under the
+        # https://api.openai.com/auth claim. No rate multiplier exists for
+        # Codex — the plan type itself is the whole tier signal.
+        "plan": _find_deep(claims, ("chatgpt_plan_type",)),
         "account_id": tokens.get("account_id")
         or auth.get("account_id")
         or _find_deep(claims, ("account_id", "accountId", "sub")),
@@ -671,12 +675,15 @@ def _claims_lines(claims: dict | None) -> list[str]:
         return [f"{YELLOW}No auth file found.{RESET} Run: {BOLD}codex login{RESET}"]
 
     has_any = any(
-        claims.get(k) for k in ("email", "name", "account_id", "organization_id", "issuer", "expires_str")
+        claims.get(k)
+        for k in ("email", "name", "plan", "account_id", "organization_id", "issuer", "expires_str")
     )
     if not has_any:
         return [f"{YELLOW}No readable account claims found.{RESET}"]
 
     lines = [f"{BOLD}Account{RESET}       : {_identity_label(claims)}"]
+    if claims.get("plan"):
+        lines.append(f"{DIM}Plan{RESET}          : {claims['plan']}")
     if claims.get("account_id"):
         lines.append(f"{DIM}Account ID{RESET}    : {claims['account_id']}")
     if claims.get("organization_id"):
@@ -732,8 +739,8 @@ def _align_usage_cells(rows: list[dict[str, str]], key: str) -> None:
 
 
 def _print_accounts_table(rows: list[dict]) -> None:
-    headers = ["PROFILE", "ACCOUNT", "ID", "5H USED", "1W USED", "UPDATED", "AUTH", "STATE"]
-    keys = ["profile", "account", "account_id", "usage_5h", "usage_1week", "usage_updated", "expires", "status"]
+    headers = ["PROFILE", "ACCOUNT", "PLAN", "ID", "5H USED", "1W USED", "UPDATED", "AUTH", "STATE"]
+    keys = ["profile", "account", "plan", "account_id", "usage_5h", "usage_1week", "usage_updated", "expires", "status"]
     _align_usage_cells(rows, "usage_5h")
     _align_usage_cells(rows, "usage_1week")
     widths = [
@@ -864,6 +871,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             {
                 "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
                 "account": _identity_label(claims) if claims else f"{RED}(unreadable){RESET}",
+                "plan": (claims or {}).get("plan") or f"{DIM}—{RESET}",
                 "account_id": _short_id((claims or {}).get("account_id")),
                 "usage_5h": _usage_cell(usage.hourly, "5h"),
                 "usage_1week": _usage_cell(usage.weekly, "1week"),
