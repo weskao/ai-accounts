@@ -23,10 +23,18 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Final
 
 from . import usage_format
+from ._present import (
+    _ANSI_RE,
+    accounts_table,
+    choose_profile,
+    ok,
+    panel,
+    usage_color,
+)
 from ._utils import (
+    BOLD,
     DIM,
     GREEN,
     RED,
@@ -42,17 +50,8 @@ from ._utils import (
     resolve_account_dir,
 )
 
-BOLD = "\033[1m"
-CYAN = "\033[1;36m"
-
 # ChatGPT paid tiers, low → high (Free is left uncolored by the caller).
 _PLAN_TIERS = ("plus", "pro", "team")
-
-_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
-_USAGE_CELL_RE: Final = re.compile(
-    r"^(?P<color>(?:\033\[[0-9;]*m)*)(?P<percent>\d+)%(?P<reset>\033\[0m)? · "
-    r"(?:(?P<days>\d+)d )?(?P<hours>\d+)h (?P<minutes>\d+)m$"
-)
 
 HELP = """codex-accounts — manage multiple Codex CLI login profiles
 
@@ -678,21 +677,6 @@ def _recover_switched_auth(auth_path: Path, profile_file: Path, name: str) -> in
 
 # ── terminal rendering ───────────────────────────────────────────────────
 
-def _visible_len(s: str) -> int:
-    return len(_ANSI_RE.sub("", s))
-
-
-def _panel(title: str, lines: list[str], accent: str = CYAN, width: int = 64) -> None:
-    """Bordered header/footer rule around left-aligned content — legible even
-    with embedded ANSI color codes since only the header/footer are measured."""
-    width = max(width, _visible_len(title) + 8)
-    top_dashes = width - _visible_len(title) - 4
-    print(f"{accent}┌─ {BOLD}{title}{RESET}{accent} {'─' * top_dashes}┐{RESET}")
-    for line in lines or [f"{DIM}(none){RESET}"]:
-        print(f"{accent}│{RESET}  {line}")
-    print(f"{accent}└{'─' * (width - 1)}┘{RESET}")
-
-
 def _claims_lines(claims: dict | None) -> list[str]:
     if claims is None:
         return [f"{YELLOW}No auth file found.{RESET} Run: {BOLD}codex login{RESET}"]
@@ -738,64 +722,31 @@ def _plan_cell(claims: dict | None) -> str:
     return f"{plan_tier_color(plan, _PLAN_TIERS)}{text}{RESET}"
 
 
-def _usage_color(percentage: int) -> str:
-    if percentage >= 80:
-        return RED + BOLD
-    if percentage >= 50:
-        return YELLOW
-    return GREEN
-
-
 def _usage_cell(window: usage_format.UsageWindow | None, window_kind: str) -> str:
     if window is None:
         return f"{DIM}—{RESET}"
-    percent = f"{_usage_color(window.percentage)}{window.percentage}%{RESET}"
+    percent = f"{usage_color(window.percentage)}{window.percentage}%{RESET}"
     return usage_format.format_usage_window(window, window_kind, percent)
 
 
-def _align_usage_cells(rows: list[dict[str, str]], key: str) -> None:
-    matches = [match for row in rows if (match := _USAGE_CELL_RE.match(row[key]))]
-    if not matches:
-        return
-    widths = {
-        name: max(len(match.group(name) or "") for match in matches)
-        for name in ("percent", "days", "hours", "minutes")
-    }
-    for row, match in zip(rows, (_USAGE_CELL_RE.match(row[key]) for row in rows), strict=True):
-        if match is None:
-            continue
-        days = f"{(match.group('days') or '').rjust(widths['days'])}d " if widths["days"] else ""
-        row[key] = (
-            f"{match.group('color')}{match.group('percent').rjust(widths['percent'])}%"
-            f"{match.group('reset') or ''} · {days}"
-            f"{match.group('hours').rjust(widths['hours'])}h "
-            f"{match.group('minutes').rjust(widths['minutes'])}m"
-        )
+# Codex shows every column unconditionally (empty optional set); the usage
+# columns are right-aligned before measuring. The shared renderer owns the
+# borders/widths/padding.
+_TABLE_COLUMNS = [
+    ("PROFILE", "profile"),
+    ("ACCOUNT", "account"),
+    ("PLAN", "plan"),
+    ("ID", "account_id"),
+    ("5H USED", "usage_5h"),
+    ("1W USED", "usage_1week"),
+    ("UPDATED", "usage_updated"),
+    ("AUTH", "expires"),
+    ("STATE", "status"),
+]
 
 
 def _print_accounts_table(rows: list[dict]) -> None:
-    headers = ["PROFILE", "ACCOUNT", "PLAN", "ID", "5H USED", "1W USED", "UPDATED", "AUTH", "STATE"]
-    keys = ["profile", "account", "plan", "account_id", "usage_5h", "usage_1week", "usage_updated", "expires", "status"]
-    _align_usage_cells(rows, "usage_5h")
-    _align_usage_cells(rows, "usage_1week")
-    widths = [
-        max(_visible_len(h), max((_visible_len(r[k]) for r in rows), default=0))
-        for h, k in zip(headers, keys)
-    ]
-
-    def rule(left: str, mid: str, right: str) -> str:
-        return left + mid.join("─" * (w + 2) for w in widths) + right
-
-    def row(cells: list[str]) -> str:
-        parts = [f" {cell}{' ' * (w - _visible_len(cell))} " for cell, w in zip(cells, widths)]
-        return "│" + "│".join(parts) + "│"
-
-    print(rule("┌", "┬", "┐"))
-    print(row([f"{BOLD}{h}{RESET}" for h in headers]))
-    print(rule("├", "┼", "┤"))
-    for r in rows:
-        print(row([r[k] for k in keys]))
-    print(rule("└", "┴", "┘"))
+    accounts_table(rows, _TABLE_COLUMNS, align_keys=("usage_5h", "usage_1week"))
 
 
 # ── commands ─────────────────────────────────────────────────────────────
@@ -808,10 +759,10 @@ def cmd_who() -> int:
         status_lines = text.splitlines() if text else [f"{DIM}(no output){RESET}"]
     else:
         status_lines = [f"{RED}codex command not found{RESET}  {DIM}(install: npm install -g @openai/codex){RESET}"]
-    _panel("Codex Login Status", status_lines)
+    panel("Codex Login Status", status_lines)
 
     print()
-    _panel("Current Auth Claims", _claims_lines(_read_active_claims()))
+    panel("Current Auth Claims", _claims_lines(_read_active_claims()))
     return 0
 
 
@@ -835,9 +786,9 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     _mirror_active_auth_to_keychain(_auth_file())
     _set_current_profile(profile_file)
 
-    print(f"{GREEN}✅ Saved Codex profile:{RESET} {BOLD}{name}{RESET}")
+    ok("Saved Codex profile", name)
     print(f"{DIM}   → {profile_file}{RESET}\n")
-    _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+    panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
     return 0
 
 
@@ -975,7 +926,7 @@ def cmd_switch(name: str) -> int:
     _mirror_active_auth_to_keychain(auth_path)
     _set_current_profile(profile_file)
 
-    print(f"{GREEN}✅ Switched Codex profile to:{RESET} {BOLD}{name}{RESET}")
+    ok("Switched Codex profile to", name)
     if backup_path:
         print(f"{DIM}   (previous auth backed up to {backup_path}){RESET}")
 
@@ -1005,25 +956,13 @@ def cmd_switch_interactive() -> int:
         log_yellow("⚠️  No unexpired Codex profiles available to switch.")
         return 1
 
-    print(f"{BOLD}Choose a Codex profile:{RESET}")
-    for index, (profile, claims) in enumerate(valid_profiles, start=1):
-        print(f"  {index}) {profile.stem}  {DIM}{_identity_label(claims)}{RESET}")
-
-    try:
-        selection = input("Select account number: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        log_yellow("Switch cancelled.")
+    chosen = choose_profile(
+        "a Codex",
+        [(profile.stem, _identity_label(claims)) for profile, claims in valid_profiles],
+    )
+    if chosen is None:
         return 1
-
-    if not selection.isdecimal():
-        log_red("❌ Enter one of the account numbers shown above.")
-        return 1
-    selected_index = int(selection) - 1
-    if selected_index < 0 or selected_index >= len(valid_profiles):
-        log_red("❌ Enter one of the account numbers shown above.")
-        return 1
-    return cmd_switch(valid_profiles[selected_index][0].stem)
+    return cmd_switch(chosen)
 
 
 def cmd_remove(name: str) -> int:
@@ -1037,7 +976,7 @@ def cmd_remove(name: str) -> int:
     profile_file.unlink()
     if was_current:
         _current_profile_marker().unlink(missing_ok=True)
-    print(f"{GREEN}✅ Removed Codex profile:{RESET} {name}")
+    ok("Removed Codex profile", name, bold=False)
     return 0
 
 
@@ -1058,14 +997,14 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
         return 1, kind
 
     if show_summary:
-        print(f"{GREEN}✅ Refreshed Codex profile:{RESET} {BOLD}{name}{RESET}")
+        ok("Refreshed Codex profile", name)
     synced_active = _sync_refreshed_profile(profile_file)
     if show_summary and synced_active:
         print(f"{DIM}   (same account is active — auth.json updated too){RESET}")
 
     if show_summary:
         print()
-        _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+        panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
     return 0, None
 
 
@@ -1096,7 +1035,7 @@ def _refresh_all_profiles() -> int:
         log_yellow(f"⚠️  Transient failure, retry later: {', '.join(transient)}")
     if revoked or transient:
         return 1
-    print(f"{GREEN}✅ All {len(profiles)} profile(s) refreshed.{RESET}")
+    ok(f"All {len(profiles)} profile(s) refreshed.")
     return 0
 
 
@@ -1113,7 +1052,7 @@ def _refresh_active_auth() -> int:
     )
     if refreshed is None:
         return 1
-    print(f"{GREEN}✅ Refreshed active Codex auth.{RESET}")
+    ok("Refreshed active Codex auth.")
 
     if profile_path is not None:
         _copy_active_auth_to(profile_path)
@@ -1123,7 +1062,7 @@ def _refresh_active_auth() -> int:
         log_yellow("⚠️  No unambiguous current profile — run: codex-accounts switch <name>")
 
     print()
-    _panel("Current Auth Claims", _claims_lines(_read_claims(auth_path)), accent=GREEN)
+    panel("Current Auth Claims", _claims_lines(_read_claims(auth_path)), accent=GREEN)
     return 0
 
 
@@ -1150,9 +1089,9 @@ def cmd_sync() -> int:
 
     _copy_active_auth_to(profile_path)
     _set_current_profile(profile_path)
-    print(f"{GREEN}✅ Synced active auth → profile:{RESET} {BOLD}{profile_path.stem}{RESET}")
+    ok("Synced active auth → profile", profile_path.stem)
     print()
-    _panel(f"Profile: {profile_path.stem}", _claims_lines(_read_claims(profile_path)), accent=GREEN)
+    panel(f"Profile: {profile_path.stem}", _claims_lines(_read_claims(profile_path)), accent=GREEN)
     return 0
 
 
