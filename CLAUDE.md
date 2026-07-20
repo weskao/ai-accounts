@@ -14,6 +14,7 @@ Before writing any new helper, **first check [`src/ai-accounts/_utils.py`](src/a
 - **Python package bootstrap**: `ensure_python_package(import_name, pip_name=None)` — verify an importable package, auto-install via `pip` if missing.
 - **Clipboard**: `copy_to_clipboard(text)`, `output_and_copy(text)` (macOS / Windows / Linux).
 - **Subprocess**: `run(cmd, **kwargs)` — `subprocess.run` wrapper defaulting to `text=True`.
+- **Account stores**: `resolve_account_dir(env_var, default_dir, legacy_dir)` — env override → central `~/.ai-accounts/` default, auto-migrating a legacy in-dotdir store.
 - **Git**: `is_git_repo(path)`, `git_sync(repo_dir, file_path, commit_msg)` (add → commit → pull --rebase → push, with union-conflict auto-resolution).
 
 ### Rules
@@ -21,6 +22,13 @@ Before writing any new helper, **first check [`src/ai-accounts/_utils.py`](src/a
 1. **Search first.** Read `_utils.py` before adding a helper. If a suitable function exists, import and use it.
 2. **Extract, don't duplicate.** If two or more tool modules would share logic, add it to `_utils.py` and have both call it — never copy-paste between modules.
 3. **Keep tools platform-agnostic.** OS-specific behavior (clipboard, package installation, ANSI) belongs in `_utils.py`, funneled through one function, so individual tool modules stay clean.
+
+### Beyond `_utils.py`: shared account-tool helpers
+
+`_utils.py` holds cross-*platform* concerns. Domain logic shared between the account tools (`codex-accounts`, `claude-accounts`, `agy-accounts`) lives elsewhere — check before reimplementing:
+
+- **Usage / table formatting**: [`codex_usage.py`](src/ai-accounts/codex_usage.py) (`UsageWindow`, `format_usage_window`, `align_usage_cells`, `format_unix_time_compact`) — imported by `gemini_accounts.py` and `claude_accounts.py`.
+- **Profile store**: each tool keeps profiles as `<name>.json` files plus a `.current-profile` marker under the central `~/.ai-accounts/<app>/accounts/` dir (override via `CODEX_ACCOUNT_DIR` / `CLAUDE_ACCOUNT_DIR` / `ANTIGRAVITY_ACCOUNT_DIR`), resolved through `_utils.resolve_account_dir` — kept out of the app dotdirs so dotfiles repos never swallow token snapshots.
 
 ## Commands
 

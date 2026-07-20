@@ -1,0 +1,1024 @@
+"""claude-accounts — manage multiple Claude Code login profiles.
+
+A color-coded, tabular terminal UI over the Claude Code OAuth credentials so
+multiple accounts are easy to tell apart at a glance (which profile is saved,
+which is active, when a token expires, current usage). Refreshes tokens via
+OAuth with no browser and no logout. Never prints raw tokens — only decoded,
+non-secret fields (plan, scopes, expiry).
+
+Claude Code stores its OAuth credentials in ``~/.claude/.credentials.json``
+(override the dir with ``$CLAUDE_CONFIG_DIR``) under a ``claudeAiOauth`` key,
+mirrored on macOS into the login keychain (service "Claude Code-credentials",
+account = the current user). That file also holds unrelated ``mcpOAuth`` server
+tokens, so profiles capture ONLY the ``claudeAiOauth`` object and a switch
+merges it into the live file — the MCP tokens are never touched.
+"""
+
+from __future__ import annotations
+
+import getpass
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+from typing import Final
+
+from . import claude_usage
+from .codex_usage import align_usage_cells, format_unix_time_compact, format_usage_window
+from ._utils import (
+    DIM,
+    GREEN,
+    RED,
+    RESET,
+    YELLOW,
+    ensure_tool,
+    have,
+    log_red,
+    log_yellow,
+    resolve_account_dir,
+)
+
+BOLD = "\033[1m"
+CYAN = "\033[1;36m"
+
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+_OAUTH_KEY: Final = "claudeAiOauth"
+
+HELP = """claude-accounts — manage multiple Claude Code login profiles
+
+USAGE
+  claude-accounts who                   Show the current logged-in Claude account
+  claude-accounts current               Alias for `who`
+  claude-accounts save <name>           Save the current login as a reusable profile
+  claude-accounts list                  List profiles with usage (never refreshes tokens)
+  claude-accounts switch [<name>]       Switch by name; no name = interactive picker
+  claude-accounts remove <name>         Delete a saved profile
+  claude-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
+                                        no name = refresh active auth + sync it back
+  claude-accounts refresh --all         Refresh every saved profile
+  claude-accounts sync                  Copy the active auth back to its matching profile
+  claude-accounts login-switch <name>   `claude auth login` + save as <name>
+  claude-accounts -h | --help           Show this help
+
+EXAMPLES
+  claude-accounts login-switch personal
+  claude-accounts login-switch work
+  claude-accounts list
+  claude-accounts switch
+  claude-accounts switch personal
+  claude-accounts refresh --all
+  claude-accounts who
+
+Profiles live under ~/.ai-accounts/claude/accounts/<name>.json (override with
+$CLAUDE_ACCOUNT_DIR); a store at the old ~/.claude/accounts location is moved
+there automatically.
+Treat that directory as secrets — saved profiles contain Claude OAuth tokens.
+"""
+
+
+# ── paths ─────────────────────────────────────────────────────────────────
+
+def _claude_home() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+
+
+def _account_dir() -> Path:
+    return resolve_account_dir(
+        "CLAUDE_ACCOUNT_DIR",
+        Path.home() / ".ai-accounts" / "claude" / "accounts",
+        _claude_home() / "accounts",
+    )
+
+
+def _creds_file() -> Path:
+    return Path(os.environ.get("CLAUDE_CREDENTIALS_JSON", str(_claude_home() / ".credentials.json")))
+
+
+def _profile_file(name: str) -> Path | None:
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
+    if not safe:
+        log_red("❌ Profile name cannot be empty")
+        return None
+    return _account_dir() / f"{safe}.json"
+
+
+def _current_profile_marker() -> Path:
+    return _account_dir() / ".current-profile"
+
+
+def _marked_profile() -> Path | None:
+    marker = _current_profile_marker()
+    try:
+        name = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not name or re.sub(r"[^a-zA-Z0-9._-]", "_", name) != name:
+        return None
+    profile = _account_dir() / f"{name}.json"
+    return profile if profile.is_file() else None
+
+
+def _set_current_profile(profile: Path) -> None:
+    marker = _current_profile_marker()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(profile.stem, encoding="utf-8")
+    marker.chmod(0o600)
+
+
+# ── credential envelope (claudeAiOauth) ─────────────────────────────────────
+# The active store may be the full credentials file ({mcpOAuth, claudeAiOauth})
+# or a bare OAuth blob (in the keychain item). Profiles always hold the bare
+# blob. _extract_oauth reads the account out of either shape; _inject_oauth
+# writes an updated account back into whatever shape a store already uses, so
+# unrelated keys (mcpOAuth) survive a switch untouched.
+
+def _extract_oauth(obj: object) -> dict | None:
+    if not isinstance(obj, dict):
+        return None
+    inner = obj.get(_OAUTH_KEY)
+    if isinstance(inner, dict):
+        return inner
+    if "accessToken" in obj:
+        return obj
+    return None
+
+
+def _inject_oauth(container_text: str | None, oauth: dict) -> dict:
+    parsed: object = {}
+    if container_text:
+        try:
+            parsed = json.loads(container_text)
+        except ValueError:
+            parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    if "accessToken" in parsed and _OAUTH_KEY not in parsed:
+        return dict(oauth)  # store keeps a bare blob — replace it wholesale
+    parsed[_OAUTH_KEY] = oauth
+    return parsed
+
+
+# ── macOS keychain mirror ───────────────────────────────────────────────────
+# Claude Code on macOS reads its credentials from the login keychain (service
+# "Claude Code-credentials", account = the login user) in preference to the
+# file, so a switch that rewrites only the file is silently ignored. We mirror
+# every active write into that keychain item — update-only: we never fabricate
+# a keychain store Claude Code wasn't already using.
+
+_KEYCHAIN_SERVICE: Final = "Claude Code-credentials"
+
+
+def _keychain_account() -> str | None:
+    if sys.platform != "darwin":
+        return None
+    try:
+        return getpass.getuser()
+    except Exception:
+        return None
+
+
+def _read_keychain_creds() -> str | None:
+    account = _keychain_account()
+    if account is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-a", account, "-w"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    secret = (result.stdout or "").strip()
+    if not secret:
+        return None
+    # `security -w` hex-encodes secrets containing bytes it deems "non-clean"
+    # (e.g. newlines). Decode that back to the original JSON text.
+    if re.fullmatch(r"(?:[0-9a-fA-F]{2})+", secret):
+        try:
+            secret = bytes.fromhex(secret).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            pass
+    return secret
+
+
+def _write_keychain_creds(content: str) -> bool:
+    account = _keychain_account()
+    if account is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["security", "add-generic-password", "-U",
+             "-s", _KEYCHAIN_SERVICE, "-a", account, "-w", content],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def _mirror_active_oauth_to_keychain(oauth: dict) -> None:
+    if _keychain_account() is None:
+        return
+    current = _read_keychain_creds()
+    if current is None:
+        return  # not keychain-backed here; the file is the source of truth
+    merged = _inject_oauth(current, oauth)
+    # Compact, newline-free JSON avoids `security` storing a hex-encoded value.
+    if not _write_keychain_creds(json.dumps(merged, separators=(",", ":"))):
+        log_yellow(
+            "⚠️  Could not update the macOS keychain; Claude Code may keep using "
+            "the previous account until its next login."
+        )
+
+
+# ── non-secret claims ───────────────────────────────────────────────────────
+# Claude's OAuth access token is opaque (no JWT identity), so unlike codex/agy
+# there is no email, name, or stable account id to show — only the plan tier,
+# scopes, and expiry the credentials carry directly.
+
+def _format_unix_time(value: object) -> str | None:
+    if not isinstance(value, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _fingerprint(oauth: dict) -> str | None:
+    """Short one-way hash of the token — a non-secret visual handle so accounts
+    are distinguishable; rotates when the token does, so it is not a stable id."""
+    token = oauth.get("refreshToken") or oauth.get("accessToken")
+    if not isinstance(token, str) or not token:
+        return None
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+
+
+def _claims_from_oauth(oauth: dict) -> dict:
+    scopes = oauth.get("scopes")
+    expires_ms = oauth.get("expiresAt")
+    exp = int(expires_ms / 1000) if isinstance(expires_ms, (int, float)) else None
+    return {
+        "plan": oauth.get("subscriptionType") or oauth.get("rateLimitTier"),
+        "subscription_type": oauth.get("subscriptionType"),
+        "rate_limit_tier": oauth.get("rateLimitTier"),
+        "scopes": scopes if isinstance(scopes, list) else None,
+        "fingerprint": _fingerprint(oauth),
+        "expires_epoch": exp,
+        "expires_str": _format_unix_time(exp),
+        "refreshable": bool(oauth.get("refreshToken")),
+    }
+
+
+def _claims_from_text(text: str) -> dict | None:
+    try:
+        oauth = _extract_oauth(json.loads(text))
+    except ValueError:
+        return None
+    return _claims_from_oauth(oauth) if oauth is not None else None
+
+
+def _read_claims(path: Path) -> dict | None:
+    oauth = _read_profile_oauth(path)
+    return _claims_from_oauth(oauth) if oauth is not None else None
+
+
+def _read_active_claims() -> dict | None:
+    oauth = _read_active_oauth()
+    return _claims_from_oauth(oauth) if oauth is not None else None
+
+
+def _plan_label(claims: dict | None) -> str:
+    plan = (claims or {}).get("plan")
+    return str(plan) if plan else "(Claude account)"
+
+
+def _rate_multiplier(claims: dict | None) -> str | None:
+    """Compact rate signal from the OAuth ``rateLimitTier`` — the ``Nx`` seat
+    multiplier only, dropping the ``default_claude_max_`` boilerplate
+    (``default_claude_max_5x`` → ``5x``). ``None`` when the tier carries no
+    multiplier (e.g. a plain ``pro`` tier) or is absent."""
+    tier = (claims or {}).get("rate_limit_tier")
+    if not isinstance(tier, str):
+        return None
+    match = re.search(r"(\d+)x\b", tier)
+    return f"{match.group(1)}x" if match else None
+
+
+def _plan_cell(claims: dict | None) -> str:
+    """PLAN column value: the subscription tier plus its rate multiplier when
+    the token carries one (e.g. ``team · 5x``), so seats on the same plan with
+    different rate allotments are told apart at a glance."""
+    plan = _plan_label(claims)
+    mult = _rate_multiplier(claims)
+    return f"{plan} · {mult}" if mult else plan
+
+
+# ── token identity ──────────────────────────────────────────────────────────
+# No stable account id exists, so a profile is matched to the active session by
+# exact token equality only (there is no same-account grouping like codex/agy).
+
+def _token_key_from_oauth(oauth: dict) -> str | None:
+    token = oauth.get("refreshToken") or oauth.get("accessToken")
+    return token if isinstance(token, str) and token else None
+
+
+def _token_key_from_path(path: Path) -> str | None:
+    oauth = _read_profile_oauth(path)
+    return _token_key_from_oauth(oauth) if oauth is not None else None
+
+
+def _read_profile_oauth(path: Path) -> dict | None:
+    try:
+        return _extract_oauth(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+
+
+# ── active credential store (keychain-first on macOS, then file) ────────────
+
+def _read_active_creds_text() -> str | None:
+    secret = _read_keychain_creds()
+    if secret:
+        try:
+            if _extract_oauth(json.loads(secret)) is not None:
+                return secret
+        except ValueError:
+            pass
+    creds = _creds_file()
+    if creds.is_file():
+        try:
+            return creds.read_text(encoding="utf-8")
+        except OSError:
+            return None
+    return None
+
+
+def _read_active_oauth() -> dict | None:
+    text = _read_active_creds_text()
+    if text is None:
+        return None
+    try:
+        return _extract_oauth(json.loads(text))
+    except ValueError:
+        return None
+
+
+def _write_active_oauth(oauth: dict) -> None:
+    """Set the live account to `oauth`, in both the file and the keychain mirror,
+    preserving any unrelated keys (mcpOAuth) already in each store."""
+    creds = _creds_file()
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    current = creds.read_text(encoding="utf-8") if creds.is_file() else None
+    merged = _inject_oauth(current, oauth)
+    creds.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+    creds.chmod(0o600)
+    _mirror_active_oauth_to_keychain(oauth)
+
+
+def _active_profile(active_oauth: dict | None = None) -> Path | None:
+    oauth = active_oauth if active_oauth is not None else _read_active_oauth()
+    if oauth is None:
+        return None
+    active_token = _token_key_from_oauth(oauth)
+
+    marked = _marked_profile()
+    if marked is not None:
+        if active_token is not None and _token_key_from_path(marked) == active_token:
+            return marked
+        if active_token is None:
+            return marked
+
+    account_dir = _account_dir()
+    profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
+    matches = [p for p in profiles if _token_key_from_path(p) == active_token]
+    return matches[0] if active_token is not None and len(matches) == 1 else None
+
+
+def _write_profile(profile_file: Path, oauth: dict) -> None:
+    _account_dir().mkdir(parents=True, exist_ok=True)
+    _account_dir().chmod(0o700)
+    profile_file.write_text(json.dumps(oauth, indent=2) + "\n", encoding="utf-8")
+    profile_file.chmod(0o600)
+
+
+def _fold_active_into_profile(profile: Path) -> None:
+    """Copy the live account back into its own saved profile before it is
+    overwritten, so a later switch back restores the freshest rotated tokens.
+    Callers only ever pass the token-matched active profile. No network."""
+    oauth = _read_active_oauth()
+    if oauth is not None:
+        _write_profile(profile, oauth)
+
+
+# ── OAuth token refresh (no browser, no logout) ─────────────────────────────
+
+_OAUTH_TOKEN_URL: Final = "https://platform.claude.com/v1/oauth/token"
+_OAUTH_CLIENT_ID: Final = os.environ.get(
+    "CLAUDE_OAUTH_CLIENT_ID", "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+)
+
+
+def _oauth_refresh(refresh_token: str) -> tuple[dict | None, str | None]:
+    """Exchange a refresh_token for fresh tokens. (response, None) on success;
+    (None, error) on failure — never raises, never logs tokens. An error that
+    starts with "revoked" means only a fresh login helps; anything else is
+    transient and safe to retry."""
+    body = urllib.parse.urlencode(
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": _OAUTH_CLIENT_ID,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        _OAUTH_TOKEN_URL,
+        data=body,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8")), None
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")
+        except Exception:
+            pass
+        if exc.code in (400, 401) and "invalid_grant" in detail:
+            return None, "revoked: refresh token rejected (invalid_grant)"
+        return None, f"HTTP {exc.code} from token endpoint"
+    except urllib.error.URLError as exc:
+        return None, f"network error: {exc.reason}"
+    except Exception as exc:  # malformed JSON response, etc.
+        return None, str(exc)
+
+
+def _is_revoked_error(error: str | None) -> bool:
+    return (error or "").startswith("revoked")
+
+
+def _apply_refreshed_tokens(oauth: dict, refreshed: dict) -> dict:
+    out = dict(oauth)
+    if refreshed.get("access_token"):
+        out["accessToken"] = refreshed["access_token"]
+    if refreshed.get("refresh_token"):  # optional — the endpoint may reuse the old one
+        out["refreshToken"] = refreshed["refresh_token"]
+    expires_in = refreshed.get("expires_in")
+    if isinstance(expires_in, (int, float)):
+        out["expiresAt"] = int(time.time() * 1000) + int(expires_in) * 1000
+    return out
+
+
+def _refresh_oauth(oauth: dict, label: str, relogin_hint: str) -> tuple[dict | None, str | None]:
+    """Refresh one OAuth blob. (new_oauth, None) on success, else (None, kind)
+    where kind is "revoked" or "transient"."""
+    refresh_token = oauth.get("refreshToken")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        log_red(f"❌ No refresh token found in {label}")
+        log_yellow(f"   {relogin_hint}")
+        return None, "revoked"
+    refreshed, error = _oauth_refresh(refresh_token)
+    if refreshed is None:
+        if _is_revoked_error(error):
+            log_red(f"❌ Refresh token revoked/dead for {label}: {error}")
+            log_yellow(f"   {relogin_hint}")
+            return None, "revoked"
+        log_red(f"❌ Refresh failed for {label}: {error}")
+        log_yellow("   Token endpoint unreachable — retry later.")
+        return None, "transient"
+    return _apply_refreshed_tokens(oauth, refreshed), None
+
+
+def _token_expired_or_soon(claims: dict | None) -> bool:
+    if not claims or not claims.get("expires_epoch"):
+        return False
+    return claims["expires_epoch"] - datetime.now().timestamp() < 24 * 3600
+
+
+# ── terminal rendering ───────────────────────────────────────────────────
+
+def _visible_len(s: str) -> int:
+    return len(_ANSI_RE.sub("", s))
+
+
+def _panel(title: str, lines: list[str], accent: str = CYAN, width: int = 64) -> None:
+    """Bordered header/footer rule around left-aligned content — legible even
+    with embedded ANSI color codes since only the header/footer are measured."""
+    width = max(width, _visible_len(title) + 8)
+    top_dashes = width - _visible_len(title) - 4
+    print(f"{accent}┌─ {BOLD}{title}{RESET}{accent} {'─' * top_dashes}┐{RESET}")
+    for line in lines or [f"{DIM}(none){RESET}"]:
+        print(f"{accent}│{RESET}  {line}")
+    print(f"{accent}└{'─' * (width - 1)}┘{RESET}")
+
+
+def _expiry_status(claims: dict | None) -> tuple[str, str]:
+    if not claims or not claims.get("expires_str"):
+        return "—", DIM
+    now = datetime.now().timestamp()
+    exp = claims["expires_epoch"]
+    if not isinstance(exp, int):
+        return "—", DIM
+    if exp <= now:
+        return f"{claims['expires_str']} (EXPIRED)", RED
+    if exp - now < 24 * 3600:
+        return f"{claims['expires_str']} (soon)", YELLOW
+    return str(claims["expires_str"]), GREEN
+
+
+def _list_expiry_status(claims: dict | None) -> tuple[str, str]:
+    if not claims or not claims.get("expires_epoch"):
+        return "—", DIM
+    # A refresh token means Claude Code auto-renews the short-lived access token,
+    # so its imminent expiry is not a session problem — mirror the `who` panel
+    # (and agy-accounts) and report the session as refreshable instead of "soon".
+    if claims.get("refreshable"):
+        return "refreshable", GREEN
+    now = datetime.now().timestamp()
+    exp = claims["expires_epoch"]
+    text = format_unix_time_compact(int(exp))
+    if exp <= now:
+        return f"{text} expired", RED
+    if exp - now < 24 * 3600:
+        return f"{text} soon", YELLOW
+    return text, GREEN
+
+
+def _claims_lines(claims: dict | None) -> list[str]:
+    if claims is None:
+        return [f"{YELLOW}No Claude credentials found.{RESET} Run: {BOLD}claude auth login{RESET}"]
+
+    lines = [f"{BOLD}Plan{RESET}          : {_plan_label(claims)}"]
+    if claims.get("rate_limit_tier") and claims.get("rate_limit_tier") != claims.get("plan"):
+        lines.append(f"{DIM}Rate tier{RESET}     : {claims['rate_limit_tier']}")
+    if claims.get("scopes"):
+        lines.append(f"{DIM}Scopes{RESET}        : {', '.join(str(s) for s in claims['scopes'])}")
+    if claims.get("fingerprint"):
+        lines.append(f"{DIM}Token{RESET}         : {claims['fingerprint']}…")
+    expires_text, color = _expiry_status(claims)
+    session = f"{GREEN}refreshable{RESET}" if claims.get("refreshable") else f"{color}{expires_text}{RESET}"
+    lines.append(f"{DIM}Expires{RESET}       : {color}{expires_text}{RESET}")
+    lines.append(f"{DIM}Session{RESET}       : {session}")
+    return lines
+
+
+def _usage_color(percentage: int) -> str:
+    if percentage >= 80:
+        return RED + BOLD
+    if percentage >= 50:
+        return YELLOW
+    return GREEN
+
+
+def _usage_cell(window: claude_usage.UsageWindow | None, window_kind: str) -> str:
+    if window is None:
+        return f"{DIM}—{RESET}"
+    percent = f"{_usage_color(window.percentage)}{window.percentage}%{RESET}"
+    return format_usage_window(window, window_kind, percent)
+
+
+def _print_accounts_table(rows: list[dict]) -> None:
+    columns = [
+        ("PROFILE", "profile"),
+        ("PLAN", "plan"),
+        ("5H USED", "usage_5h"),
+        ("1W USED", "usage_1week"),
+        ("UPDATED", "usage_updated"),
+        ("EXPIRES", "expires"),
+        ("STATE", "status"),
+    ]
+    optional_usage = {"usage_5h", "usage_1week"}
+    for key in optional_usage:
+        align_usage_cells(rows, key)
+    columns = [
+        (header, key)
+        for header, key in columns
+        if key not in optional_usage
+        or any(_ANSI_RE.sub("", row[key]) != "—" for row in rows)
+    ]
+    headers, keys = zip(*columns, strict=True)
+    widths = [
+        max(_visible_len(h), max((_visible_len(r[k]) for r in rows), default=0))
+        for h, k in zip(headers, keys)
+    ]
+
+    def rule(left: str, mid: str, right: str) -> str:
+        return left + mid.join("─" * (w + 2) for w in widths) + right
+
+    def row(cells: list[str]) -> str:
+        parts = [f" {cell}{' ' * (w - _visible_len(cell))} " for cell, w in zip(cells, widths)]
+        return "│" + "│".join(parts) + "│"
+
+    print(rule("┌", "┬", "┐"))
+    print(row([f"{BOLD}{h}{RESET}" for h in headers]))
+    print(rule("├", "┼", "┤"))
+    for r in rows:
+        print(row([r[k] for k in keys]))
+    print(rule("└", "┴", "┘"))
+
+
+# ── commands ─────────────────────────────────────────────────────────────
+
+def cmd_who() -> int:
+    if have("claude"):
+        result = subprocess.run(["claude", "auth", "status"], capture_output=True, text=True)
+        text = (result.stdout or result.stderr or "").strip()
+        status_lines = text.splitlines() if text else [f"{DIM}(no output){RESET}"]
+    else:
+        status_lines = [
+            f"{RED}claude command not found{RESET}  "
+            f"{DIM}(install: curl -fsSL https://claude.ai/install.sh | bash){RESET}"
+        ]
+    _panel("Claude Login Status", status_lines)
+
+    print()
+    _panel("Current Auth Claims", _claims_lines(_read_active_claims()))
+    return 0
+
+
+def _save_profile_oauth(name: str, oauth: dict) -> int:
+    profile_file = _profile_file(name)
+    if profile_file is None:
+        return 1
+    _write_profile(profile_file, oauth)
+    # Converge the live stores so the file and keychain mirror match this profile
+    # (a fresh `claude auth login` may have written only one of them).
+    _write_active_oauth(oauth)
+    _set_current_profile(profile_file)
+
+    print(f"{GREEN}✅ Saved Claude profile:{RESET} {BOLD}{name}{RESET}")
+    print(f"{DIM}   → {profile_file}{RESET}\n")
+    _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+    return 0
+
+
+def cmd_save(name: str) -> int:
+    oauth = _read_active_oauth()
+    if oauth is None:
+        log_red(f"❌ No Claude credentials found: {_creds_file()}")
+        log_yellow("   Run: claude auth login")
+        return 1
+    return _save_profile_oauth(name, oauth)
+
+
+def cmd_list(*, fetch_usage: bool = True) -> int:
+    account_dir = _account_dir()
+    profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
+    if not profiles:
+        log_yellow("⚠️  No saved Claude profiles.")
+        print(f"{DIM}   Add one with: claude-accounts save <profile_name>{RESET}", file=sys.stderr)
+        return 0
+
+    active_profile = _active_profile()
+    empty_usage = claude_usage.UsageSnapshot(None, None, None, None, None)
+    rows = []
+    for profile_path in profiles:
+        name = profile_path.stem
+        oauth = _read_profile_oauth(profile_path) or {}
+        claims = _claims_from_oauth(oauth) if oauth else None
+        is_active = profile_path == active_profile
+        status = f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}"
+        expires_text, color = _list_expiry_status(claims)
+
+        usage = empty_usage
+        access_token = oauth.get("accessToken")
+        if fetch_usage and isinstance(access_token, str) and access_token:
+            plan = (claims or {}).get("plan")
+            usage = claude_usage.fetch_usage(access_token, plan=plan)
+            if usage.error and usage.error.startswith(("HTTP 401", "HTTP 403")):
+                usage = empty_usage
+
+        rows.append(
+            {
+                "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
+                "plan": _plan_cell(claims) if claims else f"{RED}(unreadable){RESET}",
+                "usage_5h": _usage_cell(usage.five_hour, "5h"),
+                "usage_1week": _usage_cell(usage.seven_day, "1week"),
+                "usage_updated": claude_usage.format_refreshed_at(usage),
+                "expires": f"{color}{expires_text}{RESET}",
+                "status": status,
+            }
+        )
+
+    print(f"{BOLD}Saved Claude profiles{RESET}  {DIM}({len(rows)}){RESET}")
+    _print_accounts_table(rows)
+    return 0
+
+
+def cmd_switch(name: str) -> int:
+    profile_file = _profile_file(name)
+    if profile_file is None:
+        return 1
+    if not profile_file.is_file():
+        log_red(f"❌ Profile not found: {name}")
+        print()
+        cmd_list()
+        return 1
+
+    oauth = _read_profile_oauth(profile_file)
+    if oauth is None:
+        log_red(f"❌ Profile is unreadable: {name}")
+        return 1
+
+    # Fold any token rotation on the outgoing account back into its own profile
+    # before overwriting, so a later switch back restores fresh tokens.
+    outgoing = _active_profile()
+    if outgoing is not None and outgoing != profile_file:
+        _fold_active_into_profile(outgoing)
+
+    _write_active_oauth(oauth)
+    _set_current_profile(profile_file)
+
+    print(f"{GREEN}✅ Switched Claude profile to:{RESET} {BOLD}{name}{RESET}")
+    print(f"{DIM}   Claude Code will use this account on its next launch.{RESET}")
+
+    # Self-heal an expired snapshot in place so Claude Code starts with a live
+    # token. Only fires when the restored token is expired/near-expiry.
+    if _token_expired_or_soon(_read_claims(profile_file)):
+        rc = _recover_switched_auth(profile_file, name)
+        if rc != 0:
+            return rc
+
+    print()
+    return cmd_who()
+
+
+def _recover_switched_auth(profile_file: Path, name: str) -> int:
+    """Refresh a just-restored but expired token in place, mirroring the rotated
+    result back into the profile. Only a genuine revocation escalates to login."""
+    oauth = _read_active_oauth() or {}
+    new_oauth, error = _refresh_oauth(oauth, name, f"Re-login with: claude-accounts login-switch {name}")
+    if new_oauth is not None:
+        _write_active_oauth(new_oauth)
+        _write_profile(profile_file, new_oauth)
+        print(f"{DIM}   (token was expired — refreshed in place){RESET}")
+        return 0
+    if not _is_revoked_error(error):
+        log_yellow(f"⚠️  Could not refresh after switch ({error}); Claude Code will retry on next use.")
+        return 0
+    log_yellow(f"⚠️  Saved token for '{name}' is revoked — re-logging in via browser…")
+    return cmd_login_switch(name)
+
+
+def cmd_switch_interactive() -> int:
+    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
+    if not profiles:
+        log_yellow("⚠️  No saved Claude profiles available to switch.")
+        return 1
+
+    print(f"{BOLD}Choose a Claude profile:{RESET}")
+    for index, profile in enumerate(profiles, start=1):
+        print(f"  {index}) {profile.stem}  {DIM}{_plan_label(_read_claims(profile))}{RESET}")
+
+    try:
+        selection = input("Select account number: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        log_yellow("Switch cancelled.")
+        return 1
+
+    if not selection.isdecimal():
+        log_red("❌ Enter one of the account numbers shown above.")
+        return 1
+    selected_index = int(selection) - 1
+    if selected_index < 0 or selected_index >= len(profiles):
+        log_red("❌ Enter one of the account numbers shown above.")
+        return 1
+    return cmd_switch(profiles[selected_index].stem)
+
+
+def cmd_remove(name: str) -> int:
+    profile_file = _profile_file(name)
+    if profile_file is None:
+        return 1
+    if not profile_file.is_file():
+        log_red(f"❌ Profile not found: {name}")
+        return 1
+    was_current = _marked_profile() == profile_file
+    profile_file.unlink()
+    if was_current:
+        _current_profile_marker().unlink(missing_ok=True)
+    print(f"{GREEN}✅ Removed Claude profile:{RESET} {name}")
+    return 0
+
+
+def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, str | None]:
+    profile_file = _profile_file(name)
+    if profile_file is None:
+        return 1, None
+    if not profile_file.is_file():
+        log_red(f"❌ Profile not found: {name}")
+        print()
+        cmd_list()
+        return 1, None
+
+    oauth = _read_profile_oauth(profile_file)
+    if oauth is None:
+        log_red(f"❌ Profile is unreadable: {name}")
+        return 1, "revoked"
+    new_oauth, kind = _refresh_oauth(oauth, name, f"Re-login with: claude-accounts login-switch {name}")
+    if new_oauth is None:
+        return 1, kind
+
+    _write_profile(profile_file, new_oauth)
+    synced_active = False
+    if _active_profile() == profile_file:
+        _write_active_oauth(new_oauth)
+        _set_current_profile(profile_file)
+        synced_active = True
+
+    if show_summary:
+        print(f"{GREEN}✅ Refreshed Claude profile:{RESET} {BOLD}{name}{RESET}")
+        if synced_active:
+            print(f"{DIM}   (same account is active — live credentials updated too){RESET}")
+        print()
+        _panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+    return 0, None
+
+
+def _refresh_all_profiles() -> int:
+    account_dir = _account_dir()
+    profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
+    if not profiles:
+        log_yellow("⚠️  No saved Claude profiles to refresh.")
+        return 0
+
+    revoked, transient = [], []
+    refreshed_tokens: set[str] = set()
+    for profile_path in profiles:
+        token = _token_key_from_path(profile_path)
+        if token is not None and token in refreshed_tokens:
+            continue
+        if token is not None:
+            refreshed_tokens.add(token)
+        rc, kind = _refresh_one_profile(profile_path.stem, show_summary=False)
+        if rc != 0:
+            (revoked if kind == "revoked" else transient).append(profile_path.stem)
+
+    cmd_list()
+    if revoked:
+        log_red(f"❌ Revoked (re-login required): {', '.join(revoked)}")
+    if transient:
+        log_yellow(f"⚠️  Transient failure, retry later: {', '.join(transient)}")
+    if revoked or transient:
+        return 1
+    print(f"{GREEN}✅ All {len(profiles)} profile(s) refreshed.{RESET}")
+    return 0
+
+
+def _refresh_active_auth() -> int:
+    oauth = _read_active_oauth()
+    if oauth is None:
+        log_red(f"❌ No Claude credentials found: {_creds_file()}")
+        log_yellow("   Run: claude auth login")
+        return 1
+
+    profile_path = _active_profile(oauth)
+    new_oauth, _kind = _refresh_oauth(oauth, "the active auth", "Re-login with: claude auth login")
+    if new_oauth is None:
+        return 1
+    _write_active_oauth(new_oauth)
+    print(f"{GREEN}✅ Refreshed active Claude auth.{RESET}")
+
+    if profile_path is not None:
+        _write_profile(profile_path, new_oauth)
+        _set_current_profile(profile_path)
+        print(f"{DIM}   (synced back to profile: {profile_path.stem}){RESET}")
+    else:
+        log_yellow("⚠️  No unambiguous current profile — run: claude-accounts switch <name>")
+
+    print()
+    _panel("Current Auth Claims", _claims_lines(_read_active_claims()), accent=GREEN)
+    return 0
+
+
+def cmd_refresh(target: str | None) -> int:
+    if target == "--all":
+        return _refresh_all_profiles()
+    if target is None:
+        return _refresh_active_auth()
+    return _refresh_one_profile(target)[0]
+
+
+def cmd_sync() -> int:
+    oauth = _read_active_oauth()
+    if oauth is None:
+        log_red(f"❌ No Claude credentials found: {_creds_file()}")
+        log_yellow("   Run: claude auth login")
+        return 1
+
+    profile_path = _active_profile(oauth)
+    if profile_path is None:
+        log_red("❌ No unambiguous current profile.")
+        log_yellow("   Select it first with: claude-accounts switch <name>")
+        return 1
+
+    _write_profile(profile_path, oauth)
+    _set_current_profile(profile_path)
+    print(f"{GREEN}✅ Synced active auth → profile:{RESET} {BOLD}{profile_path.stem}{RESET}")
+    print()
+    _panel(f"Profile: {profile_path.stem}", _claims_lines(_read_claims(profile_path)), accent=GREEN)
+    return 0
+
+
+def cmd_login_switch(name: str) -> int:
+    if not ensure_tool("claude"):
+        return 1
+    if _profile_file(name) is None:
+        return 1
+
+    outgoing_oauth = _read_active_oauth()
+    outgoing_profile = _active_profile(outgoing_oauth)
+    if outgoing_profile is not None:
+        _fold_active_into_profile(outgoing_profile)
+
+    print(
+        f"{DIM}Launching `claude auth login`. Complete the browser sign-in; "
+        f"the new account will be saved as '{name}'.{RESET}"
+    )
+    try:
+        login = subprocess.run(["claude", "auth", "login"])
+    except KeyboardInterrupt:
+        _restore_active_oauth(outgoing_oauth)
+        log_yellow("Login cancelled. Your previous Claude session was restored.")
+        return 130
+    if login.returncode != 0:
+        _restore_active_oauth(outgoing_oauth)
+        log_red("❌ claude auth login did not complete successfully")
+        return login.returncode or 1
+
+    new_oauth = _read_active_oauth()
+    if new_oauth is None:
+        _restore_active_oauth(outgoing_oauth)
+        log_red("❌ Login completed without readable Claude credentials")
+        return 1
+    return _save_profile_oauth(name, new_oauth)
+
+
+def _restore_active_oauth(oauth: dict | None) -> None:
+    if oauth is not None:
+        _write_active_oauth(oauth)
+
+
+# ── entry point ───────────────────────────────────────────────────────────
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv or argv[0] in ("-h", "--help"):
+        print(HELP)
+        return 0
+
+    command, *rest = argv
+
+    if command in ("who", "current"):
+        return cmd_who()
+    if command == "save":
+        if not rest:
+            log_red("Usage: claude-accounts save <profile_name>")
+            return 1
+        return cmd_save(rest[0])
+    if command == "list":
+        return cmd_list()
+    if command == "switch":
+        if not rest:
+            return cmd_switch_interactive()
+        return cmd_switch(rest[0])
+    if command == "remove":
+        if not rest:
+            log_red("Usage: claude-accounts remove <profile_name>")
+            return 1
+        return cmd_remove(rest[0])
+    if command == "refresh":
+        return cmd_refresh(rest[0] if rest else None)
+    if command == "sync":
+        return cmd_sync()
+    if command == "login-switch":
+        if not rest:
+            log_red("Usage: claude-accounts login-switch <profile_name>")
+            return 1
+        return cmd_login_switch(rest[0])
+
+    log_red(f"❌ Unknown command: {command}")
+    print(HELP)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

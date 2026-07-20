@@ -96,12 +96,39 @@ def have(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
+# ── account-tool profile stores ──────────────────────────────────────────────
+
+def resolve_account_dir(env_var: str, default_dir: Path, legacy_dir: Path) -> Path:
+    """Resolve an account tool's profile-store directory.
+
+    Precedence: ``$<env_var>`` override → *default_dir*. The default lives
+    under ``~/.ai-accounts/`` — outside the app dotdirs (``~/.claude``,
+    ``~/.codex``) — so a user who version-controls a dotdir as a dotfiles repo
+    can never accidentally commit the OAuth token snapshots profiles contain.
+    A store still at *legacy_dir* (the old in-dotdir location) is moved to
+    *default_dir* on first use, with a one-line notice.
+    """
+    override = os.environ.get(env_var)
+    if override:
+        return Path(override)
+    if not default_dir.exists() and legacy_dir.is_dir():
+        default_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(legacy_dir), str(default_dir))
+        log_yellow(f"→ Moved profile store: {legacy_dir} → {default_dir}")
+    return default_dir
+
+
 # ── dependency management ────────────────────────────────────────────────────
 
 # Per-platform install instructions for the external binaries ai-accounts shells
 # out to. Keyed by the package name passed to ``ensure_tool``. The macOS column
 # is also used to drive Homebrew auto-install (preserving the original behavior).
 _INSTALL_HINTS: dict[str, dict[str, str]] = {
+    "claude": {
+        "darwin": "curl -fsSL https://claude.ai/install.sh | bash   (or: npm install -g @anthropic-ai/claude-code)",
+        "linux": "curl -fsSL https://claude.ai/install.sh | bash   (or: npm install -g @anthropic-ai/claude-code)",
+        "win32": "npm install -g @anthropic-ai/claude-code",
+    },
     "pngquant": {
         "darwin": "brew install pngquant",
         "linux": "sudo apt install pngquant   (or: sudo dnf install pngquant / sudo pacman -S pngquant)",

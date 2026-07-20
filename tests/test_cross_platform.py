@@ -13,6 +13,7 @@ from contextlib import redirect_stderr
 from unittest import mock
 
 from ai_accounts import _utils as u
+from ai_accounts import claude_accounts as ca
 from ai_accounts import gemini_accounts as ga
 from ai_accounts import gemini_usage as gu
 from ai_accounts import vcadd
@@ -166,6 +167,22 @@ class PlatformLimitedCommandTests(unittest.TestCase):
             self.assertIsNone(ga._read_cli_keyring_secret())
             self.assertFalse(ga._store_keychain_secret("secret"))
             self.assertFalse(ga._delete_cli_auth())
+
+    def test_claude_help_remains_available_everywhere(self):
+        with mock.patch.object(ca.sys, "platform", "win32"):
+            self.assertEqual(ca.main(["--help"]), 0)
+
+    def test_claude_keychain_disabled_off_macos(self):
+        with mock.patch.object(ca.sys, "platform", "linux"):
+            self.assertIsNone(ca._keychain_account())
+
+    def test_claude_missing_security_command_does_not_raise(self):
+        with (
+            mock.patch.object(ca, "_keychain_account", return_value="user"),
+            mock.patch.object(ca.subprocess, "run", side_effect=FileNotFoundError),
+        ):
+            self.assertIsNone(ca._read_keychain_creds())
+            self.assertFalse(ca._write_keychain_creds("secret"))
 
     def test_vcadd_fails_cleanly_outside_macos(self):
         error = io.StringIO()
