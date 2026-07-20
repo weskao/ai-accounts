@@ -197,12 +197,27 @@ class WireFormatTests(unittest.TestCase):
         self.assertIn("grant_type=refresh_token", body)
         self.assertIn("refresh_token=rt-xyz", body)
         self.assertIn(f"client_id={ca._OAUTH_CLIENT_ID}", body)
+        # Must carry a real User-Agent — the default Python-urllib UA is blocked
+        # by Cloudflare (error 1010) before the request reaches the endpoint.
+        ua = req.headers.get("User-agent", "")
+        self.assertTrue(ua and "python-urllib" not in ua.lower(), ua)
 
-    def test_oauth_refresh_403_is_revoked_not_transient(self) -> None:
-        # A 403 means the endpoint was reached and rejected the token — relogin,
-        # not a "retry later" transient. Regression: it used to fall through to
-        # the generic "HTTP N from token endpoint" transient bucket.
-        err = ca.urllib.error.HTTPError(ca._OAUTH_TOKEN_URL, 403, "Forbidden", {}, io.BytesIO(b""))
+    def test_oauth_refresh_bare_403_is_edge_block_not_revoked(self) -> None:
+        # A 403 with no OAuth error body is a Cloudflare/WAF block before the
+        # endpoint — transient, NOT a revoked token (which would be relogin).
+        err = ca.urllib.error.HTTPError(
+            ca._OAUTH_TOKEN_URL, 403, "Forbidden", {},
+            io.BytesIO(b'{"error_name":"browser_signature_banned"}'),
+        )
+        with mock.patch.object(ca.urllib.request, "urlopen", side_effect=err):
+            _, msg = ca._oauth_refresh("rt-xyz")
+        self.assertFalse(ca._is_revoked_error(msg), msg)
+
+    def test_oauth_refresh_403_invalid_grant_is_revoked(self) -> None:
+        err = ca.urllib.error.HTTPError(
+            ca._OAUTH_TOKEN_URL, 403, "Forbidden", {},
+            io.BytesIO(b'{"error":"invalid_grant"}'),
+        )
         with mock.patch.object(ca.urllib.request, "urlopen", side_effect=err):
             _, msg = ca._oauth_refresh("rt-xyz")
         self.assertTrue(ca._is_revoked_error(msg), msg)

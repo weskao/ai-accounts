@@ -500,6 +500,7 @@ _OAUTH_TOKEN_URL: Final = "https://platform.claude.com/v1/oauth/token"
 _OAUTH_CLIENT_ID: Final = os.environ.get(
     "CLAUDE_OAUTH_CLIENT_ID", "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 )
+_OAUTH_USER_AGENT: Final = "claude-cli/1.0 (ai-accounts, cli)"
 
 
 def _oauth_refresh(refresh_token: str) -> tuple[dict | None, str | None]:
@@ -520,6 +521,9 @@ def _oauth_refresh(refresh_token: str) -> tuple[dict | None, str | None]:
         headers={
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json",
+            # Cloudflare (error 1010) blocks the default Python-urllib UA before
+            # the request ever reaches the OAuth endpoint — send a real one.
+            "User-Agent": _OAUTH_USER_AGENT,
         },
         method="POST",
     )
@@ -534,6 +538,10 @@ def _oauth_refresh(refresh_token: str) -> tuple[dict | None, str | None]:
             pass
         if exc.code in (400, 401) and "invalid_grant" in detail:
             return None, "revoked: refresh token rejected (invalid_grant)"
+        # A 403 without an OAuth error body is an edge/WAF block (e.g. Cloudflare
+        # 1010), not a revoked token — that's transient, retry-able, not relogin.
+        if exc.code == 403 and "invalid_" not in detail:
+            return None, "HTTP 403 blocked before token endpoint (edge/WAF, not the token)"
         if exc.code in (401, 403):  # endpoint reached but rejected the token — relogin, not retry
             return None, f"revoked: token endpoint returned HTTP {exc.code}"
         return None, f"HTTP {exc.code} from token endpoint"
