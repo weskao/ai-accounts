@@ -67,7 +67,7 @@ After install, the following commands are available on `PATH`:
 | `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove) |
 | `claude-accounts` | Manage multiple Claude Code login profiles and inspect usage |
 | `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota (macOS) |
-| `ai-accounts` | List every AI account profile at once (runs the three `*-accounts list` in parallel) |
+| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `who`, `refresh`, `sync`, …) to all three `*-accounts` |
 
 ## Update
 
@@ -690,24 +690,34 @@ Session types:
 
 ---
 
-## `ai-accounts` — All-provider Account Lister
+## `ai-accounts` — All-provider Account Front-end
 
-Runs `codex-accounts list`, `claude-accounts list`, and `agy-accounts list`
-**in parallel** and prints each provider's table back-to-back in a fixed order,
-so one command surfaces every saved AI profile and its usage without waiting for
-each provider serially.
+Forwards a subcommand to all three per-provider tools (`codex-accounts`,
+`claude-accounts`, `agy-accounts`) at once, so one command drives every
+provider. It exposes the same command surface as the per-provider tools.
 
 ### ai-accounts Usage
 
 ```text
-ai-accounts             List all provider profiles (providers run in parallel)
-ai-accounts list        Same as above
-ai-accounts -h | --help Show this help
+ai-accounts                        Show this help (the available commands)
+ai-accounts list                   List all provider profiles (providers run in parallel)
+ai-accounts who | current          Show the active account for every provider
+ai-accounts refresh [<name>|--all] Refresh tokens across every provider
+ai-accounts sync                   Sync active auth back to its profile, every provider
+ai-accounts save <name>            Save the current login as <name> in every provider
+ai-accounts switch [<name>]        Switch profile in every provider (interactive, one at a time)
+ai-accounts remove <name>          Remove profile <name> from every provider
+ai-accounts login-switch <name>    Fresh login + save as <name>, every provider (interactive)
+ai-accounts -h | --help            Show this help
 ```
 
-Each provider runs as an isolated subprocess, so per-provider errors (e.g.
-`agy-accounts` on non-macOS) are printed inline without aborting the others.
-The exit code is non-zero if any provider's `list` failed.
+Bare `ai-accounts` (no arguments) prints this help. `list` runs the three
+providers **concurrently** and captures their tables in a fixed order. Every
+other command runs the providers **one at a time with live output**, so
+interactive flows (switch pickers, `login-switch`) and color work unchanged;
+any argument after the command (a profile name, `--all`, …) is passed through
+to each provider. Per-provider errors are printed inline without aborting the
+others, and the exit code is non-zero if any provider's command failed.
 
 ---
 
