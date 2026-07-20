@@ -36,11 +36,15 @@ from ._utils import (
     have,
     log_red,
     log_yellow,
+    plan_tier_color,
     resolve_account_dir,
 )
 
 BOLD = "\033[1m"
 CYAN = "\033[1;36m"
+
+# ChatGPT paid tiers, low → high (Free is left uncolored by the caller).
+_PLAN_TIERS = ("plus", "pro", "team")
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 _USAGE_CELL_RE: Final = re.compile(
@@ -720,6 +724,18 @@ def _short_id(value: str | None) -> str:
     return f"{value[:8]}…{value[-4:]}"
 
 
+def _plan_cell(claims: dict | None) -> str:
+    """Colored PLAN column value: Free stays uncolored, paid tiers escalate
+    plus → pro → team."""
+    plan = (claims or {}).get("plan")
+    if not isinstance(plan, str) or not plan:
+        return f"{DIM}—{RESET}"
+    text = usage_format.capitalize_first(plan) or plan
+    if plan.lower() == "free":
+        return text
+    return f"{plan_tier_color(plan, _PLAN_TIERS)}{text}{RESET}"
+
+
 def _usage_color(percentage: int) -> str:
     if percentage >= 80:
         return RED + BOLD
@@ -888,7 +904,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             {
                 "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
                 "account": _identity_label(claims) if claims else f"{RED}(unreadable){RESET}",
-                "plan": usage_format.capitalize_first((claims or {}).get("plan")) or f"{DIM}—{RESET}",
+                "plan": _plan_cell(claims),
                 "account_id": _short_id((claims or {}).get("account_id")),
                 "usage_5h": _usage_cell(usage.hourly, "5h"),
                 "usage_1week": _usage_cell(usage.weekly, "1week"),

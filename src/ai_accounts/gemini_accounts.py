@@ -21,6 +21,7 @@ from ._utils import (
     ensure_tool,
     log_red,
     log_yellow,
+    plan_tier_color,
 )
 from .usage_format import (
     UsageWindow,
@@ -561,6 +562,19 @@ def _short_id(value: str | None) -> str:
     return f"{value[:8]}…{value[-4:]}"
 
 
+def _plan_cell(plan: str | None) -> str:
+    """Colored PLAN column value. Paid tier names aren't enumerable here (see
+    ``gemini_usage._plan_label``), so — unlike claude/codex — every paid plan
+    gets a single accent color rather than a fabricated rank; Free stays
+    uncolored."""
+    text = capitalize_first(plan)
+    if not text:
+        return f"{DIM}—{RESET}"
+    if text.lower() == "free":
+        return text
+    return f"{plan_tier_color(text)}{text}{RESET}"
+
+
 def _usage_cell(window: UsageWindow | None) -> str:
     if window is None:
         return f"{DIM}—{RESET}"
@@ -772,7 +786,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
                     if claims
                     else usage.email or f"{RED}(unreadable){RESET}",
                     "account_id": _short_id(_string((claims or {}).get("account_id"))),
-                    "plan": capitalize_first(usage.plan) or f"{DIM}—{RESET}",
+                    "plan": _plan_cell(usage.plan),
                     "gemini_5h": _usage_cell(usage.gemini_session),
                     "gemini_weekly": _usage_cell(usage.gemini_weekly),
                     "other_5h": _usage_cell(usage.other_session),

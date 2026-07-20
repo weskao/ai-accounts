@@ -17,6 +17,9 @@ from typing import Sequence
 YELLOW = "\033[1;33m"
 GREEN = "\033[1;32m"
 RED = "\033[1;31m"
+CYAN = "\033[1;36m"
+BLUE = "\033[1;34m"
+MAGENTA = "\033[1;35m"
 DIM = "\033[2m"
 RESET = "\033[0m"
 
@@ -94,6 +97,25 @@ def log_red(msg: str) -> None:
 
 def have(cmd: str) -> bool:
     return shutil.which(cmd) is not None
+
+
+def plan_tier_color(label: str, tiers: Sequence[str] = ()) -> str:
+    """ANSI color for a paid subscription-plan label, escalating with rank.
+
+    ``tiers`` lists known paid tier names low → high (case-insensitive
+    substring match against ``label``); an unrecognized label still gets the
+    top color, since a novel plan name is at least as likely to be a new
+    top-end tier as a starter one. Pass no ``tiers`` for a provider whose paid
+    tier names aren't enumerable — every paid label then gets a single top
+    accent rather than a fabricated rank. Callers decide when to skip this
+    entirely (e.g. the free tier, which stays uncolored).
+    """
+    palette = (CYAN, BLUE, MAGENTA)
+    lowered = label.lower()
+    for i, tier in enumerate(tiers):
+        if tier in lowered:
+            return palette[min(i, len(palette) - 1)]
+    return palette[-1]
 
 
 # ── account-tool profile stores ──────────────────────────────────────────────

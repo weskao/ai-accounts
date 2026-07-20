@@ -43,8 +43,12 @@ from ._utils import (
     have,
     log_red,
     log_yellow,
+    plan_tier_color,
     resolve_account_dir,
 )
+
+# Claude paid tiers, low → high (Free is left uncolored by the caller).
+_PLAN_TIERS = ("pro", "team", "max")
 
 BOLD = "\033[1m"
 CYAN = "\033[1;36m"
@@ -370,6 +374,18 @@ def _plan_cell(claims: dict | None) -> str:
     plan = _plan_label(claims)
     mult = _rate_multiplier(claims)
     return f"{plan} · {mult}" if mult else plan
+
+
+def _plan_row_cell(claims: dict | None) -> str:
+    """Colored PLAN column value for the list table: Free (or an unreadable
+    token) stays uncolored, paid tiers escalate pro → team → max."""
+    if not claims:
+        return f"{RED}(unreadable){RESET}"
+    text = _plan_cell(claims)
+    plan = _plan_label(claims)
+    if plan.lower() == "free" or plan == "(Claude account)":
+        return text
+    return f"{plan_tier_color(plan, _PLAN_TIERS)}{text}{RESET}"
 
 
 # ── token identity ──────────────────────────────────────────────────────────
@@ -779,7 +795,7 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             {
                 "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
                 "account": account_label if account_label else f"{DIM}—{RESET}",
-                "plan": _plan_cell(claims) if claims else f"{RED}(unreadable){RESET}",
+                "plan": _plan_row_cell(claims),
                 "usage_5h": _usage_cell(usage.five_hour, "5h"),
                 "usage_1week": _usage_cell(usage.seven_day, "1week"),
                 "usage_updated": claude_usage.format_refreshed_at(usage),
