@@ -26,7 +26,18 @@ from pathlib import Path
 from typing import Final
 
 from . import codex_usage
-from ._utils import DIM, GREEN, RED, RESET, YELLOW, ensure_tool, have, log_red, log_yellow
+from ._utils import (
+    DIM,
+    GREEN,
+    RED,
+    RESET,
+    YELLOW,
+    ensure_tool,
+    have,
+    log_red,
+    log_yellow,
+    resolve_account_dir,
+)
 
 BOLD = "\033[1m"
 CYAN = "\033[1;36m"
@@ -62,7 +73,9 @@ EXAMPLES
   codex-accounts refresh --all
   codex-accounts who
 
-Profiles live under ~/.codex/accounts/<name>.json (override with $CODEX_ACCOUNT_DIR).
+Profiles live under ~/.ai-accounts/codex/accounts/<name>.json (override with
+$CODEX_ACCOUNT_DIR); a store at the old ~/.codex/accounts location is moved
+there automatically.
 Treat that directory as secrets — saved profiles contain Codex auth tokens.
 """
 
@@ -74,7 +87,11 @@ def _codex_home() -> Path:
 
 
 def _account_dir() -> Path:
-    return Path(os.environ.get("CODEX_ACCOUNT_DIR", str(_codex_home() / "accounts")))
+    return resolve_account_dir(
+        "CODEX_ACCOUNT_DIR",
+        Path.home() / ".ai-accounts" / "codex" / "accounts",
+        _codex_home() / "accounts",
+    )
 
 
 def _auth_file() -> Path:

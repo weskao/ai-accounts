@@ -64,13 +64,15 @@ class _CodexHomeMixin(unittest.TestCase):
         self.home = Path(self.tmp.name)
         env = mock.patch.dict(
             os.environ,
-            {"CODEX_HOME": str(self.home)},
+            {
+                "CODEX_HOME": str(self.home),
+                "CODEX_ACCOUNT_DIR": str(self.home / "accounts"),
+            },
             clear=False,
         )
         env.start()
         self.addCleanup(env.stop)
-        for var in ("CODEX_AUTH_JSON", "CODEX_ACCOUNT_DIR"):
-            os.environ.pop(var, None)
+        os.environ.pop("CODEX_AUTH_JSON", None)
         (self.home / "accounts").mkdir(parents=True)
 
     def write_auth(self, payload: dict) -> Path:
