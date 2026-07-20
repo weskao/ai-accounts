@@ -483,6 +483,8 @@ Saved Codex profiles  (2)
   (green = valid, yellow = expiring within 24h, red = `EXPIRED`) with the state also spelled
   out in text, not color alone.
 - `switch` backs up the previous `auth.json` (timestamped, `chmod 600`) before overwriting it.
+- `list` shows a spinner (with a live "which profile" label) on a TTY while it fetches usage
+  for each profile; it's automatically skipped when output isn't a terminal (piping, `ai-accounts`).
 
 ### codex-accounts Environment Overrides
 
@@ -556,6 +558,8 @@ Saved Claude profiles  (2)
 - `who` and `switch` render a bordered "Current Auth Claims" panel; expiry is shown the
   same way, with the state also spelled out in text, not color alone.
 - `switch` backs up the previous credentials (timestamped, `chmod 600`) before overwriting.
+- `list` shows a spinner (with a live "which profile" label) on a TTY while it fetches usage
+  for each profile; it's automatically skipped when output isn't a terminal (piping, `ai-accounts`).
 
 ### claude-accounts Environment Overrides
 
@@ -678,6 +682,8 @@ Session types:
 - `who` and `switch` render a bordered "Current Auth Claims" panel with token expiry color-coded
   (green = valid, yellow = expiring within 24 h, red = `EXPIRED`).
 - `switch` backs up the previous Keychain session (timestamped, `chmod 600`) before overwriting it.
+- `list` shows a spinner (with a live "which profile" label) on a TTY while it queries `agy`
+  for each profile; it's automatically skipped when output isn't a terminal (piping, `ai-accounts`).
 
 ### agy-accounts Environment Overrides
 
@@ -718,6 +724,9 @@ interactive flows (switch pickers, `login-switch`) and color work unchanged;
 any argument after the command (a profile name, `--all`, …) is passed through
 to each provider. Per-provider errors are printed inline without aborting the
 others, and the exit code is non-zero if any provider's command failed.
+`list` shows its own spinner on a TTY while the three providers are queried
+concurrently (their own inner spinners stay off, since their output is
+captured rather than run on a live terminal).
 
 ---
 

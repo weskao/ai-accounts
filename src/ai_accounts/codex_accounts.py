@@ -9,7 +9,7 @@ token expires). Never prints raw tokens — only decoded, non-secret claims.
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib
 import json
 import os
@@ -32,6 +32,7 @@ from ._utils import (
     RED,
     RESET,
     YELLOW,
+    Spinner,
     ensure_tool,
     have,
     log_red,
@@ -877,42 +878,45 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
         error=None,
     )
     rows = []
-    for profile_path, claims in profile_claims:
-        name = profile_path.stem
-        is_active = profile_path == active_profile
-        status = (
-            f"{GREEN}{BOLD}ACTIVE{RESET}"
-            if is_active
-            else f"{YELLOW}SAME ACCT{RESET}"
-            if profile_path in same_account_profiles
-            else f"{DIM}—{RESET}"
-        )
-        expires_text, color = _list_expiry_status(claims)
-        usage = empty_usage
-        if fetch_usage:
-            usage_path = profile_path
-            if (
-                is_active
-                and active_text is not None
-                and _token_key_from_path(_auth_file()) == _token_key_from_text(active_text)
-            ):
-                usage_path = _auth_file()
-            usage = usage_format.fetch_usage(usage_path)
-            if usage.error and usage.error.startswith(("HTTP 401", "HTTP 403")):
-                usage = empty_usage
-        rows.append(
-            {
-                "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
-                "account": _identity_label(claims) if claims else f"{RED}(unreadable){RESET}",
-                "plan": _plan_cell(claims),
-                "account_id": _short_id((claims or {}).get("account_id")),
-                "usage_5h": _usage_cell(usage.hourly, "5h"),
-                "usage_1week": _usage_cell(usage.weekly, "1week"),
-                "usage_updated": usage_format.format_refreshed_at(usage),
-                "expires": f"{color}{expires_text}{RESET}",
-                "status": status,
-            }
-        )
+    spinner = Spinner("Fetching Codex usage…")
+    with spinner if fetch_usage else nullcontext():
+        for index, (profile_path, claims) in enumerate(profile_claims, 1):
+            name = profile_path.stem
+            is_active = profile_path == active_profile
+            status = (
+                f"{GREEN}{BOLD}ACTIVE{RESET}"
+                if is_active
+                else f"{YELLOW}SAME ACCT{RESET}"
+                if profile_path in same_account_profiles
+                else f"{DIM}—{RESET}"
+            )
+            expires_text, color = _list_expiry_status(claims)
+            usage = empty_usage
+            if fetch_usage:
+                spinner.update(f"Fetching Codex usage… ({index}/{len(profile_claims)}) {name}")
+                usage_path = profile_path
+                if (
+                    is_active
+                    and active_text is not None
+                    and _token_key_from_path(_auth_file()) == _token_key_from_text(active_text)
+                ):
+                    usage_path = _auth_file()
+                usage = usage_format.fetch_usage(usage_path)
+                if usage.error and usage.error.startswith(("HTTP 401", "HTTP 403")):
+                    usage = empty_usage
+            rows.append(
+                {
+                    "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
+                    "account": _identity_label(claims) if claims else f"{RED}(unreadable){RESET}",
+                    "plan": _plan_cell(claims),
+                    "account_id": _short_id((claims or {}).get("account_id")),
+                    "usage_5h": _usage_cell(usage.hourly, "5h"),
+                    "usage_1week": _usage_cell(usage.weekly, "1week"),
+                    "usage_updated": usage_format.format_refreshed_at(usage),
+                    "expires": f"{color}{expires_text}{RESET}",
+                    "status": status,
+                }
+            )
 
     print(f"{BOLD}Saved Codex profiles{RESET}  {DIM}({len(rows)}){RESET}")
     _print_accounts_table(rows)

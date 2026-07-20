@@ -14,7 +14,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-from ._utils import RESET, log_red
+from ._utils import RESET, Spinner, log_red
 
 BOLD = "\033[1m"
 CYAN = "\033[1;36m"
@@ -70,8 +70,9 @@ def _run_list(module: str) -> subprocess.CompletedProcess[str]:
 
 
 def cmd_list() -> int:
-    with ThreadPoolExecutor(max_workers=len(_TOOLS)) as pool:
-        results = list(pool.map(lambda tool: _run_list(tool[1]), _TOOLS))
+    with Spinner(f"Fetching accounts from {len(_TOOLS)} providers…"):
+        with ThreadPoolExecutor(max_workers=len(_TOOLS)) as pool:
+            results = list(pool.map(lambda tool: _run_list(tool[1]), _TOOLS))
 
     exit_code = 0
     for (label, _), result in zip(_TOOLS, results):

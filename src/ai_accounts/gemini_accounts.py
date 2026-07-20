@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import nullcontext
 import json
 import os
 import re
@@ -18,6 +19,7 @@ from ._utils import (
     RED,
     RESET,
     YELLOW,
+    Spinner,
     ensure_tool,
     log_red,
     log_yellow,
@@ -745,57 +747,60 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
     )
     rows: list[dict[str, str]] = []
     restore_text = active_text
+    spinner = Spinner("Fetching Antigravity usage…")
     try:
-        for profile_path, claims in profile_claims:
-            name = profile_path.stem
-            is_active = profile_path == active_profile
-            status = (
-                f"{GREEN}{BOLD}ACTIVE{RESET}"
-                if is_active
-                else f"{YELLOW}SAME ACCT{RESET}"
-                if profile_path in same_account_profiles
-                else f"{DIM}—{RESET}"
-            )
-            usage = empty_usage
-            if fetch_usage:
-                profile_text = profile_path.read_text(encoding="utf-8")
-                if _write_cli_auth_text(profile_text):
-                    usage = _validated_usage(
-                        gemini_usage.fetch_usage(timeout=8), claims
-                    )
-                    refreshed_text = (
-                        _read_active_auth_text() if usage.error is None else None
-                    )
-                    if refreshed_text is not None:
-                        refreshed = json.loads(refreshed_text)
-                        saved = json.loads(profile_text)
-                        saved.update(refreshed)
-                        if usage.email:
-                            saved["email"] = usage.email
-                        profile_path.write_text(
-                            json.dumps(saved, indent=2) + "\n", encoding="utf-8"
+        with spinner if fetch_usage else nullcontext():
+            for index, (profile_path, claims) in enumerate(profile_claims, 1):
+                name = profile_path.stem
+                is_active = profile_path == active_profile
+                status = (
+                    f"{GREEN}{BOLD}ACTIVE{RESET}"
+                    if is_active
+                    else f"{YELLOW}SAME ACCT{RESET}"
+                    if profile_path in same_account_profiles
+                    else f"{DIM}—{RESET}"
+                )
+                usage = empty_usage
+                if fetch_usage:
+                    spinner.update(f"Fetching Antigravity usage… ({index}/{len(profile_claims)}) {name}")
+                    profile_text = profile_path.read_text(encoding="utf-8")
+                    if _write_cli_auth_text(profile_text):
+                        usage = _validated_usage(
+                            gemini_usage.fetch_usage(timeout=8), claims
                         )
-                        profile_path.chmod(0o600)
-                        if is_active:
-                            restore_text = json.dumps(saved)
-            expires_text, expires_color = _list_expiry_status(claims)
-            rows.append(
-                {
-                    "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
-                    "account": _identity_label(claims)
-                    if claims
-                    else usage.email or f"{RED}(unreadable){RESET}",
-                    "account_id": _short_id(_string((claims or {}).get("account_id"))),
-                    "plan": _plan_cell(usage.plan),
-                    "gemini_5h": _usage_cell(usage.gemini_session),
-                    "gemini_weekly": _usage_cell(usage.gemini_weekly),
-                    "other_5h": _usage_cell(usage.other_session),
-                    "other_weekly": _usage_cell(usage.other_weekly),
-                    "usage_updated": gemini_usage.format_refreshed_at(usage),
-                    "expires": f"{expires_color}{expires_text}{RESET}",
-                    "status": status,
-                }
-            )
+                        refreshed_text = (
+                            _read_active_auth_text() if usage.error is None else None
+                        )
+                        if refreshed_text is not None:
+                            refreshed = json.loads(refreshed_text)
+                            saved = json.loads(profile_text)
+                            saved.update(refreshed)
+                            if usage.email:
+                                saved["email"] = usage.email
+                            profile_path.write_text(
+                                json.dumps(saved, indent=2) + "\n", encoding="utf-8"
+                            )
+                            profile_path.chmod(0o600)
+                            if is_active:
+                                restore_text = json.dumps(saved)
+                expires_text, expires_color = _list_expiry_status(claims)
+                rows.append(
+                    {
+                        "profile": f"{GREEN}{BOLD}{name}{RESET}" if is_active else name,
+                        "account": _identity_label(claims)
+                        if claims
+                        else usage.email or f"{RED}(unreadable){RESET}",
+                        "account_id": _short_id(_string((claims or {}).get("account_id"))),
+                        "plan": _plan_cell(usage.plan),
+                        "gemini_5h": _usage_cell(usage.gemini_session),
+                        "gemini_weekly": _usage_cell(usage.gemini_weekly),
+                        "other_5h": _usage_cell(usage.other_session),
+                        "other_weekly": _usage_cell(usage.other_weekly),
+                        "usage_updated": gemini_usage.format_refreshed_at(usage),
+                        "expires": f"{expires_color}{expires_text}{RESET}",
+                        "status": status,
+                    }
+                )
     finally:
         _restore_cli_auth(restore_text)
 

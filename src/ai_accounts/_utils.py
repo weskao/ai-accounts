@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 from typing import Sequence
 
 YELLOW = "\033[1;33m"
@@ -93,6 +94,58 @@ def log_red(msg: str) -> None:
         print(f"{RED}{msg}{RESET}", file=sys.stderr)
     else:
         print(msg, file=sys.stderr)
+
+
+_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_SPINNER_INTERVAL = 0.08
+
+
+class Spinner:
+    """Terminal spinner for a step that takes a moment (e.g. a network fetch).
+
+    Ticks on a background thread and writes to stderr, so stdout stays clean
+    for piping. Auto-disables when stderr isn't a TTY (piped/captured output,
+    CI logs, tests) — reuses the same gate as ``log_*`` so it never corrupts
+    non-interactive output. Update the label mid-run with ``update()``; the
+    line is cleared on exit so following output starts at column 0.
+    """
+
+    def __init__(self, message: str = "Working…") -> None:
+        self._message = message
+        self._enabled = _color_supported()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def update(self, message: str) -> None:
+        with self._lock:
+            self._message = message
+
+    def _run(self) -> None:
+        frame = 0
+        while not self._stop.is_set():
+            with self._lock:
+                message = self._message
+            print(
+                f"\r{CYAN}{_SPINNER_FRAMES[frame % len(_SPINNER_FRAMES)]}{RESET} {message}\033[K",
+                end="",
+                file=sys.stderr,
+                flush=True,
+            )
+            frame += 1
+            self._stop.wait(_SPINNER_INTERVAL)
+        print("\r\033[K", end="", file=sys.stderr, flush=True)
+
+    def __enter__(self) -> "Spinner":
+        if self._enabled:
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        if self._thread is not None:
+            self._stop.set()
+            self._thread.join()
 
 
 def have(cmd: str) -> bool:
