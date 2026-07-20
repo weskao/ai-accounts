@@ -2,6 +2,10 @@
 
 Guidance for Claude Code when working in this repository.
 
+## Keep `README.md` in sync (required)
+
+[`README.md`](README.md) is the user-facing reference for every command. Whenever you add a new command/entry point, change a flag, rename an option, or alter any user-visible behavior or output, **update `README.md` in the same change** — add or revise the relevant description and usage examples so the docs never lag the code. This includes the command table near the top and the per-tool section. A code change that touches user-visible behavior without a matching `README.md` edit is incomplete.
+
 ## Reuse shared helpers before implementing
 
 Before writing any new helper, **first check [`src/ai-accounts/_utils.py`](src/ai-accounts/_utils.py)** for an existing function that already does the job. Reuse it instead of reimplementing.
