@@ -97,7 +97,18 @@ def log_red(msg: str) -> None:
 
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_SPINNER_FRAMES_ASCII = ("|", "/", "-", "\\")
 _SPINNER_INTERVAL = 0.08
+
+
+def _stderr_supports_braille() -> bool:
+    """Some Windows consoles (legacy cmd.exe codepages) can't encode Braille."""
+    encoding = getattr(sys.stderr, "encoding", None) or ""
+    try:
+        _SPINNER_FRAMES[0].encode(encoding)
+        return True
+    except (LookupError, UnicodeEncodeError):
+        return False
 
 
 class Spinner:
@@ -113,6 +124,7 @@ class Spinner:
     def __init__(self, message: str = "Working…") -> None:
         self._message = message
         self._enabled = _color_supported()
+        self._frames = _SPINNER_FRAMES if _stderr_supports_braille() else _SPINNER_FRAMES_ASCII
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -127,7 +139,7 @@ class Spinner:
             with self._lock:
                 message = self._message
             print(
-                f"\r{CYAN}{_SPINNER_FRAMES[frame % len(_SPINNER_FRAMES)]}{RESET} {message}\033[K",
+                f"\r{CYAN}{self._frames[frame % len(self._frames)]}{RESET} {message}\033[K",
                 end="",
                 file=sys.stderr,
                 flush=True,
