@@ -153,6 +153,33 @@ class AiAccountsTest(unittest.TestCase):
         for c in calls:
             self.assertEqual(c[-2:], ["refresh", "--all"])
 
+    def test_every_forwarded_command_uses_the_same_provider_path(self) -> None:
+        cases = (
+            ["who"],
+            ["current"],
+            ["save", "work"],
+            ["switch", "work"],
+            ["remove", "work"],
+            ["refresh"],
+            ["sync"],
+            ["login-switch", "work"],
+        )
+        for argv in cases:
+            with self.subTest(argv=argv):
+                calls = []
+
+                def run(cmd, *a, **k):
+                    calls.append(cmd)
+                    return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+                with mock.patch.object(aa.subprocess, "run", side_effect=run):
+                    with redirect_stdout(io.StringIO()):
+                        self.assertEqual(aa.main(argv), 0)
+
+                self.assertEqual(len(calls), len(aa._TOOLS))
+                self.assertEqual([call[2] for call in calls], [module for _, module in aa._TOOLS])
+                self.assertTrue(all(call[3:] == argv for call in calls))
+
 
 if __name__ == "__main__":
     unittest.main()

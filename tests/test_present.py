@@ -310,6 +310,20 @@ class OkGrammarTests(unittest.TestCase):
         self.assertTrue(text.startswith(f"{GREEN}✅ "))
         self.assertNotIn(":", text)
 
+    def test_success_panel_uses_shared_success_detail_panel_sequence(self) -> None:
+        text = _capture(
+            present.success_panel,
+            "Refreshed Grok profile",
+            "work",
+            ["Account       : person@example.test"],
+            title="Profile: work",
+            details=("(same account is active)",),
+        )
+        clean = present._ANSI_RE.sub("", text)
+        self.assertTrue(text.startswith(f"{GREEN}✅ "))
+        self.assertIn("(same account is active)", clean)
+        self.assertIn("Profile: work", clean)
+
 
 class TableGrammarTests(unittest.TestCase):
     """(d) box-drawing frame + optional-column hide/keep, (e) the all-optional

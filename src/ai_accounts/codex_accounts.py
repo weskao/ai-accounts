@@ -26,11 +26,12 @@ from pathlib import Path
 
 from . import usage_format
 from ._present import (
-    _ANSI_RE,
+    _ANSI_RE as _ANSI_RE,
     accounts_table,
     choose_profile,
     ok,
     panel,
+    success_panel,
     usage_color,
 )
 from ._utils import (
@@ -786,9 +787,13 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     _mirror_active_auth_to_keychain(_auth_file())
     _set_current_profile(profile_file)
 
-    ok("Saved Codex profile", name)
-    print(f"{DIM}   → {profile_file}{RESET}\n")
-    panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+    success_panel(
+        "Saved Codex profile",
+        name,
+        _claims_lines(_read_claims(profile_file)),
+        title=f"Profile: {name}",
+        details=(f"→ {profile_file}",),
+    )
     return 0
 
 
@@ -996,15 +1001,18 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
     if refreshed is None:
         return 1, kind
 
-    if show_summary:
-        ok("Refreshed Codex profile", name)
     synced_active = _sync_refreshed_profile(profile_file)
-    if show_summary and synced_active:
-        print(f"{DIM}   (same account is active — auth.json updated too){RESET}")
-
     if show_summary:
-        print()
-        panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+        details = []
+        if synced_active:
+            details.append("(same account is active — auth.json updated too)")
+        success_panel(
+            "Refreshed Codex profile",
+            name,
+            _claims_lines(_read_claims(profile_file)),
+            title=f"Profile: {name}",
+            details=details,
+        )
     return 0, None
 
 
@@ -1052,17 +1060,21 @@ def _refresh_active_auth() -> int:
     )
     if refreshed is None:
         return 1
-    ok("Refreshed active Codex auth.")
-
     if profile_path is not None:
         _copy_active_auth_to(profile_path)
         _set_current_profile(profile_path)
-        print(f"{DIM}   (synced back to profile: {profile_path.stem}){RESET}")
+        details = (f"(synced back to profile: {profile_path.stem})",)
     else:
         log_yellow("⚠️  No unambiguous current profile — run: codex-accounts switch <name>")
+        details = ()
 
-    print()
-    panel("Current Auth Claims", _claims_lines(_read_claims(auth_path)), accent=GREEN)
+    success_panel(
+        "Refreshed active Codex auth.",
+        None,
+        _claims_lines(_read_claims(auth_path)),
+        title="Current Auth Claims",
+        details=details,
+    )
     return 0
 
 
@@ -1089,9 +1101,12 @@ def cmd_sync() -> int:
 
     _copy_active_auth_to(profile_path)
     _set_current_profile(profile_path)
-    ok("Synced active auth → profile", profile_path.stem)
-    print()
-    panel(f"Profile: {profile_path.stem}", _claims_lines(_read_claims(profile_path)), accent=GREEN)
+    success_panel(
+        "Synced active auth → profile",
+        profile_path.stem,
+        _claims_lines(_read_claims(profile_path)),
+        title=f"Profile: {profile_path.stem}",
+    )
     return 0
 
 

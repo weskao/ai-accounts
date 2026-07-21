@@ -33,7 +33,15 @@ from typing import Final
 
 from . import claude_usage
 from .usage_format import capitalize_first, format_unix_time_compact, format_usage_window
-from ._present import _ANSI_RE, accounts_table, choose_profile, ok, panel, usage_color
+from ._present import (
+    _ANSI_RE as _ANSI_RE,
+    accounts_table,
+    choose_profile,
+    ok,
+    panel,
+    success_panel,
+    usage_color,
+)
 from ._utils import (
     BOLD,
     DIM,
@@ -702,9 +710,13 @@ def _save_profile_oauth(name: str, oauth: dict, identity: dict | None = None) ->
     _write_active_oauth(oauth)
     _set_current_profile(profile_file)
 
-    ok("Saved Claude profile", name)
-    print(f"{DIM}   → {profile_file}{RESET}\n")
-    panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+    success_panel(
+        "Saved Claude profile",
+        name,
+        _claims_lines(_read_claims(profile_file)),
+        title=f"Profile: {name}",
+        details=(f"→ {profile_file}",),
+    )
     return 0
 
 
@@ -907,11 +919,18 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
         synced_active = True
 
     if show_summary:
-        ok("Refreshed Claude profile", name)
-        if synced_active:
-            print(f"{DIM}   (same account is active — live credentials updated too){RESET}")
-        print()
-        panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+        details = (
+            ("(same account is active — live credentials updated too)",)
+            if synced_active
+            else ()
+        )
+        success_panel(
+            "Refreshed Claude profile",
+            name,
+            _claims_lines(_read_claims(profile_file)),
+            title=f"Profile: {name}",
+            details=details,
+        )
     return 0, None
 
 
@@ -930,7 +949,7 @@ def _refresh_all_profiles() -> int:
             continue
         if token is not None:
             refreshed_tokens.add(token)
-        rc, kind = _refresh_one_profile(profile_path.stem, show_summary=False)
+        rc, kind = _refresh_one_profile(profile_path.stem)
         if rc != 0:
             (revoked if kind == "revoked" else transient).append(profile_path.stem)
 
@@ -957,17 +976,21 @@ def _refresh_active_auth() -> int:
     if new_oauth is None:
         return 1
     _write_active_oauth(new_oauth)
-    ok("Refreshed active Claude auth.")
-
     if profile_path is not None:
         _write_profile(profile_path, new_oauth)
         _set_current_profile(profile_path)
-        print(f"{DIM}   (synced back to profile: {profile_path.stem}){RESET}")
+        details = (f"(synced back to profile: {profile_path.stem})",)
     else:
         log_yellow("⚠️  No unambiguous current profile — run: claude-accounts switch <name>")
+        details = ()
 
-    print()
-    panel("Current Auth Claims", _claims_lines(_read_active_claims()), accent=GREEN)
+    success_panel(
+        "Refreshed active Claude auth.",
+        None,
+        _claims_lines(_read_active_claims()),
+        title="Current Auth Claims",
+        details=details,
+    )
     return 0
 
 
@@ -994,9 +1017,12 @@ def cmd_sync() -> int:
 
     _write_profile(profile_path, oauth)
     _set_current_profile(profile_path)
-    ok("Synced active auth → profile", profile_path.stem)
-    print()
-    panel(f"Profile: {profile_path.stem}", _claims_lines(_read_claims(profile_path)), accent=GREEN)
+    success_panel(
+        "Synced active auth → profile",
+        profile_path.stem,
+        _claims_lines(_read_claims(profile_path)),
+        title=f"Profile: {profile_path.stem}",
+    )
     return 0
 
 

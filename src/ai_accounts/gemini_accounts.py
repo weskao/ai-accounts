@@ -13,7 +13,15 @@ from pathlib import Path
 from typing import TypeAlias
 
 from . import gemini_usage
-from ._present import _ANSI_RE, accounts_table, choose_profile, ok, panel, usage_color
+from ._present import (
+    _ANSI_RE as _ANSI_RE,
+    accounts_table,
+    choose_profile,
+    ok,
+    panel,
+    success_panel,
+    usage_color,
+)
 from ._utils import (
     BOLD,
     DIM,
@@ -640,9 +648,13 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     _auth_file().chmod(0o600)
     _set_current_profile(profile_file)
 
-    ok("Saved Antigravity profile", name)
-    print(f"{DIM}   → {profile_file}{RESET}\n")
-    panel(f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN)
+    success_panel(
+        "Saved Antigravity profile",
+        name,
+        _claims_lines(_read_claims(profile_file)),
+        title=f"Profile: {name}",
+        details=(f"→ {profile_file}",),
+    )
     return 0
 
 
@@ -856,11 +868,11 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
         return 1, "agy"
 
     if show_summary:
-        ok("Refreshed Antigravity profile", name)
-    if show_summary:
-        print()
-        panel(
-            f"Profile: {name}", _claims_lines(_read_claims(profile_file)), accent=GREEN
+        success_panel(
+            "Refreshed Antigravity profile",
+            name,
+            _claims_lines(_read_claims(profile_file)),
+            title=f"Profile: {name}",
         )
     return 0, None
 
@@ -902,7 +914,6 @@ def _refresh_active_auth() -> int:
         log_red(f"❌ agy refresh failed: {usage.error}")
         return 1
     refreshed_text = _read_active_auth_text()
-    ok("Refreshed active Antigravity auth.")
 
     if profile_path is not None and refreshed_text is not None:
         saved = json.loads(profile_path.read_text(encoding="utf-8"))
@@ -912,14 +923,20 @@ def _refresh_active_auth() -> int:
         profile_path.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
         profile_path.chmod(0o600)
         _set_current_profile(profile_path)
-        print(f"{DIM}   (synced back to profile: {profile_path.stem}){RESET}")
+        details = (f"(synced back to profile: {profile_path.stem})",)
     else:
         log_yellow(
             "⚠️  No unambiguous current profile — run: agy-accounts switch <name>"
         )
+        details = ()
 
-    print()
-    panel("Current Auth Claims", _claims_lines(_read_claims(_auth_file())), accent=GREEN)
+    success_panel(
+        "Refreshed active Antigravity auth.",
+        None,
+        _claims_lines(_read_claims(_auth_file())),
+        title="Current Auth Claims",
+        details=details,
+    )
     return 0
 
 
@@ -946,12 +963,11 @@ def cmd_sync() -> int:
 
     _copy_active_auth_to(profile_path)
     _set_current_profile(profile_path)
-    ok("Synced active auth → profile", profile_path.stem)
-    print()
-    panel(
-        f"Profile: {profile_path.stem}",
+    success_panel(
+        "Synced active auth → profile",
+        profile_path.stem,
         _claims_lines(_read_claims(profile_path)),
-        accent=GREEN,
+        title=f"Profile: {profile_path.stem}",
     )
     return 0
 

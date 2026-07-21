@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._present import accounts_table, choose_profile, ok, panel
+from ._present import accounts_table, choose_profile, ok, panel, success_panel
 from ._utils import BOLD, DIM, GREEN, RED, RESET, YELLOW, log_red, log_yellow, resolve_account_dir
 
 JsonDict = dict[str, Any]
@@ -278,9 +278,13 @@ def cmd_save(name: str) -> int:
     if not _write_json(profile, payload):
         return 1
     _set_marker(profile)
-    ok("Saved Grok profile", profile.stem)
-    print(f"{DIM}   → {profile}{RESET}\n")
-    panel(f"Profile: {profile.stem}", _claims_lines(_claims(payload), profile), accent=GREEN)
+    success_panel(
+        "Saved Grok profile",
+        profile.stem,
+        _claims_lines(_claims(payload), profile),
+        title=f"Profile: {profile.stem}",
+        details=(f"→ {profile}",),
+    )
     return 0
 
 
@@ -429,6 +433,25 @@ def _refresh_profile(profile: Path) -> int:
             _write_json(_auth_file(), original)
 
 
+def _refresh_one_profile(name: str, *, show_summary: bool = True) -> int:
+    profile = _profile_file(name)
+    if profile is None:
+        return 1
+    if not profile.is_file():
+        log_red(f"❌ Profile not found: {name}")
+        return 1
+
+    status = _refresh_profile(profile)
+    if status == 0 and show_summary:
+        success_panel(
+            "Refreshed Grok profile",
+            name,
+            _claims_lines(_claims(_read_json(profile)), profile),
+            title=f"Profile: {name}",
+        )
+    return status
+
+
 def cmd_refresh(target: str | None) -> int:
     if target == "--all":
         profiles = (
@@ -437,27 +460,39 @@ def cmd_refresh(target: str | None) -> int:
         if not profiles:
             log_yellow("⚠️  No saved Grok profiles.")
             return 0
-        status = 0
+        failed = []
         for profile in profiles:
-            print(f"{DIM}Refreshing Grok profile: {profile.stem}{RESET}")
-            status = _refresh_profile(profile) or status
-        return status
+            if _refresh_one_profile(profile.stem) != 0:
+                failed.append(profile.stem)
+        cmd_list()
+        if failed:
+            log_red(f"❌ Grok refresh failed: {', '.join(failed)}")
+            return 1
+        ok(f"All {len(profiles)} profile(s) refreshed.")
+        return 0
     if target:
-        profile = _profile_file(target)
-        return (
-            _refresh_profile(profile)
-            if profile is not None and profile.is_file()
-            else 1
-        )
+        return _refresh_one_profile(target)
     if _read_json(_auth_file()) is None:
         log_red("❌ No Grok login found. Run: grok login --oauth")
         return 1
     status = _run_grok_refresh()
     profile = _active_profile()
     refreshed = _read_json(_auth_file())
-    if status == 0 and profile is not None and refreshed is not None:
+    if status != 0:
+        return status
+    if profile is not None and refreshed is not None:
         _write_json(profile, refreshed)
-        ok("Refreshed and synced Grok profile", profile.stem)
+        details = (f"(synced back to profile: {profile.stem})",)
+    else:
+        log_yellow("⚠️  No unambiguous current profile — run: grok-accounts switch <name>")
+        details = ()
+    success_panel(
+        "Refreshed active Grok auth.",
+        None,
+        _claims_lines(_claims(refreshed), profile),
+        title="Current Auth Claims",
+        details=details,
+    )
     return status
 
 
@@ -470,7 +505,12 @@ def cmd_sync() -> int:
     if not _write_json(profile, payload):
         return 1
     _set_marker(profile)
-    ok("Synced active auth → profile", profile.stem)
+    success_panel(
+        "Synced active auth → profile",
+        profile.stem,
+        _claims_lines(_claims(payload), profile),
+        title=f"Profile: {profile.stem}",
+    )
     return 0
 
 

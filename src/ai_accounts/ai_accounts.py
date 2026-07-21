@@ -15,10 +15,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ._utils import RESET, Spinner, log_red
-
-BOLD = "\033[1m"
-CYAN = "\033[1;36m"
+from ._utils import BOLD, CYAN, RESET, Spinner, log_red
 
 # (display label, importable module). Each module is `python -m`-runnable and
 # understands the same subcommand set as the others.

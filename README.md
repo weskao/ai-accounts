@@ -763,9 +763,12 @@ Saved Grok profiles  (2)
 ```
 
 - `who` and `switch` render two bordered cyan panels — a "Grok Login Status" panel and a "Current Auth Claims" panel — matching the layout and accent color of `codex-accounts`, `claude-accounts`, and `agy-accounts`.
-- `save` also prints a bordered green "Profile: <name>" claims panel after the
+- `save` and `sync` also print a bordered green "Profile: <name>" claims panel after the
   ✅ confirmation line, same as the other three account tools; `switch` follows its
   ✅ line with the `who` panels instead.
+- `refresh <name>` prints the same green success line and Profile panel as the other
+  account tools. `refresh --all` prints each refreshed profile, then the saved-profile
+  table and a final `✅ All N profile(s) refreshed.` summary.
 - `switch` without a `<name>` argument opens an interactive picker ("Choose a Grok profile:",
   numbered `1)`, `2)`, …) — the same picker grammar as `codex-accounts`, `claude-accounts`,
   and `agy-accounts`.
@@ -785,6 +788,9 @@ Saved Grok profiles  (2)
 Forwards a subcommand to all four per-provider tools (`codex-accounts`,
 `claude-accounts`, `agy-accounts`, `grok-accounts`) at once, so one command drives every
 provider. It exposes the same command surface as the per-provider tools.
+All commands use the same provider headers and shared success, warning, error,
+panel, and table presentation as the individual account tools; provider-specific
+claims and usage columns remain native to each provider.
 
 ### ai-accounts Usage
 

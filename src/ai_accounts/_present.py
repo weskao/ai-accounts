@@ -152,3 +152,18 @@ def ok(action: str, name: str | None = None, *, bold: bool = True) -> None:
     else:
         rendered = f"{BOLD}{name}{RESET}" if bold else name
         print(f"{GREEN}✅ {action}:{RESET} {rendered}")
+
+
+def success_panel(
+    action: str,
+    name: str | None,
+    lines: list[str],
+    *,
+    title: str,
+    details: Sequence[str] = (),
+) -> None:
+    ok(action, name)
+    for detail in details:
+        print(f"{DIM}   {detail}{RESET}")
+    print()
+    panel(title, lines, accent=GREEN)

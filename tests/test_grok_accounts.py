@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from ai_accounts import grok_accounts as ga
+from ai_accounts._present import _ANSI_RE
 
 
 def _auth(
@@ -112,6 +113,52 @@ class GrokAccountsTests(unittest.TestCase):
         self.assertEqual(
             rotated["https://auth.x.ai::client"]["key"], "rotated-access-token"
         )
+
+    def test_refresh_profile_uses_shared_success_panel(self) -> None:
+        profile = self.account_dir / "personal.json"
+        self.assertTrue(ga._write_json(profile, _auth()))
+
+        with mock.patch.object(ga, "_run_grok_refresh", return_value=0):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(ga.cmd_refresh("personal"), 0)
+
+        text = _ANSI_RE.sub("", output.getvalue())
+        self.assertIn("✅ Refreshed Grok profile: personal", text)
+        self.assertIn("Profile: personal", text)
+        self.assertNotIn("secret-access-token", text)
+        self.assertNotIn("secret-refresh-token", text)
+
+    def test_refresh_all_prints_panels_table_and_summary(self) -> None:
+        self.assertTrue(ga._write_json(self.account_dir / "a.json", _auth(principal="a")))
+        self.assertTrue(ga._write_json(self.account_dir / "b.json", _auth(principal="b")))
+
+        with mock.patch.object(ga, "_run_grok_refresh", return_value=0):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(ga.cmd_refresh("--all"), 0)
+
+        text = _ANSI_RE.sub("", output.getvalue())
+        self.assertIn("✅ Refreshed Grok profile: a", text)
+        self.assertIn("✅ Refreshed Grok profile: b", text)
+        self.assertIn("Saved Grok profiles", text)
+        self.assertIn("✅ All 2 profile(s) refreshed.", text)
+
+    def test_refresh_active_prints_current_claims_panel(self) -> None:
+        self.assertTrue(ga._write_json(ga._auth_file(), _auth()))
+        profile = self.account_dir / "personal.json"
+        self.assertTrue(ga._write_json(profile, _auth()))
+        ga._set_marker(profile)
+
+        with mock.patch.object(ga, "_run_grok_refresh", return_value=0):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(ga.cmd_refresh(None), 0)
+
+        text = _ANSI_RE.sub("", output.getvalue())
+        self.assertIn("✅ Refreshed active Grok auth.", text)
+        self.assertIn("(synced back to profile: personal)", text)
+        self.assertIn("Current Auth Claims", text)
 
 
 if __name__ == "__main__":
