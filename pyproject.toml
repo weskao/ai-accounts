@@ -1,6 +1,6 @@
 [project]
 name = "ai-accounts"
-version = "2.1.0"
+version = "2.2.0"
 description = "Personal CLI toolbox extracted from ~/.zshrc, packaged as uv tools"
 readme = "README.md"
 requires-python = ">=3.10"

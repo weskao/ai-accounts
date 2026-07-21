@@ -1,3 +1,34 @@
+## [2.2.0] - 2026-07-21
+
+### 🚀 Features
+
+- **accounts:** Add grok-accounts CLI account manager
+- **present:** Unify save/refresh/sync success UI
+
+### 🐛 Bug Fixes
+
+- **ci:** Sync lockfile version
+- **ci:** Correct cross-platform assumptions
+- **ci:** Enable utf-8 on windows
+- **claude-accounts:** Send real User-Agent on token refresh
+- **present:** Guard empty column set; document no-redaction contract
+
+### 🚜 Refactor
+
+- **grok-accounts:** Align output with sibling tools
+- **present:** Extract shared presentation module from codex-accounts
+- **agy-accounts:** Adopt shared _present presentation module
+- **grok-accounts:** [**breaking**] Adopt shared _present module; fix picker + Ctrl-C handling
+- **claude-accounts:** Adopt shared _present presentation module
+
+### 📚 Documentation
+
+- Link agy-parallel-limitation from agy-accounts list
+- **grok-accounts:** Fix switch-panel overclaim; neutralize profile names in list example
+
+### 🧪 Testing
+
+- **present:** Sentinel-leak and shared-grammar coverage across account tools
 ## [2.1.0] - 2026-07-20
 
 ### 🚀 Features
@@ -19,6 +50,10 @@
 ### ⚡ Performance
 
 - **accounts:** Fetch usage in parallel across profiles
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 2.1.0
 ## [2.0.0] - 2026-07-20
 
 ### 🚀 Features
