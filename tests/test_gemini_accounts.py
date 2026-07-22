@@ -419,7 +419,7 @@ class ProfileCommandTests(_HomeMixin):
 
 
 class LoginAndRefreshTests(_HomeMixin):
-    def test_login_switch_saves_session_when_agy_becomes_authenticated(self) -> None:
+    def test_login_switch_saves_session_when_agy_writes_new_credentials(self) -> None:
         fresh = _creds("sub-new", "new@x.com", refresh_token="rt-new")
         process = mock.Mock(pid=123)
         process.poll.return_value = None
@@ -434,9 +434,6 @@ class LoginAndRefreshTests(_HomeMixin):
             ga.subprocess,
             "run",
             side_effect=AssertionError("login-switch must not wait for agy to exit"),
-        ), mock.patch.object(
-            ga.gemini_usage, "fetch_usage_from_pid",
-            return_value=_usage("new@x.com"),
         ):
             self.assertEqual(self.quiet(ga.cmd_login_switch, "new"), 0)
 

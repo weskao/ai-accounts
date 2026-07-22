@@ -985,12 +985,15 @@ def cmd_login_switch(name: str) -> int:
     print(
         f"{DIM}Launching the official agy login. Complete browser sign-in; the profile will save automatically.{RESET}"
     )
+    auth_text = None
     try:
         login = subprocess.Popen(["agy"])
-        usage = None
         while login.poll() is None:
-            usage = gemini_usage.fetch_usage_from_pid(login.pid)
-            if usage is not None:
+            # agy persists its new credentials before its local quota RPC is
+            # ready. Waiting for both RPC responses loses successful logins
+            # when the CLI exits or continues onboarding first.
+            auth_text = _read_active_auth_text()
+            if auth_text is not None:
                 break
             time.sleep(0.25)
     except KeyboardInterrupt:
@@ -998,18 +1001,14 @@ def cmd_login_switch(name: str) -> int:
         log_yellow("Login cancelled. Your previous agy session was restored.")
         return 130
 
-    if usage is not None and usage.error is None and usage.email:
+    if auth_text is not None:
         login.terminate()
         try:
             login.wait(timeout=2)
         except subprocess.TimeoutExpired:
             login.kill()
             login.wait(timeout=2)
-        auth_text = _read_active_auth_text()
-        if auth_text is not None:
-            auth = json.loads(auth_text)
-            auth["email"] = usage.email
-            return _save_profile_auth(name, json.dumps(auth, indent=2) + "\n")
+        return _save_profile_auth(name, auth_text)
 
     _restore_cli_auth(outgoing_text)
     log_yellow("Login cancelled. Your previous agy session was restored.")
