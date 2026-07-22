@@ -114,6 +114,12 @@ _KEYCHAIN_SERVICE = "gemini"
 _KEYCHAIN_ACCOUNT = "antigravity"
 _KEYRING_PREFIX = "go-keyring-base64:"
 
+# Upper bound on how long login-switch waits for a genuinely new credential.
+# A running Antigravity IDE re-writes the deleted keyring session instantly, so
+# without a ceiling the poll loop would spin forever waiting for a login the
+# CLI can't trigger on its own.
+_LOGIN_TIMEOUT_SECONDS = 180
+
 
 def _read_cli_keyring_secret() -> str | None:
     try:
@@ -972,6 +978,17 @@ def cmd_sync() -> int:
     return 0
 
 
+def _terminate_login(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=2)
+
+
 def cmd_login_switch(name: str) -> int:
     if not ensure_tool("agy"):
         return 1
@@ -981,38 +998,49 @@ def cmd_login_switch(name: str) -> int:
     outgoing_profile = _active_profile(outgoing_text)
     if outgoing_profile is not None:
         _copy_active_auth_to(outgoing_profile)
+    outgoing_key = _token_key_from_auth(json.loads(outgoing_text)) if outgoing_text else None
     _delete_cli_auth()
     print(
         f"{DIM}Launching the official agy login. Complete browser sign-in; the profile will save automatically.{RESET}"
     )
-    auth_text = None
+    # A real login must yield a credential whose token differs from the outgoing
+    # one. Breaking on *any* keyring write instead captures the session a running
+    # Antigravity IDE restores the instant we delete it — silently re-saving the
+    # current account under the new name. Require a genuinely new token, bounded
+    # by a timeout so a restore-only keyring can't hang us.
+    new_auth_text = None
+    deadline = time.monotonic() + _LOGIN_TIMEOUT_SECONDS
+    login = subprocess.Popen(["agy"])
     try:
-        login = subprocess.Popen(["agy"])
-        while login.poll() is None:
-            # agy persists its new credentials before its local quota RPC is
-            # ready. Waiting for both RPC responses loses successful logins
-            # when the CLI exits or continues onboarding first.
-            auth_text = _read_active_auth_text()
-            if auth_text is not None:
-                break
+        while login.poll() is None and time.monotonic() < deadline:
+            candidate = _read_active_auth_text()
+            if candidate is not None:
+                candidate_key = _token_key_from_auth(json.loads(candidate))
+                if candidate_key is not None and candidate_key != outgoing_key:
+                    new_auth_text = candidate
+                    break
             time.sleep(0.25)
     except KeyboardInterrupt:
+        _terminate_login(login)
         _restore_cli_auth(outgoing_text)
         log_yellow("Login cancelled. Your previous agy session was restored.")
         return 130
 
-    if auth_text is not None:
-        login.terminate()
-        try:
-            login.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            login.kill()
-            login.wait(timeout=2)
-        return _save_profile_auth(name, auth_text)
+    if new_auth_text is not None:
+        _terminate_login(login)
+        return _save_profile_auth(name, new_auth_text)
 
+    agy_exit = login.poll()
+    _terminate_login(login)
     _restore_cli_auth(outgoing_text)
-    log_yellow("Login cancelled. Your previous agy session was restored.")
-    return login.returncode or 1
+    log_red("❌ Login did not complete — still on the current account.")
+    log_yellow(
+        "   This agy build has no CLI login, and a running Antigravity IDE restores the old session on delete."
+    )
+    log_yellow(
+        f"   Quit the Antigravity app and retry, or sign in via the IDE and run: agy-accounts save {name}"
+    )
+    return agy_exit or 1
 
 
 # ── entry point ───────────────────────────────────────────────────────────

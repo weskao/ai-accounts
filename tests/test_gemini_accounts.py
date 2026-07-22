@@ -456,6 +456,33 @@ class LoginAndRefreshTests(_HomeMixin):
             self.fail("expected restored session")
         self.assertEqual(self.active["refresh_token"], "rt-old")
 
+    def test_login_switch_refuses_when_only_the_old_session_reappears(self) -> None:
+        # A running Antigravity IDE restores the deleted keyring session, so the
+        # keyring only ever yields the outgoing credential. login-switch must not
+        # save it under the new name — the account is unchanged.
+        old = _creds("sub-old", "old@x.com", refresh_token="rt-old")
+        self.set_active(old)
+        process = mock.Mock(pid=123)
+        process.poll.return_value = None
+
+        def launch(*args, **kwargs):
+            self.set_active(old)  # IDE re-writes the same session on delete
+            return process
+
+        with mock.patch.object(ga, "ensure_tool", return_value=True), mock.patch.object(
+            ga.subprocess, "Popen", side_effect=launch
+        ), mock.patch.object(ga.time, "sleep"), mock.patch.object(
+            ga, "_LOGIN_TIMEOUT_SECONDS", 0.05
+        ):
+            self.assertEqual(self.quiet(ga.cmd_login_switch, "new"), 1)
+
+        self.assertFalse((self.home / "accounts" / "new.json").exists())
+        self.assertIsNotNone(self.active)
+        if self.active is None:
+            self.fail("expected restored session")
+        self.assertEqual(self.active["refresh_token"], "rt-old")
+        process.terminate.assert_called_once_with()
+
     def test_refresh_profile_uses_agy_and_saves_rotated_tokens(self) -> None:
         profile = self.write_profile("work", _creds("sub", "a@x.com", access_token="old"))
 
