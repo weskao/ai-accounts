@@ -279,11 +279,20 @@ resize-image -r -f 100 200
 Convert PNG / JPG / JPEG files to WebP using `cwebp` (lossy, default `-q 75`).
 Original files are **deleted** after a successful conversion.
 
+### towebp Options
+
+| Flag | Description |
+| --- | --- |
+| `-c` | Process only the current folder (default: recurse into subfolders) |
+| `-q <quality>` | Compression quality `0–100` (default: `75`) |
+
 ### towebp Usage
 
 ```sh
-towebp           # convert all PNG/JPG/JPEG recursively (default)
+towebp           # convert all PNG/JPG/JPEG recursively (default quality: 75)
 towebp -c        # current folder only (no sub-folder recursion)
+towebp -q 80     # convert recursively with 80% compression quality
+towebp -c -q 90  # current folder only with 90% quality
 ```
 
 ---
