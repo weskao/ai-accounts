@@ -16,3 +16,5 @@ build/
 accounts/
 .current-profile
 
+# Session status output by omo wrapper
+.omo/
