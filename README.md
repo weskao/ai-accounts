@@ -635,6 +635,11 @@ agy-accounts login-switch work       # log into the second account, save as "wor
 agy-accounts list                    # verify both profiles are saved
 ```
 
+The agy Keychain token carries no account identity, so `save` and `login-switch` fetch the
+email from agy's usage service and store it in the profile (a brief "Fetching account identity…"
+step). If that fetch is momentarily unavailable, the account shows as `(unknown)` until the next
+`list` or `refresh` backfills it.
+
 After the initial setup, switch at any time with:
 
 ```sh

@@ -640,6 +640,28 @@ def cmd_who() -> int:
     return 0
 
 
+def _backfill_email(profile_file: Path) -> None:
+    """agy's keyring token carries no id_token or email, so a freshly saved
+    profile has no identity — the panel/table would show "(unknown)". Email only
+    ever comes from the usage RPC (the same source `list` and `refresh` use);
+    fetch it now and write it into the profile. Best-effort: a transient fetch
+    failure just leaves the email to be backfilled on the next list/refresh."""
+    usage = gemini_usage.fetch_usage(timeout=8)
+    if not usage.email:
+        return
+    try:
+        saved = json.loads(profile_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(saved, dict) or saved.get("email") == usage.email:
+        return
+    saved["email"] = usage.email
+    text = json.dumps(saved, indent=2) + "\n"
+    for path in (profile_file, _auth_file()):
+        path.write_text(text, encoding="utf-8")
+        path.chmod(0o600)
+
+
 def _save_profile_auth(name: str, auth_text: str) -> int:
     profile_file = _profile_file(name)
     if profile_file is None:
@@ -654,6 +676,9 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     _auth_file().write_text(auth_text, encoding="utf-8")
     _auth_file().chmod(0o600)
     _set_current_profile(profile_file)
+
+    with Spinner("Fetching account identity…"):
+        _backfill_email(profile_file)
 
     success_panel(
         "Saved Antigravity profile",

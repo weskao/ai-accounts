@@ -320,9 +320,14 @@ class UsageTests(unittest.TestCase):
 class ProfileCommandTests(_HomeMixin):
     def test_save_persists_active_keyring_session(self) -> None:
         self.set_active(_creds("sub-w", "w@x.com", refresh_token="rt-live"))
-        self.assertEqual(self.quiet(ga.cmd_save, "work"), 0)
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_usage(email="w@x.com")
+        ):
+            self.assertEqual(self.quiet(ga.cmd_save, "work"), 0)
         saved = json.loads((self.home / "accounts" / "work.json").read_text())
         self.assertEqual(saved["refresh_token"], "rt-live")
+        # agy's keyring token carries no identity — email is backfilled from usage.
+        self.assertEqual(saved["email"], "w@x.com")
 
     def test_save_without_session_errors(self) -> None:
         self.assertEqual(self.quiet(ga.cmd_save, "work"), 1)
@@ -460,6 +465,8 @@ class LoginAndRefreshTests(_HomeMixin):
             ga.subprocess,
             "run",
             side_effect=AssertionError("login-switch must not wait for agy to exit"),
+        ), mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_usage(email="new@x.com")
         ):
             self.assertEqual(self.quiet(ga.cmd_login_switch, "new"), 0)
 
@@ -467,6 +474,8 @@ class LoginAndRefreshTests(_HomeMixin):
         process.terminate.assert_called_once_with()
         saved = json.loads((self.home / "accounts" / "new.json").read_text())
         self.assertEqual(saved["refresh_token"], "rt-new")
+        # Identity is backfilled from usage, so the saved profile isn't "(unknown)".
+        self.assertEqual(saved["email"], "new@x.com")
 
     def test_cancelled_login_restores_previous_session(self) -> None:
         old = _creds("sub-old", "old@x.com", refresh_token="rt-old")
