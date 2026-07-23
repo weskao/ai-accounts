@@ -398,6 +398,36 @@ class ProfileCommandTests(_HomeMixin):
         self.assertIn("ACCOUNT", text)
         self.assertIn("Wes <wes@example.com>", text)
 
+    def test_usage_shows_only_active_profile(self) -> None:
+        active = _oauth(access="at-a", refresh="rt-a")
+        self.write_profile("active", active)
+        self.write_profile("other", _oauth(access="at-b", refresh="rt-b"))
+        self.set_active(active)
+        self.mark_current("active")
+        snap = cu.UsageSnapshot(
+            cu.UsageWindow(45, 2_000_000_000, 300),
+            cu.UsageWindow(12, 2_000_000_000, 10080),
+            "Max",
+            2_000_000_000,
+            None,
+        )
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap) as fetch:
+            result, output, _ = self.capture(lambda: ca.cmd_list(only_active=True))
+        text = ca._ANSI_RE.sub("", output)
+        self.assertEqual(result, 0)
+        self.assertEqual(fetch.call_count, 1)  # only the active account is queried
+        self.assertIn("Current Claude account", text)
+        self.assertEqual(text.count("ACTIVE"), 1)
+        self.assertNotIn("other", text)
+
+    def test_usage_reports_when_no_active_profile(self) -> None:
+        self.write_profile("saved", _oauth(access="at-a", refresh="rt-a"))
+        result, output, err = self.capture(lambda: ca.cmd_list(only_active=True))
+        text = ca._ANSI_RE.sub("", output + err)
+        self.assertEqual(result, 0)
+        self.assertNotIn("PROFILE", text)  # no table rendered
+        self.assertIn("No active Claude account", text)
+
     def test_save_snapshots_identity_from_config_json(self) -> None:
         self.set_active(_oauth(access="live", refresh="rt-live"))
         (self.home / ".claude.json").write_text(

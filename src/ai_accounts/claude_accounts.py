@@ -72,6 +72,7 @@ USAGE
   claude-accounts current               Alias for `who`
   claude-accounts save <name>           Save the current login as a reusable profile
   claude-accounts list                  List profiles with usage (never refreshes tokens)
+  claude-accounts usage                 Show only the active account's usage row
   claude-accounts switch [<name>]       Switch by name; no name = interactive picker
   claude-accounts remove <name>         Delete a saved profile
   claude-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
@@ -731,7 +732,7 @@ def cmd_save(name: str) -> int:
     return _save_profile_oauth(name, oauth, _read_active_identity())
 
 
-def cmd_list(*, fetch_usage: bool = True) -> int:
+def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
@@ -745,6 +746,17 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
     # Read each profile's oauth/claims once; both the parallel fetch and the row
     # build below reuse it.
     profile_oauth = [(p, _read_profile_oauth(p) or {}) for p in profiles]
+    if only_active:
+        if active_profile is None:
+            log_yellow("⚠️  No active Claude account detected.")
+            print(
+                f"{DIM}   Save the current login with: claude-accounts save <name>{RESET}\n"
+                f"{DIM}   or activate a saved one with: claude-accounts switch <name>{RESET}",
+                file=sys.stderr,
+            )
+            return 0
+        # Filter before fetching so only the active account's usage is queried.
+        profile_oauth = [(p, o) for p, o in profile_oauth if p == active_profile]
 
     def _fetch(item: tuple[Path, dict]) -> claude_usage.UsageSnapshot:
         # Independent per account: HTTP call with that account's token, no disk
@@ -803,7 +815,10 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             }
         )
 
-    print(f"{BOLD}Saved Claude profiles{RESET}  {DIM}({len(rows)}){RESET}")
+    if only_active:
+        print(f"{BOLD}Current Claude account{RESET}")
+    else:
+        print(f"{BOLD}Saved Claude profiles{RESET}  {DIM}({len(rows)}){RESET}")
     _print_accounts_table(rows)
     return 0
 
@@ -1092,6 +1107,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_save(rest[0])
     if command == "list":
         return cmd_list()
+    if command == "usage":
+        return cmd_list(only_active=True)
     if command == "switch":
         if not rest:
             return cmd_switch_interactive()

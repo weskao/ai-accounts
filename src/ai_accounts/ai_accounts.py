@@ -32,6 +32,7 @@ _COMMANDS = frozenset(
     {
         "who",
         "current",
+        "usage",
         "save",
         "list",
         "switch",
@@ -48,6 +49,7 @@ USAGE
   ai-accounts                        Show this help (the available commands)
   ai-accounts list                   List all provider profiles (providers run in parallel)
   ai-accounts who | current          Show the active account for every provider
+  ai-accounts usage                  Show only the active account's usage row per provider
   ai-accounts refresh [<name>|--all] Refresh tokens across every provider
   ai-accounts sync                   Sync active auth back to its profile, every provider
   ai-accounts save <name>            Save the current login as <name> in every provider

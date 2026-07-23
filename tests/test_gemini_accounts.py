@@ -411,6 +411,31 @@ class ProfileCommandTests(_HomeMixin):
             self.fail("expected restored session")
         self.assertEqual(self.active["refresh_token"], "rt-a")
 
+    def test_usage_shows_only_active_profile(self) -> None:
+        active = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        self.write_profile("active", active)
+        self.write_profile("other", _creds("sub-b", "b@x.com", refresh_token="rt-b"))
+        self.set_active(active)
+        self.mark_current("active")
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_usage()
+        ) as fetch:
+            result, output, _ = self.capture(lambda: ga.cmd_list(only_active=True))
+        text = ga._ANSI_RE.sub("", output)
+        self.assertEqual(result, 0)
+        self.assertEqual(fetch.call_count, 1)  # only the active profile is activated
+        self.assertIn("Current Antigravity account", text)
+        self.assertEqual(text.count("ACTIVE"), 1)
+        self.assertNotIn("other", text)
+
+    def test_usage_reports_when_no_active_profile(self) -> None:
+        self.write_profile("saved", _creds("sub-a", "a@x.com", refresh_token="rt-a"))
+        result, output, err = self.capture(lambda: ga.cmd_list(only_active=True))
+        text = ga._ANSI_RE.sub("", output + err)
+        self.assertEqual(result, 0)
+        self.assertNotIn("PROFILE", text)  # no table rendered
+        self.assertIn("No active Antigravity account", text)
+
     def test_list_rejects_quota_from_a_different_account(self) -> None:
         original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
         self.write_profile("a", original)

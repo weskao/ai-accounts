@@ -23,6 +23,7 @@ USAGE
   grok-accounts current               Alias for `who`
   grok-accounts save <name>           Save the current login as a reusable profile
   grok-accounts list                  List saved profiles
+  grok-accounts usage                 Show only the active account (session & expiry)
   grok-accounts switch [<name>]       Switch by name; no name = interactive picker
   grok-accounts remove <name>         Delete a saved profile
   grok-accounts refresh [<name>]      Let Grok refresh the active/profile session
@@ -306,7 +307,7 @@ _TABLE_COLUMNS = [
 ]
 
 
-def cmd_list() -> int:
+def cmd_list(*, only_active: bool = False) -> int:
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
         log_yellow("⚠️  No saved Grok profiles.")
@@ -316,6 +317,16 @@ def cmd_list() -> int:
         )
         return 0
     active = _active_profile()
+    if only_active:
+        if active is None:
+            log_yellow("⚠️  No active Grok account detected.")
+            print(
+                f"{DIM}   Save the current login with: grok-accounts save <name>{RESET}\n"
+                f"{DIM}   or activate a saved one with: grok-accounts switch <name>{RESET}",
+                file=sys.stderr,
+            )
+            return 0
+        profiles = [active]
     rows = []
     for path in profiles:
         claims = _claims(_read_json(path))
@@ -338,7 +349,10 @@ def cmd_list() -> int:
             }
         )
 
-    print(f"{BOLD}Saved Grok profiles{RESET}  {DIM}({len(rows)}){RESET}")
+    if only_active:
+        print(f"{BOLD}Current Grok account{RESET}")
+    else:
+        print(f"{BOLD}Saved Grok profiles{RESET}  {DIM}({len(rows)}){RESET}")
     accounts_table(rows, _TABLE_COLUMNS)
     return 0
 
@@ -542,6 +556,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_save(rest[0])
     if command == "list":
         return cmd_list()
+    if command == "usage":
+        return cmd_list(only_active=True)
     if command == "switch":
         return cmd_switch(rest[0]) if rest else cmd_switch_interactive()
     if command == "remove" and rest:

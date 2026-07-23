@@ -4,7 +4,7 @@ import io
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -84,6 +84,33 @@ class GrokAccountsTests(unittest.TestCase):
 
         self.assertTrue(list((self.account_dir.parent / "backups").glob("auth.backup-*.json")))
         self.assertFalse(list(self.grok_home.glob("auth.backup-*.json")))
+
+    def test_usage_shows_only_active_profile(self) -> None:
+        self.assertTrue(ga._write_json(ga._auth_file(), _auth()))
+        self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(
+            ga._write_json(
+                self.account_dir / "work.json",
+                _auth("work@example.test", "principal-2"),
+            )
+        )
+        (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(ga.cmd_list(only_active=True), 0)
+        text = _ANSI_RE.sub("", output.getvalue())
+        self.assertIn("Current Grok account", text)
+        self.assertEqual(text.count("ACTIVE"), 1)
+        self.assertIn("personal", text)
+        self.assertNotIn("work", text)
+
+    def test_usage_reports_when_no_active_profile(self) -> None:
+        self.assertTrue(ga._write_json(self.account_dir / "saved.json", _auth()))
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(ga.cmd_list(only_active=True), 0)
+        self.assertNotIn("PROFILE", _ANSI_RE.sub("", out.getvalue()))  # no table
+        self.assertIn("No active Grok account", _ANSI_RE.sub("", err.getvalue()))
 
     def test_list_never_prints_tokens(self) -> None:
         self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))

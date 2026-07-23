@@ -65,6 +65,7 @@ USAGE
   agy-accounts current               Alias for `who`
   agy-accounts save <name>           Save the current login as a reusable profile
   agy-accounts list                  List saved profiles (table view)
+  agy-accounts usage                 Show only the active account's quota row
   agy-accounts switch [<name>]       Switch by name; no name = interactive picker
   agy-accounts remove <name>         Delete a saved profile
   agy-accounts refresh [<name>]      Let agy refresh a session and its quota;
@@ -710,7 +711,7 @@ def _validated_usage(
     return usage
 
 
-def cmd_list(*, fetch_usage: bool = True) -> int:
+def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
@@ -724,6 +725,18 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
     active_text = _read_active_auth_text()
     profile_claims = [(p, _read_claims(p)) for p in profiles]
     active_profile = _active_profile(active_text)
+    if only_active:
+        if active_profile is None:
+            log_yellow("⚠️  No active Antigravity account detected.")
+            print(
+                f"{DIM}   Save the current login with: agy-accounts save <name>{RESET}\n"
+                f"{DIM}   or activate a saved one with: agy-accounts switch <name>{RESET}",
+                file=sys.stderr,
+            )
+            return 0
+        # Filter before the fetch loop so only the active profile's session is
+        # activated and queried (the loop temporarily writes each profile's auth).
+        profile_claims = [(p, c) for p, c in profile_claims if p == active_profile]
 
     identity_groups: dict[str, list[Path]] = {}
     for profile_path, claims in profile_claims:
@@ -800,7 +813,10 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
     finally:
         _restore_cli_auth(restore_text)
 
-    print(f"{BOLD}Saved Antigravity profiles{RESET}  {DIM}({len(rows)}){RESET}")
+    if only_active:
+        print(f"{BOLD}Current Antigravity account{RESET}")
+    else:
+        print(f"{BOLD}Saved Antigravity profiles{RESET}  {DIM}({len(rows)}){RESET}")
     _print_accounts_table(rows)
     return 0
 
@@ -1094,6 +1110,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_save(rest[0])
     if command == "list":
         return cmd_list()
+    if command == "usage":
+        return cmd_list(only_active=True)
     if command == "switch":
         if not rest:
             return cmd_switch_interactive()

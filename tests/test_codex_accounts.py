@@ -1064,6 +1064,36 @@ class UsageRequestTests(_CodexHomeMixin):
         self.assertEqual(active_profile.read_text(), live_text)
         self.assertEqual(duplicate_profile.read_text(), duplicate_before)
 
+    def test_usage_shows_only_active_profile(self):
+        self.write_auth(_auth_payload("acct-a", "a@x.com", refresh_token="rt-a"))
+        self.write_profile("active", _auth_payload("acct-a", "a@x.com", refresh_token="rt-a"))
+        self.write_profile("other", _auth_payload("acct-b", "b@x.com", refresh_token="rt-b"))
+        live_text = json.dumps(_auth_payload("acct-a", "a@x.com", refresh_token="rt-a"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=live_text), \
+                mock.patch.object(
+                    usage_format,
+                    "fetch_usage",
+                    return_value=usage_format.UsageSnapshot(
+                        hourly=None, weekly=None, refreshed_at=None, error=None,
+                    ),
+                ) as fetch_usage:
+            rc, out, _err = self.run_capture(lambda: ca.cmd_list(only_active=True))
+        self.assertEqual(rc, 0)
+        self.assertEqual(fetch_usage.call_count, 1)  # only the active account is queried
+        text = ca._ANSI_RE.sub("", out)
+        self.assertIn("Current Codex account", text)
+        self.assertEqual(text.count("ACTIVE"), 1)
+        self.assertNotIn("other", text)
+
+    def test_usage_reports_when_no_active_profile(self):
+        self.write_profile("saved", _auth_payload("acct-a", "a@x.com", refresh_token="rt-a"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=None):
+            rc, out, err = self.run_capture(lambda: ca.cmd_list(only_active=True))
+        text = ca._ANSI_RE.sub("", out + err)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("PROFILE", text)  # no table rendered
+        self.assertIn("No active Codex account", text)
+
     def test_list_does_not_refresh_or_retry_usage(self):
         # Given: a saved profile with a refresh token that would rotate if used.
         profile = self.write_profile(

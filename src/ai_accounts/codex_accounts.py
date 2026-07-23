@@ -61,6 +61,7 @@ USAGE
   codex-accounts current               Alias for `who`
   codex-accounts save <name>           Save the current login as a reusable profile
   codex-accounts list                  List profiles with usage (never refreshes tokens)
+  codex-accounts usage                 Show only the active account's usage row
   codex-accounts switch [<name>]       Switch by name; no name = interactive picker
   codex-accounts remove <name>         Delete a saved profile
   codex-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
@@ -810,7 +811,7 @@ def cmd_save(name: str) -> int:
     return _save_profile_auth(name, auth_text)
 
 
-def cmd_list(*, fetch_usage: bool = True) -> int:
+def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
@@ -821,6 +822,17 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
     active_text = _read_active_auth_text()
     profile_claims = [(profile_path, _read_claims(profile_path)) for profile_path in profiles]
     active_profile = _active_profile(active_text)
+    if only_active:
+        if active_profile is None:
+            log_yellow("⚠️  No active Codex account detected.")
+            print(
+                f"{DIM}   Save the current login with: codex-accounts save <name>{RESET}\n"
+                f"{DIM}   or activate a saved one with: codex-accounts switch <name>{RESET}",
+                file=sys.stderr,
+            )
+            return 0
+        # Filter before fetching so only the active account's usage is queried.
+        profile_claims = [(p, c) for p, c in profile_claims if p == active_profile]
     identity_groups: dict[str, list[Path]] = {}
     for profile_path, claims in profile_claims:
         identity = _identity_key(claims)
@@ -893,7 +905,10 @@ def cmd_list(*, fetch_usage: bool = True) -> int:
             }
         )
 
-    print(f"{BOLD}Saved Codex profiles{RESET}  {DIM}({len(rows)}){RESET}")
+    if only_active:
+        print(f"{BOLD}Current Codex account{RESET}")
+    else:
+        print(f"{BOLD}Saved Codex profiles{RESET}  {DIM}({len(rows)}){RESET}")
     _print_accounts_table(rows)
     return 0
 
@@ -1200,6 +1215,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_save(rest[0])
     if command == "list":
         return cmd_list()
+    if command == "usage":
+        return cmd_list(only_active=True)
     if command == "switch":
         if not rest:
             return cmd_switch_interactive()

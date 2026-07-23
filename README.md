@@ -68,7 +68,7 @@ After install, the following commands are available on `PATH`:
 | `claude-accounts` | Manage multiple Claude Code login profiles and inspect usage |
 | `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota (macOS) |
 | `grok-accounts` | Manage multiple Grok Build CLI OAuth profiles (save / list / switch / refresh) |
-| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `who`, `refresh`, `sync`, …) to all four `*-accounts` |
+| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `usage`, `who`, `refresh`, `sync`, …) to all four `*-accounts` |
 
 ## Update
 
@@ -405,6 +405,7 @@ codex-accounts who                   # show the current logged-in account
 codex-accounts current               # alias for `who`
 codex-accounts save <name>           # save the current login as a reusable profile
 codex-accounts list                  # list saved profiles (table view)
+codex-accounts usage                 # show only the active account's usage row
 codex-accounts switch <name>         # switch to a saved profile
 codex-accounts remove <name>         # delete a saved profile
 codex-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browser, no logout);
@@ -527,6 +528,7 @@ claude-accounts who                   # show the current logged-in account
 claude-accounts current               # alias for `who`
 claude-accounts save <name>           # save the current login as a reusable profile
 claude-accounts list                  # list saved profiles with 5h/1w usage (table view)
+claude-accounts usage                 # show only the active account's usage row
 claude-accounts switch [<name>]       # switch by name; no name = interactive picker
 claude-accounts remove <name>         # delete a saved profile
 claude-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browser, no logout)
@@ -610,6 +612,7 @@ agy-accounts who                   # show the selected Antigravity account
 agy-accounts current               # alias for `who`
 agy-accounts save <name>           # save the current login as a reusable profile
 agy-accounts list                  # list profiles with agy model-family quota
+agy-accounts usage                 # show only the active account's quota row
 agy-accounts switch [<name>]       # switch by name; no name = interactive picker
 agy-accounts remove <name>         # delete a saved profile
 agy-accounts refresh [<name>]      # let agy refresh the session/quota and save rotations
@@ -733,6 +736,7 @@ grok-accounts who                   # show the current logged-in Grok account
 grok-accounts current               # alias for `who`
 grok-accounts save <name>           # save the current login as a reusable profile
 grok-accounts list                  # list saved profiles
+grok-accounts usage                 # show only the active account (session & expiry)
 grok-accounts switch [<name>]       # switch by name; no name = interactive picker
 grok-accounts remove <name>         # delete a saved profile
 grok-accounts refresh [<name>]      # let Grok refresh the active/profile session
