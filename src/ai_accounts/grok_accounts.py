@@ -82,6 +82,10 @@ def _marker_file() -> Path:
     return _account_dir() / ".current-profile"
 
 
+def _backup_dir() -> Path:
+    return _account_dir().parent / "backups"
+
+
 def _read_json(path: Path) -> JsonDict | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -344,7 +348,7 @@ def _backup_active() -> bool:
     if active is None:
         return True
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return _write_json(_auth_file().with_name(f"auth.backup-{stamp}.json"), active)
+    return _write_json(_backup_dir() / f"auth.backup-{stamp}.json", active)
 
 
 def cmd_switch(name: str) -> int:

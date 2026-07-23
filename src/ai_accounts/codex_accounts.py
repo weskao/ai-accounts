@@ -116,6 +116,10 @@ def _current_profile_marker() -> Path:
     return _account_dir() / ".current-profile"
 
 
+def _backup_dir() -> Path:
+    return _account_dir().parent / "backups"
+
+
 def _marked_profile() -> Path | None:
     marker = _current_profile_marker()
     try:
@@ -920,7 +924,8 @@ def cmd_switch(name: str) -> int:
         if outgoing_profile is not None:
             _copy_active_auth_to(outgoing_profile)
 
-        backup_path = auth_path.with_name(f"{auth_path.name}.backup")
+        backup_path = _backup_dir() / f"{auth_path.name}.backup"
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(auth_path, backup_path)
         backup_path.chmod(0o600)
 

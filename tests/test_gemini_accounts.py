@@ -143,6 +143,32 @@ class StoragePathTests(unittest.TestCase):
                 ga._auth_file(), Path("/tmp/home/.ai-accounts/antigravity/oauth_creds.json")
             )
 
+    def test_legacy_codexbar_store_migrates_with_profiles_and_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            legacy = home / ".codexbar" / "antigravity"
+            accounts = legacy / "accounts"
+            accounts.mkdir(parents=True)
+            (legacy / "oauth_creds.json").write_text("{}", encoding="utf-8")
+            (accounts / "work.json").write_text("{}", encoding="utf-8")
+            (accounts / ".current-profile").write_text("work", encoding="utf-8")
+
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.object(ga.Path, "home", return_value=home),
+                redirect_stderr(io.StringIO()),
+            ):
+                moved = ga._antigravity_dir()
+
+            self.assertEqual(moved, home / ".ai-accounts" / "antigravity")
+            self.assertTrue((moved / "oauth_creds.json").is_file())
+            self.assertTrue((moved / "accounts" / "work.json").is_file())
+            self.assertEqual(
+                (moved / "accounts" / ".current-profile").read_text(encoding="utf-8"),
+                "work",
+            )
+            self.assertFalse(legacy.exists())
+
 
 class ClaimsTests(unittest.TestCase):
     def test_claims_decode_identity_and_millisecond_expiry(self) -> None:

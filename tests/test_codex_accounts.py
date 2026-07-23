@@ -1238,7 +1238,7 @@ class SwitchStalenessTests(_CodexHomeMixin):
         with mock.patch.object(ca, "have", return_value=False):
             rc = self.run_quiet(ca.cmd_switch, "personal")
         self.assertEqual(rc, 0)
-        self.assertTrue((self.home / "auth.json.backup").exists())
+        self.assertTrue((self.home / "backups" / "auth.json.backup").exists())
 
     def test_switch_with_unmanaged_active_auth_does_not_crash(self):
         # Active auth matches no saved profile (raw `codex login`): nothing to

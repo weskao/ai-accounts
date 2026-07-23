@@ -75,6 +75,16 @@ class GrokAccountsTests(unittest.TestCase):
             (self.account_dir / ".current-profile").read_text(), "personal"
         )
 
+    def test_switch_keeps_backup_in_ai-accounts_store(self) -> None:
+        self.assertTrue(ga._write_json(ga._auth_file(), _auth("old@example.test", "old")))
+        self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
+
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(ga.cmd_switch("personal"), 0)
+
+        self.assertTrue(list((self.account_dir.parent / "backups").glob("auth.backup-*.json")))
+        self.assertFalse(list(self.grok_home.glob("auth.backup-*.json")))
+
     def test_list_never_prints_tokens(self) -> None:
         self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
         output = io.StringIO()

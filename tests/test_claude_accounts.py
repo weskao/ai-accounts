@@ -330,7 +330,14 @@ class ProfileCommandTests(_HomeMixin):
 
     def test_switch_folds_rotated_outgoing_token_into_profile(self) -> None:
         self.write_profile("old", _oauth(access="at-old", refresh="rt-old"))
-        self.write_profile("new", _oauth(access="at-new", refresh="rt-new"))
+        self.write_profile(
+            "new",
+            _oauth(
+                access="at-new",
+                refresh="rt-new",
+                expires_in_ms=30 * 24 * 3600 * 1000,
+            ),
+        )
         # Same refresh token (the match key) but a rotated access token.
         self.set_active(_oauth(access="at-rotated", refresh="rt-old"))
         self.mark_current("old")

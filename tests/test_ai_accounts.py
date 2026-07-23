@@ -31,12 +31,24 @@ def _fake(
 
 class AiAccountsTest(unittest.TestCase):
     def test_list_prints_providers_in_completion_order(self) -> None:
-        # codex is held back until both other providers have finished, so a
-        # correct implementation must print claude/agy before codex even
+        # Codex is released only after all other futures have been yielded, so a
+        # correct implementation must print claude/agy/grok before codex even
         # though codex is declared first in _TOOLS.
         codex_may_finish = threading.Event()
-        finished = []
-        lock = threading.Lock()
+        completed_yields = 0
+
+        class ReleaseCodexAfterThreeYields:
+            def __init__(self, message: str) -> None:
+                pass
+
+            def __enter__(self) -> "ReleaseCodexAfterThreeYields":
+                return self
+
+            def __exit__(self, *exc_info: object) -> None:
+                nonlocal completed_yields
+                completed_yields += 1
+                if completed_yields == 3:
+                    codex_may_finish.set()
 
         def run(module: str) -> subprocess.CompletedProcess[str]:
             if module == "ai_accounts.codex_accounts":
@@ -47,17 +59,13 @@ class AiAccountsTest(unittest.TestCase):
                 "ai_accounts.gemini_accounts": "AGY-TABLE",
                 "ai_accounts.grok_accounts": "GROK-TABLE",
             }[module]
-            result = _fake(module, table)
-            with lock:
-                finished.append(module)
-                if len(finished) == 2:
-                    codex_may_finish.set()
-            return result
+            return _fake(module, table)
 
         buf = io.StringIO()
-        with mock.patch.object(aa, "_run_list", side_effect=run):
-            with redirect_stdout(buf):
-                rc = aa.cmd_list()
+        with mock.patch.object(aa, "Spinner", ReleaseCodexAfterThreeYields):
+            with mock.patch.object(aa, "_run_list", side_effect=run):
+                with redirect_stdout(buf):
+                    rc = aa.cmd_list()
         text = buf.getvalue()
         self.assertEqual(rc, 0)
         self.assertLess(text.index("CLAUDE-TABLE"), text.index("CODEX-TABLE"))

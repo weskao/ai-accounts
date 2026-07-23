@@ -354,10 +354,10 @@ directory**:
 ```text
 $HOME/
 └── .ai-accounts/
-    ├── claude/accounts/          # claude-accounts profiles
-    ├── codex/accounts/           # codex-accounts profiles
-    ├── antigravity/accounts/     # agy-accounts profiles
-    └── grok/accounts/            # grok-accounts profiles
+    ├── claude/accounts/          # claude-accounts profiles + .current-profile
+    ├── codex/accounts/           # codex-accounts profiles + .current-profile
+    ├── antigravity/accounts/     # agy-accounts profiles + .current-profile
+    └── grok/accounts/            # grok-accounts profiles + .current-profile
 ```
 
 The path is resolved from the running user's home directory at runtime
@@ -367,11 +367,12 @@ this repository or the installed tools live — moving or reinstalling ai-accoun
 never touches the stored profiles.
 
 The location is deliberately **outside** the app dotdirs (`~/.claude`,
-`~/.codex`): if you version-control a dotdir as a dotfiles repo, the OAuth
-token snapshots that profiles contain can never end up in a commit. A store
-found at a legacy in-dotdir location (`~/.claude/accounts`,
-`~/.codex/accounts`) is moved to the central location automatically the first
-time a command touches it, with a one-line notice.
+`~/.codex`, `~/.grok`, and the old `~/.codexbar`): if you version-control a
+dotdir as a dotfiles repo, the OAuth token snapshots that profiles contain can
+never end up in a commit. Legacy stores (`~/.claude/accounts`,
+`~/.codex/accounts`, `~/.grok/accounts`, and `~/.codexbar/antigravity`) move
+to the central location automatically the first time their command runs, with
+a one-line notice. The `accounts/.current-profile` marker moves with them.
 
 Treat `~/.ai-accounts` as secrets — every `<name>.json` profile holds live auth
 tokens. Each tool's location can be overridden individually via

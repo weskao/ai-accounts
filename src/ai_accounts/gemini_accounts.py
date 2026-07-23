@@ -35,6 +35,7 @@ from ._utils import (
     log_red,
     log_yellow,
     plan_tier_color,
+    resolve_data_dir,
 )
 from .usage_format import (
     UsageWindow,
@@ -89,17 +90,17 @@ Treat that directory as secrets — saved profiles contain Google OAuth tokens.
 
 # ── paths ─────────────────────────────────────────────────────────────────
 def _antigravity_dir() -> Path:
-    return Path(
-        os.environ.get(
-            "ANTIGRAVITY_HOME", str(Path.home() / ".ai-accounts" / "antigravity")
-        )
+    return resolve_data_dir(
+        "ANTIGRAVITY_HOME",
+        Path.home() / ".ai-accounts" / "antigravity",
+        Path.home() / ".codexbar" / "antigravity",
+        label="Antigravity store",
     )
 
 
 def _account_dir() -> Path:
-    return Path(
-        os.environ.get("ANTIGRAVITY_ACCOUNT_DIR", str(_antigravity_dir() / "accounts"))
-    )
+    override = os.environ.get("ANTIGRAVITY_ACCOUNT_DIR")
+    return Path(override) if override else _antigravity_dir() / "accounts"
 
 
 def _auth_file() -> Path:

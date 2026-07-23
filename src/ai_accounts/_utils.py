@@ -221,15 +221,16 @@ def plan_tier_color(label: str, tiers: Sequence[str] = ()) -> str:
 
 # ── account-tool profile stores ──────────────────────────────────────────────
 
-def resolve_account_dir(env_var: str, default_dir: Path, legacy_dir: Path) -> Path:
-    """Resolve an account tool's profile-store directory.
+def resolve_data_dir(
+    env_var: str, default_dir: Path, legacy_dir: Path, *, label: str = "profile store"
+) -> Path:
+    """Resolve a ai-accounts-owned data directory, migrating its legacy location.
 
     Precedence: ``$<env_var>`` override → *default_dir*. The default lives
     under ``~/.ai-accounts/`` — outside the app dotdirs (``~/.claude``,
-    ``~/.codex``) — so a user who version-controls a dotdir as a dotfiles repo
-    can never accidentally commit the OAuth token snapshots profiles contain.
-    A store still at *legacy_dir* (the old in-dotdir location) is moved to
-    *default_dir* on first use, with a one-line notice.
+    ``~/.codex``) — so account snapshots and their state stay out of dotfiles
+    repositories. A store still at *legacy_dir* is moved to *default_dir* on
+    first use, with a one-line notice.
     """
     override = os.environ.get(env_var)
     if override:
@@ -237,8 +238,13 @@ def resolve_account_dir(env_var: str, default_dir: Path, legacy_dir: Path) -> Pa
     if not default_dir.exists() and legacy_dir.is_dir():
         default_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(legacy_dir), str(default_dir))
-        log_yellow(f"→ Moved profile store: {legacy_dir} → {default_dir}")
+        log_yellow(f"→ Moved {label}: {legacy_dir} → {default_dir}")
     return default_dir
+
+
+def resolve_account_dir(env_var: str, default_dir: Path, legacy_dir: Path) -> Path:
+    """Resolve an account-profile directory, migrating its legacy location."""
+    return resolve_data_dir(env_var, default_dir, legacy_dir)
 
 
 # ── dependency management ────────────────────────────────────────────────────
