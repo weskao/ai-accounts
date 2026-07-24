@@ -42,6 +42,7 @@ from .usage_format import (
     capitalize_first,
     format_unix_time_compact,
     format_usage_window,
+    print_no_active_account,
 )
 
 JsonValue: TypeAlias = (
@@ -727,12 +728,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
     active_profile = _active_profile(active_text)
     if only_active:
         if active_profile is None:
-            log_yellow("⚠️  No active Antigravity account detected.")
-            print(
-                f"{DIM}   Save the current login with: agy-accounts save <name>{RESET}\n"
-                f"{DIM}   or activate a saved one with: agy-accounts switch <name>{RESET}",
-                file=sys.stderr,
-            )
+            print_no_active_account("Antigravity", "agy-accounts")
             return 0
         # Filter before the fetch loop so only the active profile's session is
         # activated and queried (the loop temporarily writes each profile's auth).

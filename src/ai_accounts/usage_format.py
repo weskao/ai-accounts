@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Final, TypeAlias
+
+from ._utils import DIM, RESET, log_yellow
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonDict: TypeAlias = dict[str, JsonValue]
@@ -67,6 +70,16 @@ def capitalize_first(text: str | None) -> str | None:
     if not text:
         return text
     return text[:1].upper() + text[1:]
+
+
+def print_no_active_account(provider: str, command: str) -> None:
+    """Print the shared "no active account" warning + save/switch hint for a `usage` subcommand."""
+    log_yellow(f"⚠️  No active {provider} account detected.")
+    print(
+        f"{DIM}   Save the current login with: {command} save <name>{RESET}\n"
+        f"{DIM}   or activate a saved one with: {command} switch <name>{RESET}",
+        file=sys.stderr,
+    )
 
 
 def _load_json(path: Path) -> JsonDict | None:

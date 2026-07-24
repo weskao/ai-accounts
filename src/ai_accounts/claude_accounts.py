@@ -32,7 +32,12 @@ from pathlib import Path
 from typing import Final
 
 from . import claude_usage
-from .usage_format import capitalize_first, format_unix_time_compact, format_usage_window
+from .usage_format import (
+    capitalize_first,
+    format_unix_time_compact,
+    format_usage_window,
+    print_no_active_account,
+)
 from ._present import (
     _ANSI_RE as _ANSI_RE,
     accounts_table,
@@ -748,12 +753,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
     profile_oauth = [(p, _read_profile_oauth(p) or {}) for p in profiles]
     if only_active:
         if active_profile is None:
-            log_yellow("⚠️  No active Claude account detected.")
-            print(
-                f"{DIM}   Save the current login with: claude-accounts save <name>{RESET}\n"
-                f"{DIM}   or activate a saved one with: claude-accounts switch <name>{RESET}",
-                file=sys.stderr,
-            )
+            print_no_active_account("Claude", "claude-accounts")
             return 0
         # Filter before fetching so only the active account's usage is queried.
         profile_oauth = [(p, o) for p, o in profile_oauth if p == active_profile]

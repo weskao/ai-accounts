@@ -13,6 +13,7 @@ from typing import Any
 
 from ._present import accounts_table, choose_profile, ok, panel, success_panel
 from ._utils import BOLD, DIM, GREEN, RED, RESET, YELLOW, log_red, log_yellow, resolve_account_dir
+from .usage_format import print_no_active_account
 
 JsonDict = dict[str, Any]
 
@@ -319,12 +320,7 @@ def cmd_list(*, only_active: bool = False) -> int:
     active = _active_profile()
     if only_active:
         if active is None:
-            log_yellow("⚠️  No active Grok account detected.")
-            print(
-                f"{DIM}   Save the current login with: grok-accounts save <name>{RESET}\n"
-                f"{DIM}   or activate a saved one with: grok-accounts switch <name>{RESET}",
-                file=sys.stderr,
-            )
+            print_no_active_account("Grok", "grok-accounts")
             return 0
         profiles = [active]
     rows = []

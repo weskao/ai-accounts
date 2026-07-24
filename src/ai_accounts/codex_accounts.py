@@ -824,12 +824,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
     active_profile = _active_profile(active_text)
     if only_active:
         if active_profile is None:
-            log_yellow("⚠️  No active Codex account detected.")
-            print(
-                f"{DIM}   Save the current login with: codex-accounts save <name>{RESET}\n"
-                f"{DIM}   or activate a saved one with: codex-accounts switch <name>{RESET}",
-                file=sys.stderr,
-            )
+            usage_format.print_no_active_account("Codex", "codex-accounts")
             return 0
         # Filter before fetching so only the active account's usage is queried.
         profile_claims = [(p, c) for p, c in profile_claims if p == active_profile]
