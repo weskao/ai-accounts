@@ -1,3 +1,24 @@
+## [2.3.0] - 2026-07-24
+
+### 🚀 Features
+
+- **towebp:** Add quality flag for conversion
+- **ai-accounts:** Add usage command for active account only
+
+### 🐛 Bug Fixes
+
+- **agy:** Save login after keyring update
+- **login-switch:** Reject ide-restored session, add timeout
+- **ai-accounts:** Centralize profile storage
+- **agy-accounts:** Backfill email so save/login-switch show account
+
+### 🚜 Refactor
+
+- **ai-accounts:** Dedup no-active-account warning
+
+### ⚙️ Miscellaneous Tasks
+
+- Ignore .omo directory
 ## [2.2.0] - 2026-07-21
 
 ### 🚀 Features
@@ -29,6 +50,10 @@
 ### 🧪 Testing
 
 - **present:** Sentinel-leak and shared-grammar coverage across account tools
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 2.2.0
 ## [2.1.0] - 2026-07-20
 
 ### 🚀 Features
