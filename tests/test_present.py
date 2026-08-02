@@ -357,3 +357,21 @@ class TableGrammarTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VisibleLenWideCharTests(unittest.TestCase):
+    def test_cjk_cells_keep_table_borders_aligned(self):
+        rows = [
+            {"account": "測試 <user@example.com>"},
+            {"account": "Test <user@example.com>"},
+        ]
+        out = io.StringIO()
+        with redirect_stdout(out):
+            present.accounts_table(rows, [("ACCOUNT", "account")])
+        widths = {
+            present.visible_len(line) for line in out.getvalue().splitlines()
+        }
+        self.assertEqual(len(widths), 1, out.getvalue())
+
+    def test_combining_marks_add_no_width(self):
+        self.assertEqual(present.visible_len("é"), 1)

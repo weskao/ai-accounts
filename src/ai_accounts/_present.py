@@ -18,6 +18,7 @@ formatting/alignment (shared with the non-interactive usage modules) lives in
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Sequence
 
 from . import usage_format
@@ -30,8 +31,19 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 
 def visible_len(s: str) -> int:
-    """Printable width of ``s``, ignoring embedded ANSI color escapes."""
-    return len(_ANSI_RE.sub("", s))
+    """Terminal column width of ``s``, ignoring embedded ANSI color escapes.
+
+    Counts columns, not characters: East-Asian Wide/Fullwidth glyphs (CJK,
+    fullwidth punctuation) occupy two columns and combining marks none, so a
+    cell holding e.g. a Chinese name pads correctly instead of shifting the
+    table borders right.
+    """
+    width = 0
+    for char in _ANSI_RE.sub("", s):
+        if unicodedata.combining(char):
+            continue
+        width += 2 if unicodedata.east_asian_width(char) in "WF" else 1
+    return width
 
 
 def panel(title: str, lines: list[str], accent: str = CYAN, width: int = 64) -> None:
