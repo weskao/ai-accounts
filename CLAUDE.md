@@ -34,6 +34,12 @@ Before writing any new helper, **first check [`src/ai-accounts/_utils.py`](src/a
 - **Usage / table formatting**: [`usage_format.py`](src/ai-accounts/usage_format.py) (`UsageWindow`, `format_usage_window`, `align_usage_cells`, `format_unix_time_compact`) is the shared formatting module for **all three** account tools — imported by `gemini_accounts.py`, `claude_accounts.py`, and `claude_usage.py`. (Formerly `codex_usage.py`: codex-accounts came first and the others built on it; renamed to a provider-neutral name to match its shared role.) `gemini_usage.py`/`claude_usage.py` hold only per-provider `fetch_usage` API logic, not formatting — don't duplicate these helpers there.
 - **Profile store**: each tool keeps profiles as `<name>.json` files plus a `.current-profile` marker under the central `~/.ai-accounts/<app>/accounts/` dir (override via `CODEX_ACCOUNT_DIR` / `CLAUDE_ACCOUNT_DIR` / `ANTIGRAVITY_ACCOUNT_DIR`), resolved through `_utils.resolve_account_dir` — kept out of the app dotdirs so dotfiles repos never swallow token snapshots.
 
+## Test fixtures: no real data
+
+Tests must use placeholder values only — never real emails, names, account IDs, or other
+data copied from a user's terminal output, screenshots, or live accounts. Use
+`user@example.com`, generic names ("Test"/"測試"), and made-up IDs instead.
+
 ## Commands
 
 This project is managed with [`uv`](https://docs.astral.sh/uv/) (see `uv.lock`).
