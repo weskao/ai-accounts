@@ -41,6 +41,7 @@ from .usage_format import (
 from ._present import (
     _ANSI_RE as _ANSI_RE,
     accounts_table,
+    choose_and_run,
     choose_profile,
     ok,
     panel,
@@ -55,6 +56,7 @@ from ._utils import (
     RESET,
     YELLOW,
     Spinner,
+    email_local_part,
     ensure_tool,
     fetch_parallel,
     have,
@@ -75,17 +77,18 @@ HELP = """claude-accounts — manage multiple Claude Code login profiles
 USAGE
   claude-accounts who                   Show the current logged-in Claude account
   claude-accounts current               Alias for `who`
-  claude-accounts save <name>           Save the current login as a reusable profile
+  claude-accounts save [<name>]         Save the current login as a reusable profile;
+                                        no name = derive one from the active account's email
   claude-accounts list                  List profiles with usage (never refreshes tokens)
   claude-accounts usage                 Show only the active account's usage row
   claude-accounts switch [<name>]       Switch by name; no name = interactive picker
-  claude-accounts remove <name>         Delete a saved profile
+  claude-accounts remove [<name>]       Delete by name; no name = interactive picker
   claude-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
                                         no name = refresh active auth + sync it back
   claude-accounts refresh --all         Refresh every saved profile
   claude-accounts sync                  Copy the active auth back to its matching profile
   claude-accounts login-switch <name>   `claude auth login` + save as <name>
-  claude-accounts -h | --help           Show this help
+  claude-accounts -h | --help | help    Show this help
 
 EXAMPLES
   claude-accounts login-switch personal
@@ -726,7 +729,7 @@ def _save_profile_oauth(name: str, oauth: dict, identity: dict | None = None) ->
     return 0
 
 
-def cmd_save(name: str) -> int:
+def cmd_save(name: str | None = None) -> int:
     oauth = _read_active_oauth()
     if oauth is None:
         log_red(f"❌ No Claude credentials found: {_creds_file()}")
@@ -734,7 +737,17 @@ def cmd_save(name: str) -> int:
         return 1
     # The user is already running as this account, so ~/.claude.json's identity
     # provably matches — the one moment its email/name can be trusted outright.
-    return _save_profile_oauth(name, oauth, _read_active_identity())
+    identity = _read_active_identity()
+    if name is None:
+        email = identity.get("email") if identity else None
+        if not isinstance(email, str) or not email:
+            log_red(
+                "❌ Could not derive a name from the active account (no email found) "
+                "— pass a name explicitly."
+            )
+            return 1
+        name = email_local_part(email)
+    return _save_profile_oauth(name, oauth, identity)
 
 
 def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
@@ -906,6 +919,15 @@ def cmd_remove(name: str) -> int:
         _current_profile_marker().unlink(missing_ok=True)
     ok("Removed Claude profile", name, bold=False)
     return 0
+
+
+def cmd_remove_interactive() -> int:
+    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
+    if not profiles:
+        log_yellow("⚠️  No saved Claude profiles available to remove.")
+        return 1
+    items = [(profile.stem, _plan_label(_read_claims(profile))) for profile in profiles]
+    return choose_and_run("a Claude", items, cmd_remove, cancel_message="Remove cancelled.")
 
 
 def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, str | None]:
@@ -1092,7 +1114,7 @@ def _restore_active_oauth(oauth: dict | None) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] in ("-h", "--help"):
+    if not argv or argv[0] in ("-h", "--help", "help"):
         print(HELP)
         return 0
 
@@ -1101,10 +1123,7 @@ def main(argv: list[str] | None = None) -> int:
     if command in ("who", "current"):
         return cmd_who()
     if command == "save":
-        if not rest:
-            log_red("Usage: claude-accounts save <profile_name>")
-            return 1
-        return cmd_save(rest[0])
+        return cmd_save(rest[0] if rest else None)
     if command == "list":
         return cmd_list()
     if command == "usage":
@@ -1115,8 +1134,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_switch(rest[0])
     if command == "remove":
         if not rest:
-            log_red("Usage: claude-accounts remove <profile_name>")
-            return 1
+            return cmd_remove_interactive()
         return cmd_remove(rest[0])
     if command == "refresh":
         return cmd_refresh(rest[0] if rest else None)

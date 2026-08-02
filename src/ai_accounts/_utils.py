@@ -247,6 +247,12 @@ def resolve_account_dir(env_var: str, default_dir: Path, legacy_dir: Path) -> Pa
     return resolve_data_dir(env_var, default_dir, legacy_dir)
 
 
+def email_local_part(email: str) -> str:
+    """The part of an email address before ``@`` (used as a display fallback
+    when a profile has no name/label)."""
+    return email.split("@", 1)[0]
+
+
 # ── dependency management ────────────────────────────────────────────────────
 
 # Per-platform install instructions for the external binaries ai-accounts shells

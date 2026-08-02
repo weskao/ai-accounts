@@ -403,16 +403,18 @@ tokens — treat that directory as secrets.
 ```sh
 codex-accounts who                   # show the current logged-in account
 codex-accounts current               # alias for `who`
-codex-accounts save <name>           # save the current login as a reusable profile
+codex-accounts save [<name>]         # save the current login as a reusable profile;
+                                     # no name = derive from the active account's email
 codex-accounts list                  # list saved profiles (table view)
 codex-accounts usage                 # show only the active account's usage row
 codex-accounts switch <name>         # switch to a saved profile
-codex-accounts remove <name>         # delete a saved profile
+codex-accounts remove [<name>]       # delete a saved profile; no name = interactive picker
 codex-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browser, no logout);
                                      # no name = refresh the active auth + sync it back
 codex-accounts refresh --all         # renew every saved profile in one run
 codex-accounts sync                  # copy the active auth back to its matching profile
 codex-accounts login-switch <name>   # codex logout + codex login + save as <name>
+codex-accounts -h | --help | help    # show this help
 ```
 
 ### codex-accounts First-time setup
@@ -526,15 +528,17 @@ account identity.
 ```sh
 claude-accounts who                   # show the current logged-in account
 claude-accounts current               # alias for `who`
-claude-accounts save <name>           # save the current login as a reusable profile
+claude-accounts save [<name>]         # save the current login as a reusable profile;
+                                       # no name = derive one from the active account's email
 claude-accounts list                  # list saved profiles with 5h/1w usage (table view)
 claude-accounts usage                 # show only the active account's usage row
 claude-accounts switch [<name>]       # switch by name; no name = interactive picker
-claude-accounts remove <name>         # delete a saved profile
+claude-accounts remove [<name>]       # delete by name; no name = interactive picker
 claude-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browser, no logout)
 claude-accounts refresh --all         # renew every saved profile in one run
 claude-accounts sync                  # copy the active auth back to its matching profile
 claude-accounts login-switch <name>   # `claude auth login` + save as <name>
+claude-accounts -h | --help | help    # show this help
 ```
 
 ### claude-accounts First-time setup
@@ -610,15 +614,17 @@ one profile at a time — not a missed optimization but a hard constraint of how
 ```sh
 agy-accounts who                   # show the selected Antigravity account
 agy-accounts current               # alias for `who`
-agy-accounts save <name>           # save the current login as a reusable profile
+agy-accounts save [<name>]         # save the current login as a reusable profile;
+                                   # no name = derive from the active account's email
 agy-accounts list                  # list profiles with agy model-family quota
 agy-accounts usage                 # show only the active account's quota row
 agy-accounts switch [<name>]       # switch by name; no name = interactive picker
-agy-accounts remove <name>         # delete a saved profile
+agy-accounts remove [<name>]       # delete a saved profile; no name = interactive picker
 agy-accounts refresh [<name>]      # let agy refresh the session/quota and save rotations
 agy-accounts refresh --all         # refresh every saved profile through agy
 agy-accounts sync                  # copy the active Keychain session to its profile
 agy-accounts login-switch <name>   # official agy browser login + save as <name>
+agy-accounts -h | --help | help    # show this help
 ```
 
 ### agy-accounts First-time setup
@@ -734,15 +740,17 @@ directory. Tokens are never printed.
 ```sh
 grok-accounts who                   # show the current logged-in Grok account
 grok-accounts current               # alias for `who`
-grok-accounts save <name>           # save the current login as a reusable profile
+grok-accounts save [<name>]         # save the current login as a reusable profile;
+                                    # no name = derive from the active account's email
 grok-accounts list                  # list saved profiles
 grok-accounts usage                 # show only the active account (session & expiry)
 grok-accounts switch [<name>]       # switch by name; no name = interactive picker
-grok-accounts remove <name>         # delete a saved profile
+grok-accounts remove [<name>]       # delete a saved profile; no name = interactive picker
 grok-accounts refresh [<name>]      # let Grok refresh the active/profile session
 grok-accounts refresh --all         # refresh every saved profile through Grok
 grok-accounts sync                  # copy the active auth back to its matching profile
 grok-accounts login-switch <name>   # fresh browser login + save as <name>
+grok-accounts -h | --help | help    # show this help
 ```
 
 ### grok-accounts First-time setup
@@ -819,11 +827,16 @@ ai-accounts list                   List all provider profiles (providers run in 
 ai-accounts who | current          Show the active account for every provider
 ai-accounts refresh [<name>|--all] Refresh tokens across every provider
 ai-accounts sync                   Sync active auth back to its profile, every provider
-ai-accounts save <name>            Save the current login as <name> in every provider
+ai-accounts save [<name>]          Save the current login in every provider;
+                                    no name = each provider derives its own name from
+                                    its own active account's email (may differ per
+                                    provider if they're logged into different accounts —
+                                    intentional forwarding behavior, not a bug)
 ai-accounts switch [<name>]        Switch profile in every provider (interactive, one at a time)
-ai-accounts remove <name>          Remove profile <name> from every provider
+ai-accounts remove [<name>]        Remove profile in every provider; no name = interactive
+                                    picker for each provider in turn
 ai-accounts login-switch <name>    Fresh login + save as <name>, every provider (interactive)
-ai-accounts -h | --help            Show this help
+ai-accounts -h | --help | help     Show this help
 ```
 
 Bare `ai-accounts` (no arguments) prints this help. `list` runs the four

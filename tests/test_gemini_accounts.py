@@ -467,6 +467,68 @@ class ProfileCommandTests(_HomeMixin):
         self.assertEqual(merged["refresh_token"], "rt-live")
         self.assertEqual(merged["id_token"], saved["id_token"])
 
+    def test_save_no_args_derives_name_from_email_with_one_fetch(self) -> None:
+        self.set_active(_creds("sub-w", "person@example.com", refresh_token="rt-live"))
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_usage(email="person@example.com")
+        ) as fetch:
+            self.assertEqual(self.quiet(ga.cmd_save), 0)
+        # The name lookup and the email backfill share the single RPC.
+        self.assertEqual(fetch.call_count, 1)
+        saved = json.loads((self.home / "accounts" / "person.json").read_text())
+        self.assertEqual(saved["refresh_token"], "rt-live")
+        self.assertEqual(saved["email"], "person@example.com")
+
+    def test_save_no_args_without_email_creates_no_profile(self) -> None:
+        self.set_active(_creds("sub-w", "person@example.com", refresh_token="rt-live"))
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_usage(email="")
+        ):
+            result, _, err = self.capture(ga.cmd_save)
+        self.assertEqual(result, 1)
+        self.assertIn("Could not derive a name", ga._ANSI_RE.sub("", err))
+        self.assertEqual(list((self.home / "accounts").glob("*.json")), [])
+
+    def test_save_with_name_still_fetches_exactly_once(self) -> None:
+        self.set_active(_creds("sub-w", "w@x.com", refresh_token="rt-live"))
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_usage(email="w@x.com")
+        ) as fetch:
+            self.assertEqual(self.quiet(ga.cmd_save, "work"), 0)
+        # No pre-fetch for the named case: only the post-write backfill runs.
+        self.assertEqual(fetch.call_count, 1)
+        self.assertTrue((self.home / "accounts" / "work.json").is_file())
+
+    def test_remove_no_args_opens_picker_over_all_profiles(self) -> None:
+        self.write_profile("personal", _creds("sub-p", "personal@example.com"))
+        self.write_profile("work", _creds("sub-w", "work@example.com"))
+        with mock.patch("builtins.input", return_value="2"):
+            result, output, _ = self.capture(ga.cmd_remove_interactive)
+        text = ga._ANSI_RE.sub("", output)
+        self.assertEqual(result, 0)
+        self.assertIn("1) personal", text)
+        self.assertIn("2) work", text)
+        self.assertFalse((self.home / "accounts" / "work.json").exists())
+        self.assertTrue((self.home / "accounts" / "personal.json").exists())
+
+    def test_remove_no_args_cancel_keeps_every_profile(self) -> None:
+        self.write_profile("personal", _creds("sub-p", "personal@example.com"))
+        with mock.patch("builtins.input", side_effect=EOFError):
+            self.assertEqual(self.quiet(ga.cmd_remove_interactive), 1)
+        self.assertTrue((self.home / "accounts" / "personal.json").exists())
+
+    def test_remove_no_args_reports_when_no_saved_profiles(self) -> None:
+        result, _, err = self.capture(ga.cmd_remove_interactive)
+        self.assertEqual(result, 1)
+        self.assertIn("No saved Antigravity profiles", ga._ANSI_RE.sub("", err))
+
+    def test_help_alias_prints_help(self) -> None:
+        result, output, _ = self.capture(lambda: ga.main(["help"]))
+        self.assertEqual(result, 0)
+        self.assertIn("agy-accounts save [<name>]", output)
+        self.assertIn("agy-accounts remove [<name>]", output)
+        self.assertIn("-h | --help | help", output)
+
     def test_remove_current_profile_clears_marker(self) -> None:
         self.write_profile("work", _creds("sub", "a@x.com"))
         self.mark_current("work")

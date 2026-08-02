@@ -295,6 +295,21 @@ class PickerGrammarTests(unittest.TestCase):
                 self.assertIn("Switch cancelled.", clean)
                 self.assertEqual(rc, 1)
 
+    def test_remove_picker_cancel_uses_remove_wording_not_switch(self) -> None:
+        """cmd_remove_interactive shares choose_profile/choose_and_run with switch —
+        it must print its own "Remove cancelled." on Ctrl-C, not switch's wording."""
+        for label, module, setup in _PICKER_CASES:
+            with self.subTest(tool=label), tempfile.TemporaryDirectory() as tmp, \
+                    mock.patch.dict(os.environ, {}, clear=False):
+                setup(Path(tmp))
+                with mock.patch("builtins.input", side_effect=KeyboardInterrupt):
+                    rc, text = _run(module.cmd_remove_interactive)
+                clean = present._ANSI_RE.sub("", text)
+                self.assertIn(f"Choose {label} profile:", clean)
+                self.assertIn("Remove cancelled.", clean)
+                self.assertNotIn("Switch cancelled.", clean)
+                self.assertEqual(rc, 1)
+
 
 class OkGrammarTests(unittest.TestCase):
     """(c) every success line starts with the shared '✅ ' + GREEN prefix."""

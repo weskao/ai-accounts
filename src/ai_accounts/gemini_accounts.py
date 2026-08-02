@@ -16,6 +16,7 @@ from . import gemini_usage
 from ._present import (
     _ANSI_RE as _ANSI_RE,
     accounts_table,
+    choose_and_run,
     choose_profile,
     ok,
     panel,
@@ -31,6 +32,7 @@ from ._utils import (
     RESET,
     YELLOW,
     Spinner,
+    email_local_part,
     ensure_tool,
     log_red,
     log_yellow,
@@ -64,17 +66,19 @@ PLATFORM
 USAGE
   agy-accounts who                   Show the selected Antigravity account
   agy-accounts current               Alias for `who`
-  agy-accounts save <name>           Save the current login as a reusable profile
+  agy-accounts save [<name>]         Save the current login as a reusable profile;
+                                     no name = derive it from the active account's
+                                     email (needs one quota lookup)
   agy-accounts list                  List saved profiles (table view)
   agy-accounts usage                 Show only the active account's quota row
   agy-accounts switch [<name>]       Switch by name; no name = interactive picker
-  agy-accounts remove <name>         Delete a saved profile
+  agy-accounts remove [<name>]       Delete by name; no name = interactive picker
   agy-accounts refresh [<name>]      Let agy refresh a session and its quota;
                                      no name = refresh active session + sync it back
   agy-accounts refresh --all         Refresh every saved profile
   agy-accounts sync                  Copy the active auth back to its matching profile
   agy-accounts login-switch <name>   Antigravity Google login + save as <name>
-  agy-accounts -h | --help           Show this help
+  agy-accounts -h | --help | help    Show this help
 
 EXAMPLES
   agy-accounts login-switch personal
@@ -82,6 +86,8 @@ EXAMPLES
   agy-accounts list
   agy-accounts switch
   agy-accounts switch personal
+  agy-accounts save
+  agy-accounts remove
   agy-accounts refresh --all
   agy-accounts who
 
@@ -642,29 +648,34 @@ def cmd_who() -> int:
     return 0
 
 
-def _backfill_email(profile_file: Path) -> None:
+def _backfill_email(profile_file: Path, email: str | None = None) -> None:
     """agy's keyring token carries no id_token or email, so a freshly saved
     profile has no identity — the panel/table would show "(unknown)". Email only
     ever comes from the usage RPC (the same source `list` and `refresh` use);
     fetch it now and write it into the profile. Best-effort: a transient fetch
-    failure just leaves the email to be backfilled on the next list/refresh."""
-    usage = gemini_usage.fetch_usage(timeout=8)
-    if not usage.email:
+    failure just leaves the email to be backfilled on the next list/refresh.
+
+    ``email`` short-circuits that fetch for callers that already know it —
+    name-less ``save`` has to look the email up *before* it can pick a filename,
+    and must not pay for the same RPC twice."""
+    if not email:
+        email = gemini_usage.fetch_usage(timeout=8).email
+    if not email:
         return
     try:
         saved = json.loads(profile_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
-    if not isinstance(saved, dict) or saved.get("email") == usage.email:
+    if not isinstance(saved, dict) or saved.get("email") == email:
         return
-    saved["email"] = usage.email
+    saved["email"] = email
     text = json.dumps(saved, indent=2) + "\n"
     for path in (profile_file, _auth_file()):
         path.write_text(text, encoding="utf-8")
         path.chmod(0o600)
 
 
-def _save_profile_auth(name: str, auth_text: str) -> int:
+def _save_profile_auth(name: str, auth_text: str, known_email: str | None = None) -> int:
     profile_file = _profile_file(name)
     if profile_file is None:
         return 1
@@ -679,8 +690,10 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     _auth_file().chmod(0o600)
     _set_current_profile(profile_file)
 
-    with Spinner("Fetching account identity…"):
-        _backfill_email(profile_file)
+    # Name-less `save` already paid for the identity lookup; skip both the second
+    # RPC and the spinner that would advertise one.
+    with nullcontext() if known_email else Spinner("Fetching account identity…"):
+        _backfill_email(profile_file, known_email)
 
     success_panel(
         "Saved Antigravity profile",
@@ -692,13 +705,28 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     return 0
 
 
-def cmd_save(name: str) -> int:
+def cmd_save(name: str | None = None) -> int:
     auth_text = _read_active_auth_text()
     if auth_text is None:
         log_red(f"❌ No Antigravity auth file found: {_auth_file()}")
         log_yellow("   Run: agy-accounts login-switch <profile_name>")
         return 1
-    return _save_profile_auth(name, auth_text)
+    known_email: str | None = None
+    if name is None:
+        # Unlike the other providers, agy's session carries no email, so the
+        # filename can only come from the usage RPC — fetch before writing
+        # anything (a failed lookup must leave no half-named profile behind) and
+        # hand the result to _save_profile_auth so the backfill doesn't re-fetch.
+        with Spinner("Fetching account identity…"):
+            known_email = gemini_usage.fetch_usage(timeout=8).email
+        if not known_email:
+            log_red(
+                "❌ Could not derive a name from the active account (no email found) "
+                "-- pass a name explicitly."
+            )
+            return 1
+        name = email_local_part(known_email)
+    return _save_profile_auth(name, auth_text, known_email)
 
 
 def _validated_usage(
@@ -875,6 +903,20 @@ def cmd_remove(name: str) -> int:
         _current_profile_marker().unlink(missing_ok=True)
     ok("Removed Antigravity profile", name, bold=False)
     return 0
+
+
+def cmd_remove_interactive() -> int:
+    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
+    if not profiles:
+        log_yellow("⚠️  No saved Antigravity profiles available to remove.")
+        return 1
+
+    return choose_and_run(
+        "an Antigravity",
+        [(profile.stem, _identity_label(_read_claims(profile))) for profile in profiles],
+        cmd_remove,
+        cancel_message="Remove cancelled.",
+    )
 
 
 def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, str | None]:
@@ -1086,7 +1128,7 @@ def cmd_login_switch(name: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] in ("-h", "--help"):
+    if not argv or argv[0] in ("-h", "--help", "help"):
         print(HELP)
         return 0
 
@@ -1100,10 +1142,7 @@ def main(argv: list[str] | None = None) -> int:
     if command in ("who", "current"):
         return cmd_who()
     if command == "save":
-        if not rest:
-            log_red("Usage: agy-accounts save <profile_name>")
-            return 1
-        return cmd_save(rest[0])
+        return cmd_save(rest[0] if rest else None)
     if command == "list":
         return cmd_list()
     if command == "usage":
@@ -1113,10 +1152,7 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_switch_interactive()
         return cmd_switch(rest[0])
     if command == "remove":
-        if not rest:
-            log_red("Usage: agy-accounts remove <profile_name>")
-            return 1
-        return cmd_remove(rest[0])
+        return cmd_remove(rest[0]) if rest else cmd_remove_interactive()
     if command == "refresh":
         return cmd_refresh(rest[0] if rest else None)
     if command == "sync":

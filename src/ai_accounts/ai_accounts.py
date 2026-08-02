@@ -52,11 +52,16 @@ USAGE
   ai-accounts usage                  Show only the active account's usage row per provider
   ai-accounts refresh [<name>|--all] Refresh tokens across every provider
   ai-accounts sync                   Sync active auth back to its profile, every provider
-  ai-accounts save <name>            Save the current login as <name> in every provider
+  ai-accounts save [<name>]          Save the current login in every provider;
+                                      no name = each provider derives its own name from
+                                      its own active account's email (may differ per
+                                      provider if they're logged into different accounts —
+                                      intentional forwarding behavior, not a bug)
   ai-accounts switch [<name>]        Switch profile in every provider (interactive, one at a time)
-  ai-accounts remove <name>          Remove profile <name> from every provider
+  ai-accounts remove [<name>]        Remove profile in every provider; no name = interactive
+                                      picker for each provider in turn
   ai-accounts login-switch <name>    Fresh login + save as <name>, every provider (interactive)
-  ai-accounts -h | --help            Show this help
+  ai-accounts -h | --help | help     Show this help
 
 Each command is forwarded to codex-accounts, claude-accounts, agy-accounts, and grok-accounts.
 `list` runs them concurrently and prints each table as soon as it finishes
@@ -133,7 +138,7 @@ def cmd_forward(argv: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] in ("-h", "--help"):
+    if not argv or argv[0] in ("-h", "--help", "help"):
         print(HELP)
         return 0
 

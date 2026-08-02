@@ -451,6 +451,48 @@ class ProfileCommandTests(_HomeMixin):
         self.assertEqual(self.quiet(ca.cmd_sync), 0)
         self.assertEqual(ca._read_profile_oauth(profile)["accessToken"], "at-live")
 
+    def test_save_no_args_derives_name_from_active_email(self) -> None:
+        self.set_active(_oauth(access="live", refresh="rt-live"))
+        (self.home / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": "user@example.com", "displayName": "User"}}),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.quiet(ca.cmd_save), 0)
+        self.assertTrue((self.home / "accounts" / "user.json").is_file())
+        self.assertEqual((self.home / "accounts" / ".current-profile").read_text(), "user")
+
+    def test_save_no_args_without_email_fails_with_no_profile_created(self) -> None:
+        self.set_active(_oauth(access="live", refresh="rt-live"))
+        # No ~/.claude.json identity at all — no email to derive a name from.
+        result, _out, err = self.capture(ca.cmd_save)
+        self.assertEqual(result, 1)
+        self.assertIn("Could not derive a name", err)
+        self.assertIn("pass a name explicitly", err)
+        self.assertEqual(list((self.home / "accounts").glob("*.json")), [])
+
+    def test_remove_interactive_picker_removes_selected_profile(self) -> None:
+        self.write_profile("work", _oauth())
+        self.write_profile("personal", _oauth())
+        # Profiles are sorted alphabetically ("personal", "work"), so "1" is personal.
+        with mock.patch("builtins.input", return_value="1"):
+            result, output, _err = self.capture(ca.cmd_remove_interactive)
+        text = ca._ANSI_RE.sub("", output)
+        self.assertEqual(result, 0)
+        self.assertIn("work", text)
+        self.assertIn("personal", text)
+        self.assertFalse((self.home / "accounts" / "personal.json").exists())
+        self.assertTrue((self.home / "accounts" / "work.json").exists())
+
+    def test_remove_interactive_with_no_saved_profiles(self) -> None:
+        result, _out, err = self.capture(ca.cmd_remove_interactive)
+        self.assertEqual(result, 1)
+        self.assertIn("No saved Claude profiles", err)
+
+    def test_help_alias_prints_help(self) -> None:
+        result, output, _err = self.capture(lambda: ca.main(["help"]))
+        self.assertEqual(result, 0)
+        self.assertIn("USAGE", output)
+
 
 class RefreshTests(_HomeMixin):
     def test_refresh_profile_rotates_and_saves_tokens(self) -> None:

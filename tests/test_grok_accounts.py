@@ -197,6 +197,102 @@ class GrokAccountsTests(unittest.TestCase):
         self.assertIn("(synced back to profile: personal)", text)
         self.assertIn("Current Auth Claims", text)
 
+    def test_remove_no_args_opens_interactive_picker_and_removes(self) -> None:
+        self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(
+            ga._write_json(
+                self.account_dir / "work.json",
+                _auth("work@example.test", "principal-2"),
+            )
+        )
+
+        with mock.patch("builtins.input", return_value="2"):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = ga.cmd_remove_interactive()
+
+        text = _ANSI_RE.sub("", out.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertIn("1) personal", text)
+        self.assertIn("2) work", text)
+        self.assertFalse((self.account_dir / "work.json").is_file())
+        self.assertTrue((self.account_dir / "personal.json").is_file())
+
+    def test_remove_no_args_cancel_leaves_all_profiles_on_disk(self) -> None:
+        self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(
+            ga._write_json(
+                self.account_dir / "work.json",
+                _auth("work@example.test", "principal-2"),
+            )
+        )
+
+        with mock.patch("builtins.input", side_effect=EOFError):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = ga.cmd_remove_interactive()
+
+        self.assertEqual(rc, 1)
+        self.assertTrue((self.account_dir / "personal.json").is_file())
+        self.assertTrue((self.account_dir / "work.json").is_file())
+
+    def test_remove_no_args_reports_when_no_saved_profiles(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = ga.cmd_remove_interactive()
+
+        self.assertEqual(rc, 1)
+        self.assertIn("No saved Grok profiles.", _ANSI_RE.sub("", err.getvalue()))
+
+    def test_main_dispatches_remove_no_args_to_interactive_picker(self) -> None:
+        with mock.patch.object(ga, "cmd_remove_interactive", return_value=0) as interactive:
+            rc = ga.main(["remove"])
+
+        self.assertEqual(rc, 0)
+        interactive.assert_called_once_with()
+
+    def test_save_no_args_derives_name_from_email(self) -> None:
+        self.assertTrue(ga._write_json(ga._auth_file(), _auth()))
+        with redirect_stdout(io.StringIO()):
+            rc = ga.main(["save"])
+
+        self.assertEqual(rc, 0)
+        self.assertTrue((self.account_dir / "person.json").is_file())
+
+    def test_save_no_args_fails_on_missing_email_sentinel(self) -> None:
+        payload = _auth()
+        del payload["https://auth.x.ai::client"]["email"]
+        self.assertTrue(ga._write_json(ga._auth_file(), payload))
+        self.assertEqual(ga._claims(payload)["email"], "—")
+
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = ga.cmd_save(None)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("No valid Grok OAuth login found", _ANSI_RE.sub("", err.getvalue()))
+        self.assertFalse(list(self.account_dir.glob("*.json")))
+        self.assertFalse((self.account_dir / "_.json").is_file())
+
+    def test_help_alias_prints_help(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = ga.main(["help"])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("grok-accounts save [<name>]", out.getvalue())
+        self.assertIn("-h | --help | help", out.getvalue())
+
+    def test_unknown_command_still_rejected_after_reshape(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = ga.main(["frobnicate"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn(
+            "Unknown or incomplete command: frobnicate", _ANSI_RE.sub("", err.getvalue())
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

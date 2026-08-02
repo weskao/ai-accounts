@@ -11,8 +11,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._present import accounts_table, choose_profile, ok, panel, success_panel
-from ._utils import BOLD, DIM, GREEN, RED, RESET, YELLOW, log_red, log_yellow, resolve_account_dir
+from ._present import accounts_table, choose_and_run, choose_profile, ok, panel, success_panel
+from ._utils import (
+    BOLD,
+    DIM,
+    GREEN,
+    RED,
+    RESET,
+    YELLOW,
+    email_local_part,
+    log_red,
+    log_yellow,
+    resolve_account_dir,
+)
 from .usage_format import print_no_active_account
 
 JsonDict = dict[str, Any]
@@ -22,16 +33,16 @@ HELP = """grok-accounts — manage multiple Grok Build CLI login profiles
 USAGE
   grok-accounts who                   Show the current logged-in Grok account
   grok-accounts current               Alias for `who`
-  grok-accounts save <name>           Save the current login as a reusable profile
+  grok-accounts save [<name>]         Save the current login; no name = derive from email
   grok-accounts list                  List saved profiles
   grok-accounts usage                 Show only the active account (session & expiry)
   grok-accounts switch [<name>]       Switch by name; no name = interactive picker
-  grok-accounts remove <name>         Delete a saved profile
+  grok-accounts remove [<name>]       Delete a saved profile; no name = interactive picker
   grok-accounts refresh [<name>]      Let Grok refresh the active/profile session
   grok-accounts refresh --all         Refresh every saved profile through Grok
   grok-accounts sync                  Copy the active auth back to its matching profile
   grok-accounts login-switch <name>   Fresh Grok OAuth login + save as <name>
-  grok-accounts -h | --help           Show this help
+  grok-accounts -h | --help | help    Show this help
 
 EXAMPLES
   grok-accounts login-switch personal
@@ -275,10 +286,17 @@ def cmd_who() -> int:
     return 0 if claims else 1
 
 
-def cmd_save(name: str) -> int:
-    profile = _profile_file(name)
+def cmd_save(name: str | None = None) -> int:
     payload = _read_json(_auth_file())
-    if profile is None or payload is None or not _claims(payload):
+    claims = _claims(payload)
+    if name is None:
+        email = claims.get("email")
+        if not email or email == "—":
+            log_red("❌ No valid Grok OAuth login found. Run: grok login --oauth")
+            return 1
+        name = email_local_part(str(email))
+    profile = _profile_file(name)
+    if profile is None or payload is None or not claims:
         log_red("❌ No valid Grok OAuth login found. Run: grok login --oauth")
         return 1
     if not _write_json(profile, payload):
@@ -287,7 +305,7 @@ def cmd_save(name: str) -> int:
     success_panel(
         "Saved Grok profile",
         profile.stem,
-        _claims_lines(_claims(payload), profile),
+        _claims_lines(claims, profile),
         title=f"Profile: {profile.stem}",
         details=(f"→ {profile}",),
     )
@@ -407,6 +425,18 @@ def cmd_remove(name: str) -> int:
         _marker_file().unlink(missing_ok=True)
     ok("Removed Grok profile", profile.stem, bold=False)
     return 0
+
+
+def cmd_remove_interactive() -> int:
+    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
+    if not profiles:
+        log_yellow("⚠️  No saved Grok profiles.")
+        return 1
+    items = [
+        (profile.stem, _identity_label(_claims(_read_json(profile))))
+        for profile in profiles
+    ]
+    return choose_and_run("a Grok", items, cmd_remove, cancel_message="Remove cancelled.")
 
 
 def _run_grok_refresh() -> int:
@@ -542,22 +572,22 @@ def cmd_login_switch(name: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] in ("-h", "--help"):
+    if not argv or argv[0] in ("-h", "--help", "help"):
         print(HELP)
         return 0
     command, *rest = argv
     if command in ("who", "current"):
         return cmd_who()
-    if command == "save" and rest:
-        return cmd_save(rest[0])
+    if command == "save":
+        return cmd_save(rest[0] if rest else None)
     if command == "list":
         return cmd_list()
     if command == "usage":
         return cmd_list(only_active=True)
     if command == "switch":
         return cmd_switch(rest[0]) if rest else cmd_switch_interactive()
-    if command == "remove" and rest:
-        return cmd_remove(rest[0])
+    if command == "remove":
+        return cmd_remove(rest[0]) if rest else cmd_remove_interactive()
     if command == "refresh":
         return cmd_refresh(rest[0] if rest else None)
     if command == "sync":

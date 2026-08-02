@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Sequence
+from typing import Callable, Sequence
 
 from . import usage_format
 from ._utils import BOLD, CYAN, DIM, GREEN, RESET, RED, YELLOW, log_red, log_yellow
@@ -116,7 +116,10 @@ def accounts_table(
 
 
 def choose_profile(
-    kind_label: str, items: Sequence[tuple[str, str | None]]
+    kind_label: str,
+    items: Sequence[tuple[str, str | None]],
+    *,
+    cancel_message: str = "Switch cancelled.",
 ) -> str | None:
     """Interactive numbered profile picker over ``items``.
 
@@ -124,6 +127,8 @@ def choose_profile(
     provider ("a Codex", "a Claude", "an Antigravity"). ``items`` is a
     PRE-FILTERED list of ``(name, sublabel_or_None)`` display entries — candidate
     filtering (e.g. dropping expired profiles) stays with the caller.
+    ``cancel_message`` lets non-switch callers (e.g. remove) print an action-
+    appropriate line instead of the switch-flavored default.
 
     Returns the chosen name, or ``None`` on cancel (Ctrl-C / EOF) or invalid
     input — the caller maps ``None`` to exit code 1.
@@ -137,7 +142,7 @@ def choose_profile(
         selection = input("Select account number: ").strip()
     except (EOFError, KeyboardInterrupt):
         print()
-        log_yellow("Switch cancelled.")
+        log_yellow(cancel_message)
         return None
 
     if not selection.isdecimal():
@@ -148,6 +153,28 @@ def choose_profile(
         log_red("❌ Enter one of the account numbers shown above.")
         return None
     return items[index][0]
+
+
+def choose_and_run(
+    kind_label: str,
+    items: Sequence[tuple[str, str | None]],
+    action: Callable[[str], int],
+    *,
+    cancel_message: str = "Cancelled.",
+) -> int:
+    """Run ``choose_profile`` then ``action(chosen)``, or return 1 on cancel.
+
+    ``items`` is already the caller's pre-filtered candidate list — candidate
+    filtering, sublabel formatting, and "no saved profiles" messaging stay
+    with the caller. Defaults to a generic cancel message since this helper is
+    shared across actions (switch already has its own call site with its own
+    "Switch cancelled." wording); pass ``cancel_message`` to match a specific
+    action's grammar (e.g. "Remove cancelled.").
+    """
+    chosen = choose_profile(kind_label, items, cancel_message=cancel_message)
+    if chosen is None:
+        return 1
+    return action(chosen)
 
 
 def ok(action: str, name: str | None = None, *, bold: bool = True) -> None:

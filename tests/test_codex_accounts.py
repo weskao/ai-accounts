@@ -263,6 +263,43 @@ class SaveCommandTests(_CodexHomeMixin):
         self.assertEqual(rc, 1)
         self.assertFalse((self.home / "accounts" / "nope.json").exists())
 
+    def test_save_without_name_derives_name_from_active_email(self):
+        # Given: no name passed, active auth carries an email claim.
+        self.write_auth(_auth_payload("acct-u", "user@example.com"))
+
+        # When: save is called with no name.
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=None):
+            rc = self.run_quiet(ca.cmd_save)
+
+        # Then: the profile is created named after the email's local part.
+        self.assertEqual(rc, 0)
+        saved = self.home / "accounts" / "user.json"
+        self.assertTrue(saved.is_file())
+
+    def test_save_without_name_errors_when_no_email_found(self):
+        # Given: active auth whose token carries no email/preferred_username/upn claim.
+        token = _jwt({"account_id": "acct-u", "exp": int(time.time()) + 3600})
+        self.write_auth(
+            {
+                "tokens": {
+                    "id_token": token,
+                    "access_token": token,
+                    "refresh_token": "rt-u",
+                    "account_id": "acct-u",
+                },
+                "last_refresh": "2026-01-01T00:00:00.000000Z",
+            }
+        )
+
+        # When: save is called with no name.
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=None):
+            rc, _out, err = self.run_capture(ca.cmd_save)
+
+        # Then: a clear error is shown and no profile file is created.
+        self.assertEqual(rc, 1)
+        self.assertIn("Could not derive a name", err)
+        self.assertEqual(list((self.home / "accounts").glob("*.json")), [])
+
     def test_login_switch_saves_isolated_auth(self):
         fresh = json.dumps(_auth_payload("acct-new", "new@x.com", refresh_token="rt-fresh"))
         with mock.patch.object(ca, "ensure_tool", return_value=True), \
@@ -768,6 +805,40 @@ class RemoveCommandTests(_CodexHomeMixin):
 
         self.assertEqual(rc, 0)
         self.assertFalse(marker.exists())
+
+    def test_remove_interactive_lists_all_profiles_including_expired(self):
+        # Given: one live profile and one expired profile — remove must offer
+        # both (unlike switch, expiry is not a reason to hide a profile here).
+        self.write_profile("personal", _auth_payload("acct-p", "user@example.com"))
+        self.write_profile(
+            "old", _auth_payload("acct-o", "old@example.com", expires_in=-3600)
+        )
+
+        # When: the user picks the second listed profile (profiles sort
+        # alphabetically: "old" then "personal").
+        with mock.patch("builtins.input", return_value="2"), mock.patch.object(
+            ca, "cmd_remove", return_value=0
+        ) as remove:
+            rc, out, _err = self.run_capture(ca.cmd_remove_interactive)
+
+        # Then: both profiles are offered and the picked one is removed.
+        self.assertEqual(rc, 0)
+        self.assertIn("1) old", out)
+        self.assertIn("2) personal", out)
+        remove.assert_called_once_with("personal")
+
+    def test_remove_interactive_reports_no_saved_profiles(self):
+        rc, _out, err = self.run_capture(ca.cmd_remove_interactive)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("No saved Codex profiles", err)
+
+    def test_remove_without_name_opens_interactive_selection(self):
+        with mock.patch.object(ca, "cmd_remove_interactive", return_value=0) as interactive:
+            rc = ca.main(["remove"])
+
+        self.assertEqual(rc, 0)
+        interactive.assert_called_once_with()
 
 
 class UsageRequestTests(_CodexHomeMixin):
@@ -1558,6 +1629,16 @@ class MainDispatchTests(_CodexHomeMixin):
             refresh.assert_called_with(None)
             self.assertEqual(ca.main(["sync"]), 0)
             sync.assert_called_once_with()
+
+    def test_help_behaves_like_dash_h_and_dash_dash_help(self):
+        rc_help, out_help, _err = self.run_capture(ca.main, ["help"])
+        rc_h, out_h, _err = self.run_capture(ca.main, ["-h"])
+        rc_dd, out_dd, _err = self.run_capture(ca.main, ["--help"])
+
+        self.assertEqual((rc_help, rc_h, rc_dd), (0, 0, 0))
+        self.assertEqual(out_help, out_h)
+        self.assertEqual(out_help, out_dd)
+        self.assertIn("USAGE", out_help)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ from . import usage_format
 from ._present import (
     _ANSI_RE as _ANSI_RE,
     accounts_table,
+    choose_and_run,
     choose_profile,
     ok,
     panel,
@@ -42,6 +43,7 @@ from ._utils import (
     RESET,
     YELLOW,
     Spinner,
+    email_local_part,
     ensure_tool,
     fetch_parallel,
     have,
@@ -59,17 +61,18 @@ HELP = """codex-accounts — manage multiple Codex CLI login profiles
 USAGE
   codex-accounts who                   Show the current logged-in Codex account
   codex-accounts current               Alias for `who`
-  codex-accounts save <name>           Save the current login as a reusable profile
+  codex-accounts save [<name>]         Save the current login as a reusable profile;
+                                       no name = derive from active account's email
   codex-accounts list                  List profiles with usage (never refreshes tokens)
   codex-accounts usage                 Show only the active account's usage row
   codex-accounts switch [<name>]       Switch by name; no name = interactive picker
-  codex-accounts remove <name>         Delete a saved profile
+  codex-accounts remove [<name>]       Delete a saved profile; no name = interactive picker
   codex-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
                                        no name = refresh active auth + sync it back
   codex-accounts refresh --all         Refresh every saved profile
   codex-accounts sync                  Copy the active auth back to its matching profile
   codex-accounts login-switch <name>   Isolated codex login + save as <name>
-  codex-accounts -h | --help           Show this help
+  codex-accounts -h | --help | help    Show this help
 
 EXAMPLES
   codex-accounts login-switch personal
@@ -802,12 +805,21 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     return 0
 
 
-def cmd_save(name: str) -> int:
+def cmd_save(name: str | None = None) -> int:
     auth_text = _read_active_auth_text()
     if auth_text is None:
         log_red(f"❌ No Codex auth file found: {_auth_file()}")
         log_yellow("   Run: codex login")
         return 1
+    if name is None:
+        email = (_claims_from_text(auth_text) or {}).get("email")
+        if not isinstance(email, str) or not email:
+            log_red(
+                "❌ Could not derive a name from the active account (no email found) "
+                "-- pass a name explicitly."
+            )
+            return 1
+        name = email_local_part(email)
     return _save_profile_auth(name, auth_text)
 
 
@@ -998,6 +1010,15 @@ def cmd_remove(name: str) -> int:
         _current_profile_marker().unlink(missing_ok=True)
     ok("Removed Codex profile", name, bold=False)
     return 0
+
+
+def cmd_remove_interactive() -> int:
+    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
+    if not profiles:
+        log_yellow("⚠️  No saved Codex profiles.")
+        return 1
+    items = [(profile.stem, _identity_label(_read_claims(profile))) for profile in profiles]
+    return choose_and_run("a Codex", items, cmd_remove, cancel_message="Remove cancelled.")
 
 
 def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, str | None]:
@@ -1195,7 +1216,7 @@ def cmd_login_switch(name: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] in ("-h", "--help"):
+    if not argv or argv[0] in ("-h", "--help", "help"):
         print(HELP)
         return 0
 
@@ -1204,10 +1225,7 @@ def main(argv: list[str] | None = None) -> int:
     if command in ("who", "current"):
         return cmd_who()
     if command == "save":
-        if not rest:
-            log_red("Usage: codex-accounts save <profile_name>")
-            return 1
-        return cmd_save(rest[0])
+        return cmd_save(rest[0] if rest else None)
     if command == "list":
         return cmd_list()
     if command == "usage":
@@ -1218,8 +1236,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_switch(rest[0])
     if command == "remove":
         if not rest:
-            log_red("Usage: codex-accounts remove <profile_name>")
-            return 1
+            return cmd_remove_interactive()
         return cmd_remove(rest[0])
     if command == "refresh":
         return cmd_refresh(rest[0] if rest else None)
