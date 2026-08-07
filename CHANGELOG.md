@@ -1,3 +1,16 @@
+## [2.4.0] - 2026-08-07
+
+### 🚀 Features
+
+- **ai-accounts:** Remove/save parity + help alias
+
+### 🐛 Bug Fixes
+
+- **present:** Count terminal columns for CJK table widths
+
+### 📚 Documentation
+
+- Require placeholder data in test fixtures
 ## [2.3.0] - 2026-07-24
 
 ### 🚀 Features
@@ -19,6 +32,7 @@
 ### ⚙️ Miscellaneous Tasks
 
 - Ignore .omo directory
+- **release:** Bump version to 2.3.0
 ## [2.2.0] - 2026-07-21
 
 ### 🚀 Features
