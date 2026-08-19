@@ -64,11 +64,11 @@ After install, the following commands are available on `PATH`:
 | `towebp` | Convert PNG/JPG/JPEG to WebP |
 | `html2md` | Convert HTML files to Markdown via pandoc |
 | `vcadd` | Add Chinese words with 注音符號（Bopomofo）readings to vChewing user dictionary (macOS) |
-| `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove) |
-| `claude-accounts` | Manage multiple Claude Code login profiles and inspect usage |
-| `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota (macOS) |
-| `grok-accounts` | Manage multiple Grok Build CLI OAuth profiles (save / list / switch / refresh) |
-| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `usage`, `who`, `refresh`, `sync`, `autoswitch`, …) to all four `*-accounts`, plus its own `config`/timer commands for [auto-switch on low quota](#auto-switch-on-low-quota) |
+| `codex-accounts` | Manage multiple Codex CLI login profiles (save / list / switch / remove / config) |
+| `claude-accounts` | Manage multiple Claude Code login profiles, inspect usage, and configure auto-switch (config) |
+| `agy-accounts` | Manage multiple Antigravity OAuth profiles, inspect quota, and configure auto-switch (macOS, config) |
+| `grok-accounts` | Manage multiple Grok Build CLI OAuth profiles (save / list / switch / refresh / config) |
+| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `usage`, `who`, `refresh`, `sync`, `autoswitch`, …) to all four `*-accounts`, plus its own timer commands and the shared `config` for [auto-switch on low quota](#auto-switch-on-low-quota) |
 
 ## Update
 
@@ -416,6 +416,9 @@ codex-accounts sync                  # copy the active auth back to its matching
 codex-accounts login-switch <name>   # codex logout + codex login + save as <name>
 codex-accounts autoswitch            # switch away from the active profile if it's low on
                                      # quota (see "Auto-switch on low quota" below)
+codex-accounts config                # interactive auto-switch config menu (see below)
+codex-accounts config get [key]      # print the auto-switch config (or just one key)
+codex-accounts config set <key> <val># set one auto-switch config key
 codex-accounts -h | --help | help    # show this help
 ```
 
@@ -504,6 +507,19 @@ Saved Codex profiles  (2)
 - `list` shows a spinner (with a live "which profile" label) on a TTY while it fetches usage
   for each profile; it's automatically skipped when output isn't a terminal (piping, `ai-accounts`).
 
+### codex-accounts Config
+
+`codex-accounts config` with no arguments opens an interactive arrow-key menu on a
+TTY (↑↓ move, ⏎ edit — boolean/enum fields cycle their allowed values instead of
+typing, Esc cancels an edit, `s` saves, `q` quits; quitting with unsaved changes
+discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, CI)
+prints a numbered listing instead and exits `0`. `config get [key]` / `config set
+<key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
+saved value masked, not in cleartext. This is the same shared config menu as
+`ai-accounts`, `claude-accounts`, `agy-accounts`, and `grok-accounts` — all five
+edit the one `~/.ai-accounts/config.json`. See [Auto-switch on low quota →
+Config](#config) for the full key reference.
+
 ### codex-accounts Environment Overrides
 
 | Variable | Default | Purpose |
@@ -542,6 +558,9 @@ claude-accounts sync                  # copy the active auth back to its matchin
 claude-accounts login-switch <name>   # `claude auth login` + save as <name>
 claude-accounts autoswitch            # switch away from the active profile if it's low on
                                        # quota (see "Auto-switch on low quota" below)
+claude-accounts config                # interactive auto-switch config menu (see below)
+claude-accounts config get [key]      # print the auto-switch config (or just one key)
+claude-accounts config set <key> <val># set one auto-switch config key
 claude-accounts -h | --help | help    # show this help
 ```
 
@@ -583,6 +602,19 @@ Saved Claude profiles  (2)
 - `switch` backs up the previous credentials (timestamped, `chmod 600`) before overwriting.
 - `list` shows a spinner (with a live "which profile" label) on a TTY while it fetches usage
   for each profile; it's automatically skipped when output isn't a terminal (piping, `ai-accounts`).
+
+### claude-accounts Config
+
+`claude-accounts config` with no arguments opens an interactive arrow-key menu on a
+TTY (↑↓ move, ⏎ edit — boolean/enum fields cycle their allowed values instead of
+typing, Esc cancels an edit, `s` saves, `q` quits; quitting with unsaved changes
+discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, CI)
+prints a numbered listing instead and exits `0`. `config get [key]` / `config set
+<key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
+saved value masked, not in cleartext. This is the same shared config menu as
+`ai-accounts`, `codex-accounts`, `agy-accounts`, and `grok-accounts` — all five
+edit the one `~/.ai-accounts/config.json`. See [Auto-switch on low quota →
+Config](#config) for the full key reference.
 
 ### claude-accounts Environment Overrides
 
@@ -630,6 +662,9 @@ agy-accounts sync                  # copy the active Keychain session to its pro
 agy-accounts login-switch <name>   # official agy browser login + save as <name>
 agy-accounts autoswitch            # leave the active account when its quota runs out
                                    # (opt-in blind mode — see "Auto-switch on low quota")
+agy-accounts config                # interactive auto-switch config menu (see below)
+agy-accounts config get [key]      # print the auto-switch config (or just one key)
+agy-accounts config set <key> <val># set one auto-switch config key
 agy-accounts -h | --help | help    # show this help
 ```
 
@@ -723,6 +758,20 @@ Session types:
 - `list` shows a spinner (with a live "which profile" label) on a TTY while it queries `agy`
   for each profile; it's automatically skipped when output isn't a terminal (piping, `ai-accounts`).
 
+### agy-accounts Config
+
+`agy-accounts config` with no arguments opens an interactive arrow-key menu on a
+TTY (↑↓ move, ⏎ edit — boolean/enum fields cycle their allowed values instead of
+typing, Esc cancels an edit, `s` saves, `q` quits; quitting with unsaved changes
+discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, CI)
+prints a numbered listing instead and exits `0`. `config get [key]` / `config set
+<key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
+saved value masked, not in cleartext. This is the same shared config menu as
+`ai-accounts`, `codex-accounts`, `claude-accounts`, and `grok-accounts` — all five
+edit the one `~/.ai-accounts/config.json`, including `agy_blind_switch`, the setting
+this tool's own autoswitch reads. See [Auto-switch on low quota →
+Config](#config) for the full key reference.
+
 ### agy-accounts Environment Overrides
 
 | Variable | Default | Purpose |
@@ -758,6 +807,9 @@ grok-accounts sync                  # copy the active auth back to its matching 
 grok-accounts login-switch <name>   # fresh browser login + save as <name>
 grok-accounts autoswitch            # reports that grok has no quota API to switch on
                                     # (always exits 0 — see "Auto-switch on low quota")
+grok-accounts config                # interactive auto-switch config menu (see below)
+grok-accounts config get [key]      # print the auto-switch config (or just one key)
+grok-accounts config set <key> <val># set one auto-switch config key
 grok-accounts -h | --help | help    # show this help
 ```
 
@@ -808,6 +860,19 @@ Saved Grok profiles  (2)
   numbered `1)`, `2)`, …) — the same picker grammar as `codex-accounts`, `claude-accounts`,
   and `agy-accounts`.
 
+### grok-accounts Config
+
+`grok-accounts config` with no arguments opens an interactive arrow-key menu on a
+TTY (↑↓ move, ⏎ edit — boolean/enum fields cycle their allowed values instead of
+typing, Esc cancels an edit, `s` saves, `q` quits; quitting with unsaved changes
+discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, CI)
+prints a numbered listing instead and exits `0`. `config get [key]` / `config set
+<key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
+saved value masked, not in cleartext. This is the same shared config menu as
+`ai-accounts`, `codex-accounts`, `claude-accounts`, and `agy-accounts` — all five
+edit the one `~/.ai-accounts/config.json`. See [Auto-switch on low quota →
+Config](#config) for the full key reference.
+
 ### grok-accounts Environment Overrides
 
 | Variable | Default | Purpose |
@@ -847,6 +912,9 @@ ai-accounts remove [<name>]        Remove profile in every provider; no name = i
 ai-accounts login-switch <name>    Fresh login + save as <name>, every provider (interactive)
 ai-accounts autoswitch             Run the low-quota auto-switch check for every provider now
                                     (takes no arguments — to schedule it, see install-timer)
+ai-accounts config                 Interactive auto-switch config menu (numbered fallback
+                                    when not run on a TTY) — see "Auto-switch on low
+                                    quota" below
 ai-accounts config get [key]       Print the auto-switch config (or just one key); the
                                     telegram bot token is always masked
 ai-accounts config set <key> <val> Set one auto-switch config key (rejects unknown keys)
@@ -858,10 +926,13 @@ ai-accounts timer-status           Report whether the auto-switch check is sched
 ai-accounts -h | --help | help     Show this help
 ```
 
-`autoswitch`, `config get`/`config set`, `install-timer`, `uninstall-timer` and
-`timer-status` are handled by `ai-accounts` itself rather than forwarded — see
-[Auto-switch on low quota](#auto-switch-on-low-quota) below for the full config
-reference, the support matrix, and the timer's per-OS mechanism.
+`autoswitch`, `config` (with or without `get`/`set`), `install-timer`,
+`uninstall-timer` and `timer-status` are handled by `ai-accounts` itself rather
+than forwarded to a provider — `config` is not unique to `ai-accounts`, though:
+`codex-accounts`, `claude-accounts`, `agy-accounts`, and `grok-accounts` each own
+the identical `config` command against the same shared `~/.ai-accounts/config.json`.
+See [Auto-switch on low quota](#auto-switch-on-low-quota) below for the full
+config reference, the support matrix, and the timer's per-OS mechanism.
 
 Bare `ai-accounts` (no arguments) prints this help. `list` runs the four
 providers **concurrently** and prints each one's table as soon as it
@@ -895,18 +966,52 @@ you on a timer (below).
 ### Config
 
 ```sh
+ai-accounts config                  # interactive menu (numbered fallback off a TTY)
 ai-accounts config get              # print the whole config (telegram token masked)
 ai-accounts config get notify       # print just one key
 ai-accounts config set enabled true # turn auto-switching on
 ai-accounts config set notify telegram
 ```
 
-`config get`/`config set` are handled by `ai-accounts` itself — never
-forwarded to a provider. `set` rejects any key outside the table below with a
-message listing the valid ones, and validates the value before writing:
-`notify` must be one of the three channels, `switch_when_used_pct` must be an
-integer 1-100, and the two booleans are parsed strictly — a hand-typed
-`"false"` is stored as `False`, not Python's `bool("false") == True`.
+All five tools — `ai-accounts`, `codex-accounts`, `claude-accounts`,
+`agy-accounts`, and `grok-accounts` — own an identical `config` command
+against the one shared `~/.ai-accounts/config.json` (override with
+`$AI_ACCOUNTS_CONFIG_JSON`); none of them forward it to another provider.
+
+Running `config` with no arguments on a TTY opens an interactive menu:
+
+```text
+┌─ ai-accounts config ─────────────────┐
+│  ❯ enabled              false        │
+│    switch_when_used_pct  90          │
+│    notify               desktop      │
+│    telegram_bot_token   ••••••1234   │
+│    telegram_chat_id     (unset)      │
+│    agy_blind_switch     false        │
+│  ↑↓ move · ⏎ edit · s save · q quit  │
+└──────────────────────────────────────┘
+```
+
+Keybindings: `↑`/`↓` move the cursor; `⏎` edits the highlighted field — for a
+boolean or an enum (`notify`) this **cycles** its allowed values instead of
+asking you to type one, `←`/`→` cycle the same way without entering edit mode
+first; `Esc` cancels an in-progress edit; `s` saves; `q` quits. Quitting with
+unsaved changes **discards** them and prints a yellow warning naming `s`. An
+invalid typed value shows the validation error inline and is not saved.
+
+Piped or non-interactive input (scripts, CI, `| cat`) skips raw mode entirely:
+`config` prints the same numbered listing `get` would and exits `0` rather
+than attempting to read arrow keys.
+
+`config get`/`config set` remain the scriptable form, unchanged. `set` rejects
+any key outside the table below with a message listing the valid ones, and
+validates the value before writing: `notify` must be one of the three
+channels, `switch_when_used_pct` must be an integer 1-100, and the two
+booleans are parsed strictly — a hand-typed `"false"` is stored as `False`,
+not Python's `bool("false") == True`. One behaviour changed from the legacy
+`ai-accounts`-only implementation: `config set telegram_bot_token <value>` now
+echoes the saved value **masked**, like every other masked field, instead of
+printing the raw token back to the terminal.
 
 Both booleans are also **read** fail-closed: only a real JSON `true` turns one
 on. Hand-edit `~/.ai-accounts/config.json` to `"enabled": "false"` (a truthy
