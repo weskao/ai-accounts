@@ -1,0 +1,417 @@
+"""Tests for the OS timer trigger of the auto-switch feature.
+
+Every subprocess invocation is mocked and every filesystem write is redirected
+into a temp ``$HOME`` — this suite must NEVER touch the real
+``~/Library/LaunchAgents``, ``~/.config/systemd/user``, the real crontab, or
+issue a real ``schtasks`` call. Run with: ``uv run pytest``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from ai_accounts import _utils as u
+from ai_accounts import autoswitch as aw
+from ai_accounts import autoswitch_timer as at
+
+
+class _PlatformMixin:
+    """Force a given platform by patching the module-level OS flags."""
+
+    def force_platform(self, *, macos=False, linux=False, windows=False):
+        for name, value in (
+            ("IS_MACOS", macos),
+            ("IS_LINUX", linux),
+            ("IS_WINDOWS", windows),
+        ):
+            p = mock.patch.object(u, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+
+class _HomeMixin:
+    """Redirect HOME-relative writes (plist/systemd unit dirs) into a temp dir."""
+
+    def setUp(self):
+        super().setUp()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name)
+        env = mock.patch.dict(os.environ, {"HOME": str(self.home)}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+
+
+class _ConfigMixin:
+    """Point the autoswitch config store at a throwaway temp file."""
+
+    def setUp(self):
+        super().setUp()
+        self.config_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.config_tmp.cleanup)
+        self.config_path = Path(self.config_tmp.name) / "config.json"
+        env = mock.patch.dict(
+            os.environ, {"AI_ACCOUNTS_CONFIG_JSON": str(self.config_path)}, clear=False
+        )
+        env.start()
+        self.addCleanup(env.stop)
+
+
+class _SubprocessMixin:
+    """Capture every ``u.run`` call instead of touching a real scheduler."""
+
+    def capture_subprocess(self, responses=None):
+        """Patch ``u.run``; returns the list of captured ``cmd`` lists.
+
+        *responses* maps a command's first two tokens (joined by a space) to
+        a ``CompletedProcess`` to return instead of the zero-exit default —
+        e.g. ``{"crontab -l": subprocess.CompletedProcess([], 0, stdout="")}``.
+        """
+        calls = []
+        responses = responses or {}
+
+        def fake_run(cmd, **kwargs):
+            calls.append({"cmd": list(cmd), "kwargs": kwargs})
+            key = " ".join(cmd[:2])
+            if key in responses:
+                return responses[key]
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
+
+        p = mock.patch.object(u, "run", side_effect=fake_run)
+        p.start()
+        self.addCleanup(p.stop)
+        return calls
+
+
+class MacOSInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
+    def test_install_writes_launchd_plist_with_label_and_interval(self) -> None:
+        # Given: a forced macOS platform, a temp HOME, and a mocked launchctl
+        self.force_platform(macos=True)
+        calls = self.capture_subprocess()
+
+        # When: install() is called
+        at.install()
+
+        # Then: a launchd plist landed under the temp ~/Library/LaunchAgents
+        plist_path = self.home / "Library" / "LaunchAgents" / f"{at.LABEL}.plist"
+        self.assertTrue(plist_path.exists())
+
+        # And: it contains the expected label and default interval
+        import plistlib
+
+        plist = plistlib.loads(plist_path.read_bytes())
+        self.assertEqual(plist["Label"], at.LABEL)
+        self.assertEqual(plist["StartInterval"], at.DEFAULT_INTERVAL_SEC)
+
+        # And: launchctl was invoked to load it
+        launchctl_calls = [c for c in calls if c["cmd"][0] == "launchctl"]
+        self.assertEqual(len(launchctl_calls), 1)
+        self.assertIn(str(plist_path), launchctl_calls[0]["cmd"])
+
+
+class LinuxInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
+    def test_install_with_systemctl_writes_systemd_user_timer(self) -> None:
+        # Given: a forced Linux platform where `systemctl` is on PATH
+        self.force_platform(linux=True)
+        calls = self.capture_subprocess()
+        have = mock.patch.object(u, "have", return_value=True)
+        have.start()
+        self.addCleanup(have.stop)
+
+        # When: install() is called
+        at.install()
+
+        # Then: a systemd user timer + service unit landed under temp HOME
+        unit_dir = self.home / ".config" / "systemd" / "user"
+        timer_path = unit_dir / f"{at.LABEL}.timer"
+        service_path = unit_dir / f"{at.LABEL}.service"
+        self.assertTrue(timer_path.exists())
+        self.assertTrue(service_path.exists())
+
+        # And: the timer unit carries the default interval
+        timer_text = timer_path.read_text(encoding="utf-8")
+        self.assertIn(f"OnUnitActiveSec={at.DEFAULT_INTERVAL_SEC}", timer_text)
+
+        # And: the service unit runs this module as the scheduled command
+        service_text = service_path.read_text(encoding="utf-8")
+        self.assertIn("ai_accounts.autoswitch_timer run", service_text)
+
+        # And: systemctl was used to enable it — no crontab touched
+        systemctl_calls = [c for c in calls if c["cmd"][0] == "systemctl"]
+        self.assertEqual(len(systemctl_calls), 1)
+        self.assertIn("enable", systemctl_calls[0]["cmd"])
+        self.assertFalse(any(c["cmd"][0] == "crontab" for c in calls))
+
+    def test_install_without_systemctl_falls_back_to_cron(self) -> None:
+        # Given: a forced Linux platform where `systemctl` is absent
+        self.force_platform(linux=True)
+        responses = {
+            "crontab -l": subprocess.CompletedProcess(
+                args=["crontab", "-l"], returncode=0, stdout=""
+            )
+        }
+        calls = self.capture_subprocess(responses)
+        have = mock.patch.object(u, "have", return_value=False)
+        have.start()
+        self.addCleanup(have.stop)
+
+        # When: install() is called
+        at.install()
+
+        # Then: no systemd unit files were written
+        unit_dir = self.home / ".config" / "systemd" / "user"
+        self.assertFalse((unit_dir / f"{at.LABEL}.timer").exists())
+
+        # And: a crontab entry running this module was installed instead
+        set_calls = [c for c in calls if c["cmd"] == ["crontab", "-"]]
+        self.assertEqual(len(set_calls), 1)
+        new_crontab = set_calls[0]["kwargs"]["input"]
+        self.assertIn("ai_accounts.autoswitch_timer run", new_crontab)
+        self.assertIn(at.CRON_TAG, new_crontab)
+
+
+class WindowsInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
+    def test_install_composes_schtasks_create_command(self) -> None:
+        # Given: a forced Windows platform and a mocked schtasks
+        self.force_platform(windows=True)
+        calls = self.capture_subprocess()
+
+        # When: install() is called
+        at.install()
+
+        # Then: exactly one schtasks /Create call was issued
+        create_calls = [c["cmd"] for c in calls if c["cmd"][:2] == ["schtasks", "/Create"]]
+        self.assertEqual(len(create_calls), 1)
+        cmd = create_calls[0]
+
+        # And: it names the task, runs this module, and sets the interval
+        self.assertIn(at.LABEL, cmd)
+        self.assertTrue(any("ai_accounts.autoswitch_timer run" in part for part in cmd))
+        self.assertIn("MINUTE", cmd)
+        self.assertIn(str(at.DEFAULT_INTERVAL_SEC // 60), cmd)
+
+
+class UninstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
+    def test_macos_uninstall_unloads_and_removes_the_plist(self) -> None:
+        # Given: an installed macOS launchd plist
+        self.force_platform(macos=True)
+        self.capture_subprocess()
+        at.install()
+        plist_path = self.home / "Library" / "LaunchAgents" / f"{at.LABEL}.plist"
+        self.assertTrue(plist_path.exists())
+        calls = self.capture_subprocess()
+
+        # When: uninstall() is called
+        at.uninstall()
+
+        # Then: launchctl was told to unload it, and the plist is gone
+        unload_calls = [c["cmd"] for c in calls if c["cmd"][:2] == ["launchctl", "unload"]]
+        self.assertEqual(len(unload_calls), 1)
+        self.assertFalse(plist_path.exists())
+
+    def test_linux_uninstall_with_systemd_disables_and_removes_units(self) -> None:
+        # Given: an installed systemd user timer
+        self.force_platform(linux=True)
+        have = mock.patch.object(u, "have", return_value=True)
+        have.start()
+        self.addCleanup(have.stop)
+        self.capture_subprocess()
+        at.install()
+        timer_path = self.home / ".config" / "systemd" / "user" / f"{at.LABEL}.timer"
+        self.assertTrue(timer_path.exists())
+        calls = self.capture_subprocess()
+
+        # When: uninstall() is called
+        at.uninstall()
+
+        # Then: systemctl disabled it, and the unit files are gone
+        disable_calls = [c["cmd"] for c in calls if c["cmd"][:2] == ["systemctl", "--user"] and "disable" in c["cmd"]]
+        self.assertEqual(len(disable_calls), 1)
+        self.assertFalse(timer_path.exists())
+
+    def test_linux_uninstall_with_cron_removes_the_tagged_line(self) -> None:
+        # Given: an installed cron fallback entry
+        self.force_platform(linux=True)
+        have = mock.patch.object(u, "have", return_value=False)
+        have.start()
+        self.addCleanup(have.stop)
+        install_calls = self.capture_subprocess(
+            {"crontab -l": subprocess.CompletedProcess(["crontab", "-l"], 0, stdout="")}
+        )
+        at.install()
+        installed_crontab = [c for c in install_calls if c["cmd"] == ["crontab", "-"]][0][
+            "kwargs"
+        ]["input"]
+        self.assertIn(at.CRON_TAG, installed_crontab)
+
+        # When: uninstall() is called, with that crontab now "current"
+        uninstall_calls = self.capture_subprocess(
+            {
+                "crontab -l": subprocess.CompletedProcess(
+                    ["crontab", "-l"], 0, stdout=installed_crontab
+                )
+            }
+        )
+        at.uninstall()
+
+        # Then: the tagged line is gone from the crontab that gets written back
+        set_calls = [c for c in uninstall_calls if c["cmd"] == ["crontab", "-"]]
+        self.assertEqual(len(set_calls), 1)
+        self.assertNotIn(at.CRON_TAG, set_calls[0]["kwargs"]["input"])
+
+    def test_windows_uninstall_issues_schtasks_delete(self) -> None:
+        # Given: a forced Windows platform
+        self.force_platform(windows=True)
+        calls = self.capture_subprocess()
+
+        # When: uninstall() is called
+        at.uninstall()
+
+        # Then: schtasks /Delete was issued for our task name
+        delete_calls = [c["cmd"] for c in calls if c["cmd"][:2] == ["schtasks", "/Delete"]]
+        self.assertEqual(len(delete_calls), 1)
+        self.assertIn(at.LABEL, delete_calls[0])
+
+
+class StatusTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
+    def test_macos_status_not_installed_then_installed(self) -> None:
+        # Given: a forced macOS platform with nothing installed yet
+        self.force_platform(macos=True)
+        self.capture_subprocess()
+
+        # Then: status reports "not installed"
+        self.assertEqual(at.status(), "not installed")
+
+        # When: install() runs
+        at.install()
+
+        # Then: status flips to "installed"
+        self.assertEqual(at.status(), "installed")
+
+    def test_linux_status_with_systemd_not_installed_then_installed(self) -> None:
+        # Given: a forced Linux platform with systemctl present, nothing installed
+        self.force_platform(linux=True)
+        have = mock.patch.object(u, "have", return_value=True)
+        have.start()
+        self.addCleanup(have.stop)
+        self.capture_subprocess()
+
+        # Then: status reports "not installed"
+        self.assertEqual(at.status(), "not installed")
+
+        # When: install() runs
+        at.install()
+
+        # Then: status flips to "installed"
+        self.assertEqual(at.status(), "installed")
+
+    def test_windows_status_reflects_schtasks_query_result(self) -> None:
+        # Given: a forced Windows platform where the query fails (not found)
+        self.force_platform(windows=True)
+        self.capture_subprocess(
+            {"schtasks /Query": subprocess.CompletedProcess([], returncode=1)}
+        )
+        # Then: status reports "not installed"
+        self.assertEqual(at.status(), "not installed")
+
+        # Given: the query now succeeds (task found)
+        self.capture_subprocess(
+            {"schtasks /Query": subprocess.CompletedProcess([], returncode=0)}
+        )
+        # Then: status reports "installed"
+        self.assertEqual(at.status(), "installed")
+
+
+class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
+    def test_run_once_does_not_probe_when_disabled(self) -> None:
+        # Given: the master switch is off (the config default)
+        aw.save_config({"enabled": False})
+        probe = mock.Mock()
+
+        # When: the scheduled job's entry point fires
+        result = at.run_once(check=probe)
+
+        # Then: it exits cleanly and never touches the probe
+        self.assertEqual(result, 0)
+        probe.assert_not_called()
+
+    def test_run_once_treats_a_hand_edited_string_false_as_off(self) -> None:
+        # Given: `enabled` hand-edited to the STRING "false" — valid JSON, and
+        # truthy to bool(), so a bare truthiness check would let the scheduled
+        # job run while the user believes the feature is off.
+        self.config_path.write_text(
+            json.dumps({"enabled": "false"}), encoding="utf-8"
+        )
+        probe = mock.Mock()
+
+        # When: the scheduled job's entry point fires
+        result = at.run_once(check=probe)
+
+        # Then: the master switch fails CLOSED — a silent no-op, as documented
+        self.assertEqual(result, 0)
+        probe.assert_not_called()
+
+    def test_run_once_runs_the_check_when_enabled(self) -> None:
+        # Given: the master switch is on
+        aw.save_config({"enabled": True})
+        probe = mock.Mock()
+
+        # When: the scheduled job's entry point fires
+        result = at.run_once(check=probe)
+
+        # Then: the check runs and the entry point exits cleanly
+        self.assertEqual(result, 0)
+        probe.assert_called_once_with()
+
+    def test_run_once_default_check_drives_autoswitch_across_all_providers(self) -> None:
+        # Given: the master switch is on, and no explicit check is supplied
+        aw.save_config({"enabled": True})
+
+        # When: the scheduled job's entry point fires with its default check
+        with mock.patch.object(at.ai_accounts, "cmd_forward", return_value=0) as forward:
+            result = at.run_once()
+
+        # Then: it drives the real autoswitch across all four providers by
+        # reusing the umbrella's own fan-out — not a duplicated provider list
+        self.assertEqual(result, 0)
+        forward.assert_called_once_with(["autoswitch"])
+
+    def test_run_once_default_check_is_not_invoked_when_disabled(self) -> None:
+        # Given: the master switch is off
+        aw.save_config({"enabled": False})
+
+        # When: the scheduled job's entry point fires with its default check
+        with mock.patch.object(at.ai_accounts, "cmd_forward") as forward:
+            result = at.run_once()
+
+        # Then: no fan-out at all — the existing disabled-noop test's guarantee
+        # still holds even when nothing is explicitly passed for `check`
+        self.assertEqual(result, 0)
+        forward.assert_not_called()
+
+
+class MainDispatchTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, _ConfigMixin, unittest.TestCase):
+    def test_main_run_invokes_run_once(self) -> None:
+        # Given: the "run" subcommand, as the scheduler would invoke it
+        with mock.patch.object(at, "run_once", return_value=0) as run_once:
+            # When: main(["run"]) is called
+            rc = at.main(["run"])
+        # Then: run_once() fired and its return code is propagated
+        run_once.assert_called_once_with()
+        self.assertEqual(rc, 0)
+
+    def test_main_install_invokes_install(self) -> None:
+        # Given: the "install" subcommand
+        with mock.patch.object(at, "install") as install:
+            # When: main(["install"]) is called
+            rc = at.main(["install"])
+        # Then: install() fired
+        install.assert_called_once_with()
+        self.assertEqual(rc, 0)

@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypeAlias
 
-from . import gemini_usage
+from . import autoswitch, gemini_usage
 from ._present import (
     _ANSI_RE as _ANSI_RE,
     accounts_table,
@@ -34,6 +34,7 @@ from ._utils import (
     Spinner,
     email_local_part,
     ensure_tool,
+    have,
     log_red,
     log_yellow,
     plan_tier_color,
@@ -77,6 +78,9 @@ USAGE
                                      no name = refresh active session + sync it back
   agy-accounts refresh --all         Refresh every saved profile
   agy-accounts sync                  Copy the active auth back to its matching profile
+  agy-accounts autoswitch            Leave the active account when its quota runs out
+                                     (only the live session's quota is readable, so
+                                     switching needs "agy_blind_switch": true)
   agy-accounts login-switch <name>   Antigravity Google login + save as <name>
   agy-accounts -h | --help | help    Show this help
 
@@ -1123,6 +1127,185 @@ def cmd_login_switch(name: str) -> int:
     return agy_exit or 1
 
 
+def _live_used_pct(snapshot: gemini_usage.UsageSnapshot) -> int | None:
+    """Worst used percentage across *snapshot*'s windows — None when unknown.
+
+    The account is throttled as soon as any one window runs out, so the
+    fullest window is the one that decides whether it is time to move.
+    """
+    used = [
+        window.percentage
+        for window in (
+            snapshot.gemini_weekly,
+            snapshot.gemini_session,
+            snapshot.other_weekly,
+            snapshot.other_session,
+        )
+        if window is not None
+    ]
+    return max(used) if used else None
+
+
+def _antigravity_ide_running() -> bool:
+    """Whether an Antigravity IDE process is up — a read-only process query.
+
+    The IDE re-writes the keyring session instantly and has no programmatic
+    resume, so a switch made while it runs must degrade to manual-restart
+    (docs/autoswitch-hot-reload-spike.md, agy section, footnote 2). Never
+    signals, kills or otherwise touches a process: pgrep only reads the process
+    table. Fails CLOSED — with no way to look, assume the IDE is there.
+    """
+    # ponytail: matches the macOS .app bundle path; widen if the IDE ships
+    # under a different process name elsewhere.
+    if not have("pgrep"):
+        return True
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "Antigravity.app"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return True
+    return result.returncode == 0
+
+
+def _autoswitch_resume() -> bool:
+    """Start a NEW agy CLI session continuing the last conversation.
+
+    A "restart" here is only ever an addition: `agy --continue`
+    (docs/autoswitch-hot-reload-spike.md, agy section) opens a fresh process
+    that picks up the previous conversation. No running process is signalled,
+    terminated or otherwise touched. Only reached on the auto-restart rung,
+    which autoswitch.build_restart withholds from an unattended run and from
+    one with the Antigravity IDE up.
+    """
+    if not have("agy"):
+        log_yellow("⚠️  agy is not on PATH — cannot resume the session automatically.")
+        return False
+    return subprocess.run(["agy", "--continue"]).returncode == 0
+
+
+def cmd_autoswitch() -> int:
+    """Move off the active account when its quota runs out.
+
+    Antigravity answers quota questions only for the session that is *live*,
+    and making a candidate live means writing its credential into the single
+    shared keychain slot the running agy process reads — which would corrupt
+    an in-flight request on the user's real session. So candidates are never
+    probed here; only the active account is.
+
+    That leaves every switch blind: the target may be just as exhausted as the
+    account being left. Which is why it is opt-in through ``agy_blind_switch``
+    and off by default — without it this command reports and stops.
+    """
+    account_dir = _account_dir()
+    profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
+    active = _active_profile()
+    # config_flag, not bool(): a hand-edited `"agy_blind_switch": "false"`
+    # is a truthy string, and this gate must fail closed on anything odd.
+    blind = autoswitch.config_flag("agy_blind_switch")
+    probe_error: list[str] = []
+
+    def probe(name: str) -> UsageWindow | None:
+        if active is None or name != active.stem:
+            # Never activate a candidate (see the docstring). Blind mode takes
+            # the unknown as "has quota"; otherwise it stays unknown, and the
+            # engine finds nothing to switch to.
+            return UsageWindow(0, None, None) if blind else None
+        snapshot = gemini_usage.fetch_usage(timeout=8)
+        if snapshot.error:
+            probe_error.append(snapshot.error)
+        used = _live_used_pct(snapshot)
+        return None if used is None else UsageWindow(used, None, None)
+
+    def switch(name: str) -> bool:
+        # cmd_switch falls back to cmd_list() when the profile file is gone,
+        # and cmd_list activates every saved profile in turn to read its quota
+        # — the very keychain hijack this command exists to avoid. The target
+        # can disappear during the live quota fetch (a concurrent `remove`),
+        # so re-check here rather than let it reach that branch.
+        profile = _profile_file(name)
+        if profile is None or not profile.is_file():
+            log_red(f"❌ Profile disappeared before the switch: {name}")
+            return False
+        return cmd_switch(name) == 0
+
+    # SAFETY: no terminal, no restart — build_restart hands back None for a
+    # non-interactive run, so an unattended timer poll spawns nothing.
+    interactive = sys.stdout.isatty()
+    outcome = autoswitch.run_autoswitch(
+        # "agy", not "antigravity" — the engine keys PROVIDER_VERDICTS and its
+        # IDE-running downgrade off this exact string.
+        "agy",
+        [profile.stem for profile in profiles],
+        active.stem if active is not None else None,
+        probe,
+        switch,
+        autoswitch.build_restart(
+            "agy",
+            _autoswitch_resume,
+            interactive=interactive,
+            # Asked only when the answer can still change something: an
+            # unattended run is pinned to manual-restart anyway, and scanning
+            # the process table costs a process.
+            agy_ide_running=interactive and _antigravity_ide_running(),
+        ),
+    )
+    _render_autoswitch(outcome, probe_error, others=len(profiles) - 1)
+    return 1 if outcome.reason == "switch_failed" else 0
+
+
+def _render_autoswitch(
+    outcome: autoswitch.SwitchOutcome, probe_error: list[str], *, others: int
+) -> None:
+    """Say on the terminal what the engine just decided, and why."""
+    name = outcome.from_profile or "—"
+    if outcome.reason == "disabled":
+        log_yellow("⚠️  Auto-switching is off.")
+        print(
+            f"{DIM}   Turn it on with \"enabled\": true in "
+            f"{autoswitch.config_path()}{RESET}"
+        )
+    elif outcome.reason == "no_active":
+        print_no_active_account("Antigravity", "agy-accounts")
+    elif outcome.reason == "unknown":
+        detail = probe_error[0] if probe_error else "no quota data returned"
+        log_yellow(f"⚠️  Could not read {name}'s quota: {detail}")
+    elif outcome.reason == "below_threshold":
+        ok(f"{name} is at {outcome.used_pct}% used — nothing to switch.")
+    elif outcome.reason == "no_candidate":
+        log_yellow(f"⚠️  {name} is at {outcome.used_pct}% used.")
+        if others < 1:
+            print(f"{DIM}   No other saved Antigravity profile to switch to.{RESET}")
+        else:
+            print(
+                f"{DIM}   agy reports quota only for the live session — "
+                f"cannot verify candidate quota, skipping.{RESET}"
+            )
+            print(
+                f"{DIM}   Set \"agy_blind_switch\": true in "
+                f"{autoswitch.config_path()} to switch anyway.{RESET}"
+            )
+    elif outcome.reason == "switch_failed":
+        log_red(f"❌ {outcome.error}")
+    else:
+        log_yellow(
+            f"⚠️  {outcome.to_profile}'s own quota was NOT verified before "
+            f"switching — agy only reports quota for the live session."
+        )
+        if outcome.restarted is not True:
+            # The switch already happened; a restart that never ran (unattended
+            # poll, IDE running) or failed must not undo that — hand the session
+            # back to the user instead of reporting a failure.
+            log_yellow(
+                autoswitch.manual_restart_message(
+                    "agy", outcome.from_profile or "?", outcome.to_profile or "?"
+                )
+            )
+
+
 # ── entry point ───────────────────────────────────────────────────────────
 
 
@@ -1157,6 +1340,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_refresh(rest[0] if rest else None)
     if command == "sync":
         return cmd_sync()
+    if command == "autoswitch":
+        return cmd_autoswitch()
     if command == "login-switch":
         if not rest:
             log_red("Usage: agy-accounts login-switch <profile_name>")

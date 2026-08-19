@@ -474,6 +474,66 @@ def copy_to_clipboard(text: str) -> bool:
     return False
 
 
+# ── desktop notifications ────────────────────────────────────────────────────
+
+def _osa_string(text: str) -> str:
+    """*text* as an AppleScript string literal (quotes/backslashes escaped)."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _ps_string(text: str) -> str:
+    """*text* as a PowerShell single-quoted literal (``'`` doubled)."""
+    return "'" + text.replace("'", "''") + "'"
+
+
+# Toast via WinRT, which every Windows 10+ box has — no module to install.
+_PS_TOAST = """
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null
+$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(
+    [Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$n = $t.GetElementsByTagName('text')
+$n.Item(0).AppendChild($t.CreateTextNode({title})) > $null
+$n.Item(1).AppendChild($t.CreateTextNode({message})) > $null
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('ai-accounts').Show(
+    [Windows.UI.Notifications.ToastNotification]::new($t))
+"""
+
+
+def desktop_notify(title: str, message: str) -> bool:
+    """Show an OS desktop notification (best-effort, cross-platform).
+
+    - macOS   → ``osascript`` display notification
+    - Linux   → ``notify-send``
+    - Windows → PowerShell toast
+
+    Returns True when the notification was handed to the OS. Never raises:
+    a missing notifier or a failing command is just a False.
+    """
+    if IS_MACOS:
+        script = (
+            f"display notification {_osa_string(message)} "
+            f"with title {_osa_string(title)}"
+        )
+        return _notify_run(["osascript", "-e", script])
+    if IS_LINUX:
+        if not have("notify-send"):
+            return False
+        return _notify_run(["notify-send", "--", title, message])
+    if IS_WINDOWS:
+        script = _PS_TOAST.format(title=_ps_string(title), message=_ps_string(message))
+        return _notify_run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
+        )
+    return False
+
+
+def _notify_run(cmd: Sequence[str]) -> bool:
+    try:
+        return run(cmd, capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def output_and_copy(text: str) -> None:
     """Print to stdout, copy to clipboard, and announce on stderr."""
     print(text)

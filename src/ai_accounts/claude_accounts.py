@@ -31,7 +31,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final
 
-from . import claude_usage
+from . import autoswitch, claude_usage
 from .usage_format import (
     capitalize_first,
     format_unix_time_compact,
@@ -82,6 +82,8 @@ USAGE
   claude-accounts list                  List profiles with usage (never refreshes tokens)
   claude-accounts usage                 Show only the active account's usage row
   claude-accounts switch [<name>]       Switch by name; no name = interactive picker
+  claude-accounts autoswitch            Switch away from the active profile if it is
+                                        low on quota (see ~/.ai-accounts/config.json)
   claude-accounts remove [<name>]       Delete by name; no name = interactive picker
   claude-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
                                         no name = refresh active auth + sync it back
@@ -906,6 +908,122 @@ def cmd_switch_interactive() -> int:
     return cmd_switch(chosen)
 
 
+# ── auto-switch wiring ───────────────────────────────────────────────────────
+# Supplies the shared autoswitch.run_autoswitch engine with claude-specific data
+# only: which profiles exist, which is active, how to check one's usage without
+# activating it, and how to actually switch. The engine owns every decision
+# (threshold, candidate selection, notifications) — see autoswitch.py.
+
+def _autoswitch_probe(name: str) -> claude_usage.UsageWindow | None:
+    """One saved profile's 5-hour usage window, probed with its OWN access
+    token. Never writes the live credentials file or keychain — this must be
+    safe to call on every saved profile, active or not, without changing which
+    account is live. None on a missing/unreadable profile, no access token, or
+    a probe error (incl. HTTP 401/403) — skips the candidate."""
+    profile_file = _profile_file(name)
+    if profile_file is None or not profile_file.is_file():
+        return None
+    oauth = _read_profile_oauth(profile_file)
+    access_token = oauth.get("accessToken") if oauth else None
+    if not (isinstance(access_token, str) and access_token):
+        return None
+    claims = _claims_from_oauth(oauth) if oauth else None
+    snapshot = claude_usage.fetch_usage(access_token, plan=(claims or {}).get("plan"))
+    if snapshot.error:
+        return None
+    return snapshot.five_hour
+
+
+def _autoswitch_switch(name: str) -> bool:
+    """Activate *name* via the existing switch command — no duplicated logic."""
+    return cmd_switch(name) == 0
+
+
+# Env vars a running Claude Code session exports into every command it spawns.
+# Presence alone counts — never the value: a marker set to "0"/"false" would be
+# a truthy string anyway, and over-detecting here fails CLOSED (no resume).
+_CLAUDE_SESSION_ENV: Final = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID")
+
+
+def _inside_claude_session() -> bool:
+    """Whether this process was itself launched from a Claude Code session."""
+    return any(os.environ.get(name) for name in _CLAUDE_SESSION_ENV)
+
+
+def _autoswitch_resume() -> bool:
+    """Start a NEW claude session continuing the most recent conversation.
+
+    `claude --continue` targets the most recent conversation — which, when this
+    command runs inside a Claude Code session, is that very session. The spike
+    makes excluding one's own session a hard requirement
+    (docs/autoswitch-hot-reload-spike.md, claude section), and `--continue`
+    takes no exclusion, so the honest move is to not resume at all and let the
+    caller fall back to manual-restart. Either way no running process is
+    signalled, terminated or otherwise touched — a resume only ever adds one.
+    """
+    if _inside_claude_session():
+        log_yellow(
+            "⚠️  Running inside a Claude Code session — not resuming, "
+            "a resume here would target this very session."
+        )
+        return False
+    if not have("claude"):
+        log_yellow("⚠️  claude is not on PATH — cannot resume the session automatically.")
+        return False
+    return subprocess.run(["claude", "--continue"]).returncode == 0
+
+
+def _render_autoswitch(outcome: autoswitch.SwitchOutcome) -> None:
+    if outcome.reason == "disabled":
+        log_yellow("⚠️  Auto-switch is disabled (see ~/.ai-accounts/config.json: enabled).")
+    elif outcome.reason == "no_active":
+        log_yellow("⚠️  No active Claude profile — nothing to auto-switch from.")
+    elif outcome.reason == "unknown":
+        log_yellow(f"⚠️  Could not determine usage for {outcome.from_profile}.")
+    elif outcome.reason == "below_threshold":
+        print(f"{outcome.from_profile} is at {outcome.used_pct}% used — below the switch threshold.")
+    elif outcome.reason == "no_candidate":
+        log_yellow(
+            f"⚠️  {outcome.from_profile} is at {outcome.used_pct}% used and no other "
+            "Claude account is available to switch to."
+        )
+    elif outcome.reason == "switch_failed":
+        log_red(f"❌ {outcome.error}")
+    else:  # "switched"
+        ok("Auto-switched Claude account", f"{outcome.from_profile} → {outcome.to_profile}")
+        if outcome.restarted is not True:
+            # The switch already happened; a restart that never ran (unattended
+            # poll, own session) or failed must not undo that — hand the session
+            # back to the user instead of reporting a failure.
+            log_yellow(
+                autoswitch.manual_restart_message(
+                    "claude", outcome.from_profile or "?", outcome.to_profile or "?"
+                )
+            )
+
+
+def cmd_autoswitch() -> int:
+    account_dir = _account_dir()
+    profiles = [p.stem for p in sorted(account_dir.glob("*.json"))] if account_dir.is_dir() else []
+    active_profile = _active_profile()
+    active = active_profile.stem if active_profile is not None else None
+
+    outcome = autoswitch.run_autoswitch(
+        "claude",
+        profiles,
+        active,
+        _autoswitch_probe,
+        _autoswitch_switch,
+        # SAFETY: no terminal, no restart — build_restart hands back None for a
+        # non-interactive run, so an unattended timer poll spawns nothing.
+        autoswitch.build_restart(
+            "claude", _autoswitch_resume, interactive=sys.stdout.isatty()
+        ),
+    )
+    _render_autoswitch(outcome)
+    return 1 if outcome.reason == "switch_failed" else 0
+
+
 def cmd_remove(name: str) -> int:
     profile_file = _profile_file(name)
     if profile_file is None:
@@ -1132,6 +1250,8 @@ def main(argv: list[str] | None = None) -> int:
         if not rest:
             return cmd_switch_interactive()
         return cmd_switch(rest[0])
+    if command == "autoswitch":
+        return cmd_autoswitch()
     if command == "remove":
         if not rest:
             return cmd_remove_interactive()

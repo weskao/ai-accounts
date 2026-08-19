@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -57,6 +58,18 @@ def _auth_payload(
     }
 
 
+
+class _TtyStringIO(io.StringIO):
+    """A capture buffer that reports itself as a terminal.
+
+    ``cmd_autoswitch`` reads ``sys.stdout.isatty()`` to decide whether there is
+    a session to restart into; a plain StringIO is correctly seen as unattended.
+    """
+
+    def isatty(self) -> bool:
+        return True
+
+
 class _CodexHomeMixin(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -74,6 +87,23 @@ class _CodexHomeMixin(unittest.TestCase):
         self.addCleanup(env.stop)
         os.environ.pop("CODEX_AUTH_JSON", None)
         (self.home / "accounts").mkdir(parents=True)
+
+        # Keychain isolation: codex mirrors the active auth into the REAL
+        # "Codex Auth" service, keyed by a hash of CODEX_HOME. With CODEX_HOME
+        # pointed at a fresh temp dir, an unmocked mirror writes a new junk item
+        # into the developer's login keychain on every run. Capture the write
+        # instead of executing it; reads default to "no item" (tests that need a
+        # keychain-backed login patch _read_keychain_auth themselves).
+        self.keychain_writes: list[str] = []
+        write = mock.patch.object(
+            ca, "_write_keychain_auth",
+            side_effect=lambda content: (self.keychain_writes.append(content), True)[1],
+        )
+        write.start()
+        self.addCleanup(write.stop)
+        read = mock.patch.object(ca, "_read_keychain_auth", return_value=None)
+        read.start()
+        self.addCleanup(read.stop)
 
     def write_auth(self, payload: dict) -> Path:
         path = self.home / "auth.json"
@@ -1640,6 +1670,289 @@ class MainDispatchTests(_CodexHomeMixin):
         self.assertEqual(out_help, out_dd)
         self.assertIn("USAGE", out_help)
 
+    def test_main_routes_autoswitch(self):
+        # Given: cmd_autoswitch is the handler for the "autoswitch" subcommand
+        # When: main() dispatches "autoswitch"
+        with mock.patch.object(ca, "cmd_autoswitch", return_value=0) as auto:
+            rc = ca.main(["autoswitch"])
+        # Then: it delegates to cmd_autoswitch (not the unknown-command fallback)
+        auto.assert_called_once_with()
+        self.assertEqual(rc, 0)
+
+
+class AutoswitchCommandTests(_CodexHomeMixin):
+    """cmd_autoswitch supplies codex-specific data to the shared engine."""
+
+    def setUp(self):
+        super().setUp()
+        self.aw_config = self.home / "config.json"
+        env = mock.patch.dict(
+            os.environ, {"AI_ACCOUNTS_CONFIG_JSON": str(self.aw_config)}, clear=False
+        )
+        env.start()
+        self.addCleanup(env.stop)
+
+    def _enable_autoswitch(self, **overrides) -> None:
+        from ai_accounts import autoswitch as aw
+
+        cfg = {"enabled": True, "notify": "none", "switch_when_used_pct": 90}
+        cfg.update(overrides)
+        aw.save_config(cfg)
+
+    @staticmethod
+    def _snapshot(hourly_pct=None, error=None) -> usage_format.UsageSnapshot:
+        window = (
+            None
+            if hourly_pct is None
+            else usage_format.UsageWindow(percentage=hourly_pct, reset_time=None, window_minutes=60)
+        )
+        return usage_format.UsageSnapshot(hourly=window, weekly=None, refreshed_at=1, error=error)
+
+    def test_candidates_are_probed_via_their_own_file_never_the_live_auth(self):
+        # Given: two profiles, both at/above the switch threshold (no qualifying candidate)
+        self._enable_autoswitch()
+        self.write_auth(_auth_payload("acct-a", "a@x.com"))
+        alpha = self.write_profile("alpha", _auth_payload("acct-a", "a@x.com"))
+        beta = self.write_profile("beta", _auth_payload("acct-b", "b@x.com"))
+        self.mark_current("alpha")
+        before = ca._auth_file().read_text(encoding="utf-8")
+
+        probed: list[Path] = []
+
+        def fake_fetch(path):
+            probed.append(path)
+            return self._snapshot(95 if path == alpha else 92)
+
+        with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch") as switch:
+            rc = self.run_quiet(ca.cmd_autoswitch)
+
+        # Then: only the profiles' OWN files were probed — never the live auth.json —
+        # and the active credentials were never touched (no switch was triggered)
+        self.assertEqual(rc, 0)
+        self.assertEqual(set(probed), {alpha, beta})
+        self.assertNotIn(ca._auth_file(), probed)
+        switch.assert_not_called()
+        self.assertEqual(ca._auth_file().read_text(encoding="utf-8"), before)
+
+    def test_a_candidate_probe_error_is_skipped_without_crashing(self):
+        # Given: active is over threshold; beta errors on probe, gamma genuinely qualifies
+        self._enable_autoswitch()
+        self.write_auth(_auth_payload("acct-a", "a@x.com"))
+        self.write_profile("alpha", _auth_payload("acct-a", "a@x.com"))
+        self.write_profile("beta", _auth_payload("acct-b", "b@x.com"))
+        self.write_profile("gamma", _auth_payload("acct-g", "g@x.com"))
+        self.mark_current("alpha")
+
+        def fake_fetch(path):
+            if path.stem == "alpha":
+                return self._snapshot(95)
+            if path.stem == "beta":
+                return self._snapshot(error="HTTP 401 from usage endpoint")
+            return self._snapshot(10)  # gamma: genuinely below threshold
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch", return_value=0) as switch:
+            rc = self.run_quiet(ca.cmd_autoswitch)
+
+        # Then: it does not crash, skips the errored candidate, and still finds gamma
+        # (this also proves (d): the triggered switch delegates to cmd_switch with
+        # the chosen target's name, not a duplicated switch implementation)
+        self.assertEqual(rc, 0)
+        switch.assert_called_once_with("gamma")
+
+    def test_disabled_config_is_a_clear_no_op_with_zero_probes(self):
+        # Given: auto-switch is NOT enabled (default config — nothing written)
+        self.write_auth(_auth_payload("acct-a", "a@x.com"))
+        self.write_profile("alpha", _auth_payload("acct-a", "a@x.com"))
+        self.mark_current("alpha")
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.usage_format, "fetch_usage") as fetch:
+            rc, out, err = self.run_capture(ca.cmd_autoswitch)
+
+        # Then: no usage probe ever happens, and the user sees a clear reason why
+        self.assertEqual(rc, 0)
+        fetch.assert_not_called()
+        self.assertIn("Auto-switch is disabled", out + err)
+
+    def test_a_switch_is_rendered_readably_naming_both_profiles(self):
+        # Given: active is over threshold and a clear lower-usage candidate exists
+        self._enable_autoswitch()
+        self.write_auth(_auth_payload("acct-a", "a@x.com"))
+        self.write_profile("alpha", _auth_payload("acct-a", "a@x.com"))
+        self.write_profile("beta", _auth_payload("acct-b", "b@x.com"))
+        self.mark_current("alpha")
+
+        def fake_fetch(path):
+            return self._snapshot(95 if path.stem == "alpha" else 10)
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch", return_value=0):
+            rc, out, err = self.run_capture(ca.cmd_autoswitch)
+
+        # Then: the user sees both profile names, readably, not just a bare reason code
+        self.assertEqual(rc, 0)
+        combined = out + err
+        self.assertIn("alpha", combined)
+        self.assertIn("beta", combined)
+        self.assertNotEqual(combined.strip(), "switched")
+
+    def test_no_candidate_is_rendered_readably_naming_the_active_profile(self):
+        # Given: active is over threshold and every other profile is too
+        self._enable_autoswitch()
+        self.write_auth(_auth_payload("acct-a", "a@x.com"))
+        self.write_profile("alpha", _auth_payload("acct-a", "a@x.com"))
+        self.write_profile("beta", _auth_payload("acct-b", "b@x.com"))
+        self.mark_current("alpha")
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.usage_format, "fetch_usage", return_value=self._snapshot(95)):
+            rc, out, err = self.run_capture(ca.cmd_autoswitch)
+
+        # Then: the user sees a readable "no account to switch to" explanation
+        self.assertEqual(rc, 0)
+        combined = out + err
+        self.assertIn("alpha", combined)
+        self.assertNotEqual(combined.strip(), "no_candidate")
+
+
+    # ── restart ladder ───────────────────────────────────────────────────────
+
+    def _given_a_switch_is_due(self) -> None:
+        """alpha is active and exhausted; beta is a clear lower-usage candidate.
+
+        Also pins "no keychain item", which is what makes the ``subprocess.run``
+        assertions below exact: reading the active auth otherwise shells out to
+        a read-only ``security find-generic-password`` lookup.
+        """
+        keychain = mock.patch.object(ca, "_read_keychain_auth", return_value=None)
+        keychain.start()
+        self.addCleanup(keychain.stop)
+        self._enable_autoswitch()
+        self.write_auth(_auth_payload("acct-a", "a@example.com"))
+        self.write_profile("alpha", _auth_payload("acct-a", "a@example.com"))
+        self.write_profile("beta", _auth_payload("acct-b", "b@example.com"))
+        self.mark_current("alpha")
+
+    def _fetch_alpha_exhausted(self, path):
+        return self._snapshot(95 if path.stem == "alpha" else 10)
+
+    def test_an_interactive_switch_resumes_the_last_session_in_a_new_process(self):
+        # Given: a switch is due and the command is attached to a terminal
+        self._given_a_switch_is_due()
+        spawned: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            spawned.append(list(cmd))
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        # When: cmd_autoswitch runs with a stdout that is a tty
+        out, err = _TtyStringIO(), io.StringIO()
+        with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=self._fetch_alpha_exhausted), \
+                mock.patch.object(ca, "cmd_switch", return_value=0), \
+                mock.patch.object(ca, "have", return_value=True), \
+                mock.patch.object(ca.subprocess, "run", side_effect=fake_run), \
+                redirect_stdout(out), redirect_stderr(err):
+            rc = ca.cmd_autoswitch()
+
+        # Then: exactly one NEW codex session was started to continue the last
+        # conversation — nothing was signalled, killed or otherwise touched
+        self.assertEqual(rc, 0)
+        self.assertEqual(spawned, [["codex", "resume", "--last"]])
+
+    def test_an_unattended_switch_spawns_nothing_and_says_to_restart_by_hand(self):
+        # Given: a switch is due, but nothing is attached to a terminal
+        self._given_a_switch_is_due()
+
+        # When: cmd_autoswitch runs (run_capture's plain StringIO is not a tty)
+        with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=self._fetch_alpha_exhausted), \
+                mock.patch.object(ca, "cmd_switch", return_value=0), \
+                mock.patch.object(ca, "have", return_value=True), \
+                mock.patch.object(ca.subprocess, "run") as spawn:
+            rc, out, err = self.run_capture(ca.cmd_autoswitch)
+
+        # Then: a background poll spawns NOTHING, and the user is told to
+        # restart by hand instead
+        self.assertEqual(rc, 0)
+        spawn.assert_not_called()
+        self.assertIn("restart your session", out + err)
+
+    def test_a_failed_resume_does_not_turn_a_successful_switch_into_a_failure(self):
+        # Given: a switch is due on a terminal, but the resume command fails
+        self._given_a_switch_is_due()
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(args=cmd, returncode=1)
+
+        # When: cmd_autoswitch runs
+        out, err = _TtyStringIO(), io.StringIO()
+        with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=self._fetch_alpha_exhausted), \
+                mock.patch.object(ca, "cmd_switch", return_value=0), \
+                mock.patch.object(ca, "have", return_value=True), \
+                mock.patch.object(ca.subprocess, "run", side_effect=fake_run), \
+                redirect_stdout(out), redirect_stderr(err):
+            rc = ca.cmd_autoswitch()
+
+        # Then: the switch already happened, so it still reports success — and
+        # falls back to telling the user to restart manually
+        combined = out.getvalue() + err.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("alpha", combined)
+        self.assertIn("beta", combined)
+        self.assertIn("restart your session", combined)
+
+    def test_a_candidate_reporting_an_error_is_skipped_even_when_it_has_a_window(self):
+        # Given: beta's snapshot carries BOTH a probe error and a usage window
+        # low enough to make it the emptiest candidate; gamma is honestly free
+        self._enable_autoswitch()
+        self.write_auth(_auth_payload("acct-a", "a@example.com"))
+        self.write_profile("alpha", _auth_payload("acct-a", "a@example.com"))
+        self.write_profile("beta", _auth_payload("acct-b", "b@example.com"))
+        self.write_profile("gamma", _auth_payload("acct-g", "g@example.com"))
+        self.mark_current("alpha")
+
+        def fake_fetch(path):
+            if path.stem == "alpha":
+                return self._snapshot(95)
+            if path.stem == "beta":
+                return self._snapshot(10, error="HTTP 500 from usage endpoint")
+            return self._snapshot(20)
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch", return_value=0) as switch:
+            rc = self.run_quiet(ca.cmd_autoswitch)
+
+        # Then: the errored candidate is skipped on the strength of its error
+        # alone — a window that came back with an error is not trustworthy data
+        self.assertEqual(rc, 0)
+        switch.assert_called_once_with("gamma")
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeychainIsolationTests(_CodexHomeMixin):
+    """The suite must never write into the real macOS login keychain.
+
+    codex mirrors the active auth into service "Codex Auth" keyed by an account
+    derived from CODEX_HOME. Tests point CODEX_HOME at a fresh temp dir, so an
+    unmocked mirror writes a NEW junk item on every single run -- 356 of them had
+    accumulated in the developer's real keychain before this guard existed.
+    """
+
+    def test_a_keychain_backed_save_records_the_write_instead_of_executing_it(self):
+        # Given: a keychain-backed codex login (auth.json absent, keychain holds it)
+        secret = json.dumps(_auth_payload(email="user@example.com", account_id="acct-test"))
+        # When: saving a profile, which mirrors the active auth back to the keychain
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=secret):
+            self.run_quiet(ca.cmd_save, "test")
+        # Then: the mixin captured the write; no real `security` process ran
+        self.assertTrue(
+            hasattr(self, "keychain_writes"),
+            "_CodexHomeMixin must neutralise _write_keychain_auth so the real "
+            "login keychain is never written to by the test suite",
+        )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -13,6 +14,23 @@ from unittest import mock
 from ai_accounts import claude_accounts as ca
 from ai_accounts import claude_usage as cu
 
+
+
+# Env vars a running Claude Code session exports into every command it spawns.
+# The suite itself may well be running inside one — which is exactly the case
+# the resume exclusion must refuse.
+_CLAUDE_SESSION_MARKERS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID")
+
+
+class _TtyStringIO(io.StringIO):
+    """A capture buffer that reports itself as a terminal.
+
+    ``cmd_autoswitch`` reads ``sys.stdout.isatty()`` to decide whether there is
+    a session to restart into; a plain StringIO is correctly seen as unattended.
+    """
+
+    def isatty(self) -> bool:
+        return True
 
 def _oauth(
     *,
@@ -592,6 +610,291 @@ class LoginSwitchTests(_HomeMixin):
         assert active is not None
         self.assertEqual(active["refreshToken"], "rt-old")
         self.assertFalse((self.home / "accounts" / "new.json").exists())
+
+
+class MainDispatchTests(_HomeMixin):
+    def test_main_routes_autoswitch(self):
+        # Given: cmd_autoswitch is the handler for the "autoswitch" subcommand
+        # When: main() dispatches "autoswitch"
+        with mock.patch.object(ca, "cmd_autoswitch", return_value=0) as auto:
+            rc = ca.main(["autoswitch"])
+        # Then: it delegates to cmd_autoswitch (not the unknown-command fallback)
+        auto.assert_called_once_with()
+        self.assertEqual(rc, 0)
+
+
+class AutoswitchCommandTests(_HomeMixin):
+    """cmd_autoswitch supplies claude-specific data to the shared engine."""
+
+    def setUp(self):
+        super().setUp()
+        self.aw_config = self.home / "config.json"
+        env = mock.patch.dict(
+            os.environ, {"AI_ACCOUNTS_CONFIG_JSON": str(self.aw_config)}, clear=False
+        )
+        env.start()
+        self.addCleanup(env.stop)
+
+    def _enable_autoswitch(self, **overrides) -> None:
+        from ai_accounts import autoswitch as aw
+
+        cfg = {"enabled": True, "notify": "none", "switch_when_used_pct": 90}
+        cfg.update(overrides)
+        aw.save_config(cfg)
+
+    @staticmethod
+    def _snapshot(five_hour_pct=None, error=None) -> cu.UsageSnapshot:
+        window = (
+            None
+            if five_hour_pct is None
+            else cu.UsageWindow(percentage=five_hour_pct, reset_time=None, window_minutes=300)
+        )
+        return cu.UsageSnapshot(five_hour=window, seven_day=None, plan="max", refreshed_at=1, error=error)
+
+    def test_candidates_are_probed_via_their_own_token_never_the_live_creds(self):
+        # Given: two profiles, both at/above the switch threshold (no qualifying candidate)
+        self._enable_autoswitch()
+        self.set_active(_oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("alpha", _oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("beta", _oauth(access="at-beta", refresh="rt-beta"))
+        self.mark_current("alpha")
+
+        probed: list[str] = []
+
+        def fake_fetch(access_token, *, plan=None, timeout=20):
+            probed.append(access_token)
+            return self._snapshot(95 if access_token == "at-alpha" else 92)
+
+        with mock.patch.object(ca.claude_usage, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch") as switch, \
+                mock.patch.object(ca, "_write_active_oauth") as write_active:
+            rc = self.quiet(ca.cmd_autoswitch)
+
+        # Then: only the profiles' OWN access tokens were probed — never the live
+        # credentials file/keychain was written during probing (no switch triggered)
+        self.assertEqual(rc, 0)
+        self.assertEqual(set(probed), {"at-alpha", "at-beta"})
+        switch.assert_not_called()
+        write_active.assert_not_called()
+
+    def test_a_candidate_probe_error_is_skipped_without_crashing(self):
+        # Given: active is over threshold; beta errors (401) on probe, gamma qualifies
+        self._enable_autoswitch()
+        self.set_active(_oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("alpha", _oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("beta", _oauth(access="at-beta", refresh="rt-beta"))
+        self.write_profile("gamma", _oauth(access="at-gamma", refresh="rt-gamma"))
+        self.mark_current("alpha")
+
+        def fake_fetch(access_token, *, plan=None, timeout=20):
+            if access_token == "at-alpha":
+                return self._snapshot(95)
+            if access_token == "at-beta":
+                return self._snapshot(error="HTTP 401 from usage endpoint")
+            return self._snapshot(10)  # gamma: genuinely below threshold
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.claude_usage, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch", return_value=0) as switch:
+            rc = self.quiet(ca.cmd_autoswitch)
+
+        # Then: it does not crash, skips the errored candidate, and still finds gamma
+        # (this also proves the triggered switch delegates to cmd_switch by name)
+        self.assertEqual(rc, 0)
+        switch.assert_called_once_with("gamma")
+
+    def test_disabled_config_is_a_clear_no_op_with_zero_probes(self):
+        # Given: auto-switch is NOT enabled (default config — nothing written)
+        self.set_active(_oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("alpha", _oauth(access="at-alpha", refresh="rt-alpha"))
+        self.mark_current("alpha")
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.claude_usage, "fetch_usage") as fetch:
+            rc, out, err = self.capture(ca.cmd_autoswitch)
+
+        # Then: no usage probe ever happens, and the user sees a clear reason why
+        self.assertEqual(rc, 0)
+        fetch.assert_not_called()
+        self.assertIn("Auto-switch is disabled", out + err)
+
+    def test_a_switch_is_rendered_readably_naming_both_profiles(self):
+        # Given: active is over threshold and a clear lower-usage candidate exists
+        self._enable_autoswitch()
+        self.set_active(_oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("alpha", _oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("beta", _oauth(access="at-beta", refresh="rt-beta"))
+        self.mark_current("alpha")
+
+        def fake_fetch(access_token, *, plan=None, timeout=20):
+            return self._snapshot(95 if access_token == "at-alpha" else 10)
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.claude_usage, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch", return_value=0):
+            rc, out, err = self.capture(ca.cmd_autoswitch)
+
+        # Then: the user sees both profile names, readably, not just a bare reason code
+        self.assertEqual(rc, 0)
+        combined = out + err
+        self.assertIn("alpha", combined)
+        self.assertIn("beta", combined)
+        self.assertNotEqual(combined.strip(), "switched")
+
+    def test_no_candidate_is_rendered_readably_naming_the_active_profile(self):
+        # Given: active is over threshold and every other profile is too
+        self._enable_autoswitch()
+        self.set_active(_oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("alpha", _oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("beta", _oauth(access="at-beta", refresh="rt-beta"))
+        self.mark_current("alpha")
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=self._snapshot(95)):
+            rc, out, err = self.capture(ca.cmd_autoswitch)
+
+        # Then: the user sees a readable "no account to switch to" explanation
+        self.assertEqual(rc, 0)
+        combined = out + err
+        self.assertIn("alpha", combined)
+        self.assertNotEqual(combined.strip(), "no_candidate")
+
+
+    # ── restart ladder ───────────────────────────────────────────────────────
+
+    def _given_a_switch_is_due(self, *, inside_claude: str | None = None) -> None:
+        """alpha active and exhausted, beta a clear lower-usage candidate.
+
+        *inside_claude* names the Claude Code env marker to leave set; by
+        default every marker is cleared, so the run counts as "not launched
+        from inside a claude session".
+        """
+        env = mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        for marker in _CLAUDE_SESSION_MARKERS:
+            os.environ.pop(marker, None)
+        if inside_claude is not None:
+            os.environ[inside_claude] = "1"
+        self._enable_autoswitch()
+        self.set_active(_oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("alpha", _oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("beta", _oauth(access="at-beta", refresh="rt-beta"))
+        self.mark_current("alpha")
+
+    def _fetch_alpha_exhausted(self, access_token, *, plan=None, timeout=20):
+        return self._snapshot(95 if access_token == "at-alpha" else 10)
+
+    def _autoswitch_on_a_tty(self, fake_run) -> tuple[int, str]:
+        """cmd_autoswitch with a stdout that is a terminal and *fake_run* for spawns."""
+        out, err = _TtyStringIO(), io.StringIO()
+        with mock.patch.object(ca.claude_usage, "fetch_usage", side_effect=self._fetch_alpha_exhausted), \
+                mock.patch.object(ca, "cmd_switch", return_value=0), \
+                mock.patch.object(ca, "have", return_value=True), \
+                mock.patch.object(ca.subprocess, "run", side_effect=fake_run), \
+                redirect_stdout(out), redirect_stderr(err):
+            rc = ca.cmd_autoswitch()
+        return rc, out.getvalue() + err.getvalue()
+
+    def test_an_interactive_switch_resumes_the_conversation_in_a_new_process(self):
+        # Given: a switch is due, on a terminal, not from inside a claude session
+        self._given_a_switch_is_due()
+        spawned: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            spawned.append(list(cmd))
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        # When: cmd_autoswitch runs
+        rc, _ = self._autoswitch_on_a_tty(fake_run)
+
+        # Then: exactly one NEW claude session was started to continue the most
+        # recent conversation — nothing was signalled, killed or restarted
+        self.assertEqual(rc, 0)
+        self.assertEqual(spawned, [["claude", "--continue"]])
+
+    def test_a_switch_driven_from_inside_a_claude_session_never_resumes_itself(self):
+        # Given: the same switch, but this command was launched from inside a
+        # running Claude Code session — `claude --continue` would target THAT
+        # session (docs/autoswitch-hot-reload-spike.md, claude section)
+        for marker in _CLAUDE_SESSION_MARKERS:
+            with self.subTest(marker=marker):
+                self.setUp()
+                self._given_a_switch_is_due(inside_claude=marker)
+                spawned: list[list[str]] = []
+
+                def fake_run(cmd, **kwargs):
+                    spawned.append(list(cmd))
+                    return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+                # When: cmd_autoswitch runs on a terminal
+                rc, report = self._autoswitch_on_a_tty(fake_run)
+
+                # Then: nothing is spawned at all, the switch still succeeds,
+                # and the user is told to restart by hand
+                self.assertEqual(rc, 0)
+                self.assertEqual(spawned, [])
+                self.assertIn("restart your session", report)
+
+    def test_an_unattended_switch_spawns_nothing_and_says_to_restart_by_hand(self):
+        # Given: a switch is due, but nothing is attached to a terminal
+        self._given_a_switch_is_due()
+
+        # When: cmd_autoswitch runs (capture's plain StringIO is not a tty)
+        with mock.patch.object(ca.claude_usage, "fetch_usage", side_effect=self._fetch_alpha_exhausted), \
+                mock.patch.object(ca, "cmd_switch", return_value=0), \
+                mock.patch.object(ca, "have", return_value=True), \
+                mock.patch.object(ca.subprocess, "run") as spawn:
+            rc, out, err = self.capture(ca.cmd_autoswitch)
+
+        # Then: a background poll spawns NOTHING, and says so in words
+        self.assertEqual(rc, 0)
+        spawn.assert_not_called()
+        self.assertIn("restart your session", out + err)
+
+    def test_a_failed_resume_does_not_turn_a_successful_switch_into_a_failure(self):
+        # Given: a switch is due on a terminal, but the resume command fails
+        self._given_a_switch_is_due()
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(args=cmd, returncode=1)
+
+        # When: cmd_autoswitch runs
+        rc, report = self._autoswitch_on_a_tty(fake_run)
+
+        # Then: the switch already happened, so it still reports success — with
+        # a fallback telling the user to restart manually
+        self.assertEqual(rc, 0)
+        self.assertIn("alpha", report)
+        self.assertIn("beta", report)
+        self.assertIn("restart your session", report)
+
+    def test_a_candidate_reporting_an_error_is_skipped_even_when_it_has_a_window(self):
+        # Given: beta's snapshot carries BOTH a probe error and a usage window
+        # low enough to make it the emptiest candidate; gamma is honestly free
+        self._enable_autoswitch()
+        self.set_active(_oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("alpha", _oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("beta", _oauth(access="at-beta", refresh="rt-beta"))
+        self.write_profile("gamma", _oauth(access="at-gamma", refresh="rt-gamma"))
+        self.mark_current("alpha")
+
+        def fake_fetch(access_token, *, plan=None, timeout=20):
+            if access_token == "at-alpha":
+                return self._snapshot(95)
+            if access_token == "at-beta":
+                return self._snapshot(10, error="HTTP 500 from usage endpoint")
+            return self._snapshot(20)
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.claude_usage, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch", return_value=0) as switch:
+            rc = self.quiet(ca.cmd_autoswitch)
+
+        # Then: the errored candidate is skipped on the strength of its error
+        # alone — a window that came back with an error is not trustworthy data
+        self.assertEqual(rc, 0)
+        switch.assert_called_once_with("gamma")
 
 
 if __name__ == "__main__":

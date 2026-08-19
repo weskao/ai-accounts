@@ -8,6 +8,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from ai_accounts import autoswitch as aw
 from ai_accounts import grok_accounts as ga
 from ai_accounts._present import _ANSI_RE
 
@@ -292,6 +293,32 @@ class GrokAccountsTests(unittest.TestCase):
         self.assertIn(
             "Unknown or incomplete command: frobnicate", _ANSI_RE.sub("", err.getvalue())
         )
+
+
+class GrokAutoswitchTests(unittest.TestCase):
+    """grok exposes no quota API at all, so autoswitch can only say so."""
+
+    def test_autoswitch_reports_unsupported_and_exits_zero(self) -> None:
+        # Given: grok-accounts, which has no quota endpoint to consult
+        out, err = io.StringIO(), io.StringIO()
+
+        # When: the autoswitch subcommand runs
+        with (
+            mock.patch.object(aw, "run_autoswitch") as engine,
+            redirect_stdout(out),
+            redirect_stderr(err),
+        ):
+            rc = ga.main(["autoswitch"])
+
+        # Then: exit 0 (the ai-accounts fan-out must not fail over grok),
+        # exactly one explicit line, and the engine is never consulted.
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            _ANSI_RE.sub("", out.getvalue()).splitlines(),
+            ["autoswitch unsupported for grok: no quota API"],
+        )
+        self.assertEqual(err.getvalue(), "")
+        engine.assert_not_called()
 
 
 if __name__ == "__main__":

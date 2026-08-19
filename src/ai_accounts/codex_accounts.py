@@ -24,7 +24,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import usage_format
+from . import autoswitch, usage_format
 from ._present import (
     _ANSI_RE as _ANSI_RE,
     accounts_table,
@@ -66,6 +66,8 @@ USAGE
   codex-accounts list                  List profiles with usage (never refreshes tokens)
   codex-accounts usage                 Show only the active account's usage row
   codex-accounts switch [<name>]       Switch by name; no name = interactive picker
+  codex-accounts autoswitch            Switch away from the active profile if it is
+                                       low on quota (see ~/.ai-accounts/config.json)
   codex-accounts remove [<name>]       Delete a saved profile; no name = interactive picker
   codex-accounts refresh [<name>]      Refresh tokens via OAuth (no browser, no logout);
                                        no name = refresh active auth + sync it back
@@ -997,6 +999,99 @@ def cmd_switch_interactive() -> int:
     return cmd_switch(chosen)
 
 
+# ── auto-switch wiring ───────────────────────────────────────────────────────
+# Supplies the shared autoswitch.run_autoswitch engine with codex-specific data
+# only: which profiles exist, which is active, how to check one's usage without
+# activating it, and how to actually switch. The engine owns every decision
+# (threshold, candidate selection, notifications) — see autoswitch.py.
+
+def _autoswitch_probe(name: str) -> usage_format.UsageWindow | None:
+    """One saved profile's hourly usage window, read from its OWN file.
+
+    Never touches the live auth.json or keychain — this must be safe to call
+    on every saved profile, active or not, without changing which account is
+    live. None on a missing profile or a probe error (skips the candidate).
+    """
+    profile_file = _profile_file(name)
+    if profile_file is None or not profile_file.is_file():
+        return None
+    snapshot = usage_format.fetch_usage(profile_file)
+    if snapshot.error:
+        return None
+    return snapshot.hourly
+
+
+def _autoswitch_switch(name: str) -> bool:
+    """Activate *name* via the existing switch command — no duplicated logic."""
+    return cmd_switch(name) == 0
+
+
+def _autoswitch_resume() -> bool:
+    """Start a NEW codex session continuing the last conversation.
+
+    A "restart" here is only ever an addition: `codex resume --last`
+    (docs/autoswitch-hot-reload-spike.md, codex section) opens a fresh process
+    that picks up where the old one left off. No running process is signalled,
+    terminated or otherwise touched. Only reached on the auto-restart rung,
+    which autoswitch.build_restart grants an interactive run alone.
+    """
+    if not have("codex"):
+        log_yellow("⚠️  codex is not on PATH — cannot resume the session automatically.")
+        return False
+    return subprocess.run(["codex", "resume", "--last"]).returncode == 0
+
+
+def _render_autoswitch(outcome: autoswitch.SwitchOutcome) -> None:
+    if outcome.reason == "disabled":
+        log_yellow("⚠️  Auto-switch is disabled (see ~/.ai-accounts/config.json: enabled).")
+    elif outcome.reason == "no_active":
+        log_yellow("⚠️  No active Codex profile — nothing to auto-switch from.")
+    elif outcome.reason == "unknown":
+        log_yellow(f"⚠️  Could not determine usage for {outcome.from_profile}.")
+    elif outcome.reason == "below_threshold":
+        print(f"{outcome.from_profile} is at {outcome.used_pct}% used — below the switch threshold.")
+    elif outcome.reason == "no_candidate":
+        log_yellow(
+            f"⚠️  {outcome.from_profile} is at {outcome.used_pct}% used and no other "
+            "Codex account is available to switch to."
+        )
+    elif outcome.reason == "switch_failed":
+        log_red(f"❌ {outcome.error}")
+    else:  # "switched"
+        ok("Auto-switched Codex account", f"{outcome.from_profile} → {outcome.to_profile}")
+        if outcome.restarted is not True:
+            # The switch already happened; a restart that never ran (unattended
+            # poll) or failed must not undo that — hand the session back to the
+            # user instead of reporting a failure.
+            log_yellow(
+                autoswitch.manual_restart_message(
+                    "codex", outcome.from_profile or "?", outcome.to_profile or "?"
+                )
+            )
+
+
+def cmd_autoswitch() -> int:
+    account_dir = _account_dir()
+    profiles = [p.stem for p in sorted(account_dir.glob("*.json"))] if account_dir.is_dir() else []
+    active_profile = _active_profile()
+    active = active_profile.stem if active_profile is not None else None
+
+    outcome = autoswitch.run_autoswitch(
+        "codex",
+        profiles,
+        active,
+        _autoswitch_probe,
+        _autoswitch_switch,
+        # SAFETY: no terminal, no restart — build_restart hands back None for a
+        # non-interactive run, so an unattended timer poll spawns nothing.
+        autoswitch.build_restart(
+            "codex", _autoswitch_resume, interactive=sys.stdout.isatty()
+        ),
+    )
+    _render_autoswitch(outcome)
+    return 1 if outcome.reason == "switch_failed" else 0
+
+
 def cmd_remove(name: str) -> int:
     profile_file = _profile_file(name)
     if profile_file is None:
@@ -1234,6 +1329,8 @@ def main(argv: list[str] | None = None) -> int:
         if not rest:
             return cmd_switch_interactive()
         return cmd_switch(rest[0])
+    if command == "autoswitch":
+        return cmd_autoswitch()
     if command == "remove":
         if not rest:
             return cmd_remove_interactive()

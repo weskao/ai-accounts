@@ -41,6 +41,7 @@ USAGE
   grok-accounts refresh [<name>]      Let Grok refresh the active/profile session
   grok-accounts refresh --all         Refresh every saved profile through Grok
   grok-accounts sync                  Copy the active auth back to its matching profile
+  grok-accounts autoswitch            Report that grok has no quota API to switch on
   grok-accounts login-switch <name>   Fresh Grok OAuth login + save as <name>
   grok-accounts -h | --help | help    Show this help
 
@@ -570,6 +571,18 @@ def cmd_login_switch(name: str) -> int:
     return cmd_save(name) if result.returncode == 0 else result.returncode
 
 
+def cmd_autoswitch() -> int:
+    """Say plainly that grok cannot participate in auto-switching.
+
+    xAI ships no quota endpoint and the Grok Build CLI exposes none, so there
+    is no usage figure to compare against a threshold — nothing to guess at,
+    and nothing worth faking. Exits 0 so the `ai-accounts autoswitch` fan-out
+    over all four providers is not reported as a failure over this one.
+    """
+    print("autoswitch unsupported for grok: no quota API")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -592,6 +605,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_refresh(rest[0] if rest else None)
     if command == "sync":
         return cmd_sync()
+    if command == "autoswitch":
+        return cmd_autoswitch()
     if command == "login-switch" and rest:
         return cmd_login_switch(rest[0])
     log_red(f"❌ Unknown or incomplete command: {command}")

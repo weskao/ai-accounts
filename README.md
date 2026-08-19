@@ -68,7 +68,7 @@ After install, the following commands are available on `PATH`:
 | `claude-accounts` | Manage multiple Claude Code login profiles and inspect usage |
 | `agy-accounts` | Manage multiple Antigravity OAuth profiles and inspect quota (macOS) |
 | `grok-accounts` | Manage multiple Grok Build CLI OAuth profiles (save / list / switch / refresh) |
-| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `usage`, `who`, `refresh`, `sync`, …) to all four `*-accounts` |
+| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `usage`, `who`, `refresh`, `sync`, `autoswitch`, …) to all four `*-accounts`, plus its own `config`/timer commands for [auto-switch on low quota](#auto-switch-on-low-quota) |
 
 ## Update
 
@@ -414,6 +414,8 @@ codex-accounts refresh [<name>]      # renew tokens via OAuth refresh (no browse
 codex-accounts refresh --all         # renew every saved profile in one run
 codex-accounts sync                  # copy the active auth back to its matching profile
 codex-accounts login-switch <name>   # codex logout + codex login + save as <name>
+codex-accounts autoswitch            # switch away from the active profile if it's low on
+                                     # quota (see "Auto-switch on low quota" below)
 codex-accounts -h | --help | help    # show this help
 ```
 
@@ -538,6 +540,8 @@ claude-accounts refresh [<name>]      # renew tokens via OAuth refresh (no brows
 claude-accounts refresh --all         # renew every saved profile in one run
 claude-accounts sync                  # copy the active auth back to its matching profile
 claude-accounts login-switch <name>   # `claude auth login` + save as <name>
+claude-accounts autoswitch            # switch away from the active profile if it's low on
+                                       # quota (see "Auto-switch on low quota" below)
 claude-accounts -h | --help | help    # show this help
 ```
 
@@ -624,6 +628,8 @@ agy-accounts refresh [<name>]      # let agy refresh the session/quota and save 
 agy-accounts refresh --all         # refresh every saved profile through agy
 agy-accounts sync                  # copy the active Keychain session to its profile
 agy-accounts login-switch <name>   # official agy browser login + save as <name>
+agy-accounts autoswitch            # leave the active account when its quota runs out
+                                   # (opt-in blind mode — see "Auto-switch on low quota")
 agy-accounts -h | --help | help    # show this help
 ```
 
@@ -750,6 +756,8 @@ grok-accounts refresh [<name>]      # let Grok refresh the active/profile sessio
 grok-accounts refresh --all         # refresh every saved profile through Grok
 grok-accounts sync                  # copy the active auth back to its matching profile
 grok-accounts login-switch <name>   # fresh browser login + save as <name>
+grok-accounts autoswitch            # reports that grok has no quota API to switch on
+                                    # (always exits 0 — see "Auto-switch on low quota")
 grok-accounts -h | --help | help    # show this help
 ```
 
@@ -825,6 +833,7 @@ claims and usage columns remain native to each provider.
 ai-accounts                        Show this help (the available commands)
 ai-accounts list                   List all provider profiles (providers run in parallel)
 ai-accounts who | current          Show the active account for every provider
+ai-accounts usage                  Show only the active account's usage row per provider
 ai-accounts refresh [<name>|--all] Refresh tokens across every provider
 ai-accounts sync                   Sync active auth back to its profile, every provider
 ai-accounts save [<name>]          Save the current login in every provider;
@@ -836,8 +845,23 @@ ai-accounts switch [<name>]        Switch profile in every provider (interactive
 ai-accounts remove [<name>]        Remove profile in every provider; no name = interactive
                                     picker for each provider in turn
 ai-accounts login-switch <name>    Fresh login + save as <name>, every provider (interactive)
+ai-accounts autoswitch             Run the low-quota auto-switch check for every provider now
+                                    (takes no arguments — to schedule it, see install-timer)
+ai-accounts config get [key]       Print the auto-switch config (or just one key); the
+                                    telegram bot token is always masked
+ai-accounts config set <key> <val> Set one auto-switch config key (rejects unknown keys)
+ai-accounts install-timer [--interval N]
+                                    Schedule the auto-switch check with the OS (default:
+                                    every 1800s / 30 minutes)
+ai-accounts uninstall-timer        Remove the scheduled auto-switch check
+ai-accounts timer-status           Report whether the auto-switch check is scheduled
 ai-accounts -h | --help | help     Show this help
 ```
+
+`autoswitch`, `config get`/`config set`, `install-timer`, `uninstall-timer` and
+`timer-status` are handled by `ai-accounts` itself rather than forwarded — see
+[Auto-switch on low quota](#auto-switch-on-low-quota) below for the full config
+reference, the support matrix, and the timer's per-OS mechanism.
 
 Bare `ai-accounts` (no arguments) prints this help. `list` runs the four
 providers **concurrently** and prints each one's table as soon as it
@@ -847,11 +871,114 @@ providers…`, then `2`, `1`, …) until the last table lands and the spinner
 disappears for good. Every other command runs the providers **one at a time
 with live output**, so interactive flows (switch pickers, `login-switch`) and
 color work unchanged; any argument after the command (a profile name,
-`--all`, …) is passed through to each provider. Per-provider errors are
+`--all`, …) is passed through to each provider — except after `autoswitch`,
+which takes no arguments and rejects them (exit `1`) instead of forwarding an
+argument all four providers would ignore. `ai-accounts autoswitch install-timer`
+is therefore an error naming the working spelling, `ai-accounts install-timer`,
+rather than a silent no-op that installs nothing. Per-provider errors are
 printed inline without aborting the others, and the exit code is non-zero if
 any provider's command failed. `list`'s spinner only shows on a TTY (their
 own inner spinners stay off, since their output is captured rather than run
 on a live terminal).
+
+---
+
+## Auto-switch on low quota
+
+Every account tool can watch its own active account's quota and switch to a
+saved profile with more room — driven entirely by `~/.ai-accounts/config.json`,
+no flags. Run it by hand (`codex-accounts autoswitch`, `claude-accounts
+autoswitch`, `agy-accounts autoswitch`, `grok-accounts autoswitch`, or
+`ai-accounts autoswitch` to run all four at once), or let the OS run it for
+you on a timer (below).
+
+### Config
+
+```sh
+ai-accounts config get              # print the whole config (telegram token masked)
+ai-accounts config get notify       # print just one key
+ai-accounts config set enabled true # turn auto-switching on
+ai-accounts config set notify telegram
+```
+
+`config get`/`config set` are handled by `ai-accounts` itself — never
+forwarded to a provider. `set` rejects any key outside the table below with a
+message listing the valid ones, and validates the value before writing:
+`notify` must be one of the three channels, `switch_when_used_pct` must be an
+integer 1-100, and the two booleans are parsed strictly — a hand-typed
+`"false"` is stored as `False`, not Python's `bool("false") == True`.
+
+Both booleans are also **read** fail-closed: only a real JSON `true` turns one
+on. Hand-edit `~/.ai-accounts/config.json` to `"enabled": "false"` (a truthy
+string to `bool()`) and the feature stays off, which is the safe way for an odd
+value to be wrong — the same rule guards `agy_blind_switch`.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Master switch — off means every provider's `autoswitch` and the timer are silent no-ops. Only a JSON `true` is on; any other value (including the string `"true"`) reads as off |
+| `switch_when_used_pct` | int (1-100) | `90` | **USED**-percent trigger — see the worked example below |
+| `notify` | `desktop` \| `telegram` \| `none` | `desktop` | Where a switch (or a dead end) is reported |
+| `telegram_bot_token` | string | `""` | Bot API token; stored in `~/.ai-accounts/config.json` (mode `0600`) and masked by `config get` |
+| `telegram_chat_id` | string | `""` | Bot API chat id to notify |
+| `agy_blind_switch` | bool | `false` | Opt-in: let `agy-accounts autoswitch` switch without verifying the candidate's quota first (see the support matrix below) |
+
+🔴 **`switch_when_used_pct` is how much quota is USED, not how much remains**,
+and the trigger fires at `used >= switch_when_used_pct`. The default, 90,
+means: **switch once 90% of the quota is USED, i.e. when 10% remains.** This
+inverts the natural reading of "switch when quota drops below N%" — read it
+as a used-percent ceiling, not a remaining-percent floor.
+
+Switch to Telegram notifications in one command each:
+
+```sh
+ai-accounts config set notify telegram
+ai-accounts config set telegram_bot_token 000000:REPLACE-WITH-YOUR-BOT-TOKEN
+ai-accounts config set telegram_chat_id 000000000
+```
+
+### Timer
+
+```sh
+ai-accounts install-timer                # schedule the check every 1800s (30 min, the default)
+ai-accounts install-timer --interval 600 # or every 600s
+ai-accounts timer-status                 # "installed" | "not installed"
+ai-accounts uninstall-timer              # remove the scheduled check
+```
+
+The scheduled job runs `python -m ai_accounts.autoswitch_timer run`, which is a
+silent no-op unless `enabled` is `true`; when it is, it runs the same
+`autoswitch` check as `ai-accounts autoswitch`, across all four providers.
+Installed per OS as:
+
+| OS | Mechanism |
+| --- | --- |
+| macOS | a `launchd` agent (`~/Library/LaunchAgents/com.ai_accounts.autoswitch.plist`), `StartInterval` set to the interval |
+| Linux | a `systemd --user` timer + service under `~/.config/systemd/user/`; falls back to a tagged `crontab` line when `systemctl` isn't on `PATH` |
+| Windows | a scheduled task via `schtasks /Create`, `/SC MINUTE` |
+
+### Per-provider support
+
+| Provider | Support | Notes |
+| --- | --- | --- |
+| `codex-accounts` | Full | Each saved profile's quota is probed from its own file — no profile is activated just to check it |
+| `claude-accounts` | Full | Same approach: each profile's usage is fetched with its own token, without switching |
+| `agy-accounts` | Opt-in, blind | `agy` reports quota only for the *live* session — reading a candidate's quota would mean activating it, which hijacks the single shared Keychain slot a running `agy` process depends on. So candidates are never probed in advance; switching anyway is opt-in via `agy_blind_switch` (default off, reports and stops), and once switched the notification says the target's quota was **not pre-verified**. Blind mode's target is the alphabetically-first candidate (every candidate is treated as equally, unverifiably, empty) |
+| `grok-accounts` | Not supported | xAI ships no quota API for Grok Build. `autoswitch` prints `autoswitch unsupported for grok: no quota API` and exits `0`, so the `ai-accounts autoswitch` fan-out is never reported as a failure over this one provider |
+
+### Restart after a switch
+
+A switch changes which credentials are on disk; whether a provider's already
+running CLI session picks that up without a restart was probed
+provider-by-provider — see
+[`docs/autoswitch-hot-reload-spike.md`](docs/autoswitch-hot-reload-spike.md)
+for the full evidence and caveats. Short version: no provider hot-reloads a
+rotated credential seamlessly. Each provider's `autoswitch` follows the
+spike's rung table — auto-restarting a fresh session only when the check was
+run interactively (never from the unattended timer, which has no terminal to
+restart into) — or otherwise tells you to restart the session by hand. `grok`
+is the exception: it never switches at all (no quota API, above), so it never
+reaches the ladder; the verdict recorded for it is what it would ship once xAI
+exposes quota.
 
 ---
 

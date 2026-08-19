@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -15,6 +16,17 @@ from ai_accounts import gemini_accounts as ga
 from ai_accounts import gemini_usage as gu
 from ai_accounts.usage_format import UsageWindow
 
+
+
+class _TtyStringIO(io.StringIO):
+    """A capture buffer that reports itself as a terminal.
+
+    ``cmd_autoswitch`` reads ``sys.stdout.isatty()`` to decide whether there is
+    a session to restart into; a plain StringIO is correctly seen as unattended.
+    """
+
+    def isatty(self) -> bool:
+        return True
 
 def _jwt(payload: ga.JsonDict) -> str:
     def encode(value: object) -> str:
@@ -630,6 +642,494 @@ class LoginAndRefreshTests(_HomeMixin):
         if self.active is None:
             self.fail("expected restored session")
         self.assertEqual(self.active["refresh_token"], "rt-old")
+
+
+def _quota(used: int, *, error: str | None = None) -> gu.UsageSnapshot:
+    """Placeholder agy snapshot whose every live window sits at *used* percent."""
+    return gu.UsageSnapshot(
+        UsageWindow(used, 2_000_000_000, 10080),
+        UsageWindow(used, 2_000_000_000, 300),
+        None,
+        None,
+        "user@example.com",
+        "Free",
+        2_000_000_000,
+        error,
+    )
+
+
+class _AutoswitchMixin(_HomeMixin):
+    """_HomeMixin plus a throwaway ai-accounts config, so no real one is read."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        env = mock.patch.dict(
+            os.environ,
+            {"AI_ACCOUNTS_CONFIG_JSON": str(self.home / "config.json")},
+            clear=False,
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.write_config(enabled=True)
+
+    def write_config(self, **values: object) -> None:
+        # notify="none" keeps the engine from firing a real desktop notification.
+        settings: dict[str, object] = {"notify": "none"}
+        settings.update(values)
+        (self.home / "config.json").write_text(
+            json.dumps(settings), encoding="utf-8"
+        )
+
+    def given_active(self, name: str, *others: str) -> None:
+        """*name* is the live session; *others* are saved but never activated."""
+        self.write_profile(name, _creds(f"sub-{name}", f"{name}@example.com"))
+        self.set_active(_creds(f"sub-{name}", f"{name}@example.com"))
+        self.mark_current(name)
+        for other in others:
+            self.write_profile(other, _creds(f"sub-{other}", f"{other}@example.com"))
+
+
+class AgyAutoswitchProbeTests(_AutoswitchMixin):
+    def test_quota_check_queries_only_the_active_account(self) -> None:
+        # Given: an exhausted active account and two untouched alternatives
+        self.given_active("work", "spare", "backup")
+        calls: list[float] = []
+
+        def fetch(timeout: float = 15) -> gu.UsageSnapshot:
+            calls.append(timeout)
+            return _quota(96)
+
+        # When: autoswitch runs
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch):
+            rc = self.quiet(ga.cmd_autoswitch)
+
+        # Then: the agy RPC was consulted exactly once — for the live session.
+        # Probing a candidate would mean activating it first, which is the one
+        # thing this command must never do.
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(rc, 0)
+
+
+class AgyBlindSwitchGateTests(_AutoswitchMixin):
+    """A candidate's quota cannot be checked in advance, so switching to one is
+    a leap of faith — off unless the user opted in via ``agy_blind_switch``."""
+
+    def test_switch_is_skipped_when_blind_switching_is_not_opted_into(self) -> None:
+        # Given: default config (agy_blind_switch unset) and an exhausted active
+        self.write_config(enabled=True)
+        self.given_active("work", "spare", "backup")
+
+        # When: autoswitch runs
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96)
+        ):
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        # Then: it says why, and nothing moved
+        self.assertEqual(rc, 0)
+        self.assertIn("cannot verify candidate quota, skipping", out + err)
+        self.assertIsNotNone(self.active)
+        self.assertEqual((self.active or {})["refresh_token"], "rt-old")
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+
+    def test_explicit_false_also_skips(self) -> None:
+        # Given: the opt-in explicitly declined
+        self.write_config(enabled=True, agy_blind_switch=False)
+        self.given_active("work", "spare")
+
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96)
+        ):
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        self.assertEqual(rc, 0)
+        self.assertIn("cannot verify candidate quota, skipping", out + err)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+
+    def test_a_hand_edited_string_true_does_not_opt_in(self) -> None:
+        # Given: `agy_blind_switch` hand-edited to the STRING "true" — valid
+        # JSON and truthy to bool(). Opting into an unverifiable switch must
+        # take a real JSON `true`, nothing looser (the `config set` CLI can
+        # only ever write a real bool; a text editor can write this).
+        self.write_config(enabled=True, agy_blind_switch="true")
+        self.given_active("work", "spare", "backup")
+
+        # When: autoswitch runs against an exhausted active account
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96)
+        ):
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        # Then: the gate fails CLOSED — nothing moved
+        self.assertEqual(rc, 0)
+        self.assertIn("cannot verify candidate quota, skipping", out + err)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+
+    def test_opted_in_switch_happens_and_says_the_target_was_unverified(self) -> None:
+        # Given: the user opted into blind switching
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self.given_active("work", "spare", "backup")
+
+        # When: autoswitch runs against an exhausted active account
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96)
+        ):
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        # Then: it moves to the first candidate and is explicit that the
+        # target's own quota was never checked.
+        self.assertEqual(rc, 0)
+        report = ga._ANSI_RE.sub("", out + err)
+        self.assertIn("backup", report)
+        self.assertIn("NOT verified", report)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "backup"
+        )
+        self.assertEqual((self.active or {})["refresh_token"], "rt-old")
+
+    def test_below_threshold_leaves_the_active_account_alone(self) -> None:
+        # Given: plenty of quota left, and blind switching allowed
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self.given_active("work", "spare")
+
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(12)
+        ):
+            rc = self.quiet(ga.cmd_autoswitch)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+
+    def test_windows_usage_limitation_is_reported_without_crashing(self) -> None:
+        # Given: the real fetch_usage on a platform it cannot inspect
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self.given_active("work", "spare")
+
+        # When: autoswitch is handed what the real fetch_usage returns there.
+        # The os.name patch is scoped to that call alone — it is the process
+        # -wide os.name, and pathlib reads it too.
+        with mock.patch.object(gu.os, "name", "nt"):
+            on_windows = gu.fetch_usage()
+        self.assertEqual(
+            on_windows.error, "agy usage inspection requires macOS or Linux"
+        )
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=on_windows
+        ):
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        # Then: the limitation is stated, and nothing was switched on a guess
+        self.assertEqual(rc, 0)
+        self.assertIn("agy usage inspection requires macOS or Linux", out + err)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+
+    def test_main_routes_the_autoswitch_subcommand(self) -> None:
+        # Given: a macOS run of `agy-accounts autoswitch`
+        with (
+            mock.patch.object(ga.sys, "platform", "darwin"),
+            mock.patch.object(ga, "cmd_autoswitch", return_value=0) as command,
+        ):
+            rc = self.quiet(ga.main, ["autoswitch"])
+
+        # Then: it reaches cmd_autoswitch rather than the unknown-command path
+        self.assertEqual(rc, 0)
+        command.assert_called_once_with()
+
+    def test_a_quoted_string_does_not_count_as_opting_in(self) -> None:
+        # Given: a hand-edited config where the opt-in was written as a JSON
+        # *string*. bool("false") is True in Python, so a plain truthiness
+        # check would silently enable the risky path it is meant to gate.
+        self.write_config(enabled=True, agy_blind_switch="false")
+        self.given_active("work", "spare", "backup")
+
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96)
+        ):
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        # Then: it stays closed — only a real JSON `true` opts in
+        self.assertEqual(rc, 0)
+        self.assertIn("cannot verify candidate quota, skipping", out + err)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+
+    def test_target_deleted_mid_run_never_falls_back_to_the_listing_scan(self) -> None:
+        # Given: blind switching allowed, and the chosen target profile is
+        # deleted during the (up to 8s) live quota fetch — i.e. after the
+        # profile list was globbed but before the switch is attempted.
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self.given_active("work", "spare", "backup")
+
+        def fetch(timeout: float = 15) -> gu.UsageSnapshot:
+            (self.home / "accounts" / "backup.json").unlink()
+            return _quota(96)
+
+        # cmd_list activates EVERY saved profile in turn to read its quota —
+        # the exact keychain hijack this command exists to avoid. cmd_switch
+        # falls through to it when the profile file is missing, so autoswitch
+        # must never reach that branch.
+        with (
+            mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch),
+            mock.patch.object(ga, "cmd_list") as listing,
+        ):
+            rc = self.quiet(ga.cmd_autoswitch)
+
+        listing.assert_not_called()
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+        self.assertEqual(rc, 1)
+
+
+class AgyAutoswitchKeychainSafetyTests(unittest.TestCase):
+    """The safety-critical one.
+
+    ``cmd_list`` reads every profile's quota by writing each candidate's auth
+    into the single shared keychain slot the live agy process reads, restoring
+    afterwards. An unattended autoswitch doing that could corrupt an in-flight
+    request on the user's real session — so candidate selection must never
+    reach the keychain at all.
+
+    Deliberately does NOT use ``_HomeMixin``: it leaves the real keychain
+    helpers in place and intercepts only ``subprocess``, so a candidate probe
+    would show up here as an ``add-generic-password`` rather than being hidden
+    behind a stubbed-out helper.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name) / "antigravity"
+        (self.home / "accounts").mkdir(parents=True)
+        env = mock.patch.dict(
+            os.environ,
+            {
+                "ANTIGRAVITY_HOME": str(self.home),
+                "AI_ACCOUNTS_CONFIG_JSON": str(self.home / "config.json"),
+            },
+            clear=False,
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("ANTIGRAVITY_ACCOUNT_DIR", None)
+        os.environ.pop("ANTIGRAVITY_OAUTH_JSON", None)
+        (self.home / "config.json").write_text(
+            json.dumps({"enabled": True, "notify": "none"}), encoding="utf-8"
+        )
+
+    def _profile(self, name: str) -> ga.JsonDict:
+        payload = _creds(f"sub-{name}", f"{name}@example.com", refresh_token=f"rt-{name}")
+        (self.home / "accounts" / f"{name}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        return payload
+
+    def test_candidate_selection_never_mutates_the_shared_keychain_slot(self) -> None:
+        # Given: an exhausted active account and two saved alternatives, with
+        # the real keychain helpers wired to a captured `security` binary
+        active = self._profile("work")
+        self._profile("spare")
+        self._profile("backup")
+        (self.home / "accounts" / ".current-profile").write_text(
+            "work", encoding="utf-8"
+        )
+        live_secret = ga._keyring_secret_from_auth(active)
+        self.assertIsNotNone(live_secret)
+        calls: list[list[str]] = []
+
+        def run(cmd, *args, **kwargs):
+            calls.append([str(part) for part in cmd])
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=live_secret, stderr=""
+            )
+
+        fetches: list[float] = []
+
+        def fetch(timeout: float = 15) -> gu.UsageSnapshot:
+            fetches.append(timeout)
+            return _quota(97)
+
+        # When: autoswitch runs with blind switching NOT opted into
+        with (
+            mock.patch.object(ga.subprocess, "run", side_effect=run),
+            mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+        ):
+            rc = ga.cmd_autoswitch()
+        self.assertEqual(rc, 0)
+
+        # Then: `security` was never asked to write or delete anything.
+        mutations = [
+            call
+            for call in calls
+            if call[:1] == ["security"] and call[1] != "find-generic-password"
+        ]
+        self.assertEqual(mutations, [])
+
+        # And no candidate's credential was ever handed to `security` at all.
+        arguments = [argument for call in calls for argument in call]
+        for candidate in ("spare", "backup"):
+            secret = ga._keyring_secret_from_auth(
+                json.loads(
+                    (self.home / "accounts" / f"{candidate}.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+            )
+            self.assertNotIn(secret, arguments)
+
+        # And the quota RPC ran once — for the live session only.
+        self.assertEqual(len(fetches), 1)
+
+
+class AgyLiveUsedPctTests(unittest.TestCase):
+    """The worst window decides — an account is throttled the moment any one
+    of its quota windows runs out."""
+
+    def test_the_fullest_window_wins_even_when_the_others_are_idle(self) -> None:
+        snapshot = gu.UsageSnapshot(
+            UsageWindow(20, None, 10080),   # weekly: plenty left
+            UsageWindow(96, None, 300),     # 5h session: exhausted
+            UsageWindow(3, None, 10080),
+            None,
+            "user@example.com",
+            "Free",
+            2_000_000_000,
+            None,
+        )
+        self.assertEqual(ga._live_used_pct(snapshot), 96)
+
+    def test_no_readable_window_is_unknown_rather_than_zero(self) -> None:
+        # None must not collapse to 0% — "unknown" and "plenty left" are
+        # different answers, and only one of them is safe to act on.
+        empty = gu.UsageSnapshot(
+            None, None, None, None, None, None, None, "agy unavailable"
+        )
+        self.assertIsNone(ga._live_used_pct(empty))
+
+
+
+class AgyAutoswitchRestartTests(_AutoswitchMixin):
+    """After a blind switch, the session is handed over via the restart ladder.
+
+    The Antigravity IDE re-writes the keyring instantly and has no programmatic
+    resume, so its presence forces the manual-restart rung
+    (docs/autoswitch-hot-reload-spike.md, agy section, footnote 2).
+    """
+
+    def _autoswitch_on_a_tty(self, fake_run) -> tuple[int, str]:
+        """cmd_autoswitch with a stdout that is a terminal, capturing spawns."""
+        out, err = _TtyStringIO(), io.StringIO()
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96)
+        ), mock.patch.object(ga.subprocess, "run", side_effect=fake_run), \
+                redirect_stdout(out), redirect_stderr(err):
+            rc = ga.cmd_autoswitch()
+        return rc, ga._ANSI_RE.sub("", out.getvalue() + err.getvalue())
+
+    def test_an_interactive_switch_resumes_the_session_in_a_new_agy_process(self):
+        # Given: blind switching opted into, an exhausted active account, a
+        # terminal to restart into, and no Antigravity IDE in the way
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self.given_active("work", "spare")
+        spawned: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            spawned.append(list(cmd))
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        # When: autoswitch runs
+        with mock.patch.object(ga, "_antigravity_ide_running", return_value=False), \
+                mock.patch.object(ga, "have", return_value=True):
+            rc, report = self._autoswitch_on_a_tty(fake_run)
+
+        # Then: exactly one NEW agy session was started to continue the last
+        # conversation — nothing was signalled, killed or restarted
+        self.assertEqual(rc, 0)
+        self.assertEqual(spawned, [["agy", "--continue"]])
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "spare"
+        )
+
+    def test_a_switch_with_the_antigravity_ide_running_never_spawns_a_resume(self):
+        # Given: the same switch, but an Antigravity IDE process is up — it
+        # would re-write the keyring underneath any resumed CLI session
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self.given_active("work", "spare")
+        spawned: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            spawned.append(list(cmd))
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        # When: autoswitch runs on a terminal
+        with mock.patch.object(ga, "_antigravity_ide_running", return_value=True), \
+                mock.patch.object(ga, "have", return_value=True):
+            rc, report = self._autoswitch_on_a_tty(fake_run)
+
+        # Then: the ladder degrades to manual-restart — nothing spawned, the
+        # switch still succeeds, and the user is told to restart by hand
+        self.assertEqual(rc, 0)
+        self.assertEqual(spawned, [])
+        self.assertIn("restart your session", report)
+
+    def test_an_unattended_switch_spawns_nothing_and_never_scans_processes(self):
+        # Given: the same switch with nothing attached to a terminal
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self.given_active("work", "spare")
+
+        # When: autoswitch runs (capture's plain StringIO is not a tty)
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96)
+        ), mock.patch.object(ga, "_antigravity_ide_running") as ide, \
+                mock.patch.object(ga.subprocess, "run") as spawn:
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        # Then: a background poll spawns NOTHING — not even the process scan,
+        # which cannot change an already-manual outcome — and says so in words
+        self.assertEqual(rc, 0)
+        spawn.assert_not_called()
+        ide.assert_not_called()
+        self.assertIn("restart your session", ga._ANSI_RE.sub("", out + err))
+
+    def test_the_ide_check_only_reads_the_process_table_and_fails_closed(self):
+        # Given: a process query that reports a match, then no match
+        seen: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            seen.append(list(cmd))
+            return subprocess.CompletedProcess(args=cmd, returncode=len(seen) - 1)
+
+        # When/Then: a match means the IDE is up, no match means it is not
+        with mock.patch.object(ga, "have", return_value=True), \
+                mock.patch.object(ga.subprocess, "run", side_effect=fake_run):
+            self.assertTrue(ga._antigravity_ide_running())
+            self.assertFalse(ga._antigravity_ide_running())
+
+        # And: the query only ever READS the process table — pgrep, never
+        # pkill/kill, and no signal flag
+        self.assertTrue(seen)
+        for cmd in seen:
+            self.assertEqual(cmd[0], "pgrep")
+            self.assertNotIn("-9", cmd)
+
+        # And: with no way to look, it assumes the IDE is up (fail closed)
+        with mock.patch.object(ga, "have", return_value=False), \
+                mock.patch.object(ga.subprocess, "run") as spawn:
+            self.assertTrue(ga._antigravity_ide_running())
+        spawn.assert_not_called()
 
 
 if __name__ == "__main__":
