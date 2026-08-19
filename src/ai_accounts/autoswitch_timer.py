@@ -260,18 +260,105 @@ def _run_autoswitch_everywhere() -> None:
         _ = list(pool.map(_run_provider, modules))
 
 
-def run_once(check: Callable[[], None] | None = None) -> int:
+# A revoked refresh token is the only case any provider's refresh path logs
+# with one of these exact phrases — see _is_revoked_error's call sites in
+# codex_accounts.py, claude_accounts.py, gemini_accounts.py and
+# grok_accounts.py: each logs "...Refresh token revoked..." / "...revoked/dead
+# for..." inline, and codex/claude additionally print the bulk "❌ Revoked
+# (re-login required): <names>" summary for a profile with no refresh_token to
+# even attempt. A transient failure never matches either phrase — notably
+# codex's own transient message reads "...refresh token may be expired OR
+# revoked..." (codex_accounts.py:560), which does NOT contain either phrase
+# below, so a 5xx/network hiccup can't false-trigger this. Matching full
+# phrases instead of the bare word "revoked" also keeps a profile literally
+# named e.g. "revoked-backup" from false-triggering off the printed table.
+_REVOKED_MARKERS = ("refresh token revoked", "revoked (re-login required)")
+
+# ponytail: fixed per-provider ceiling, not a config knob — the CLI-proxy
+# fallback (agy/grok, when a direct OAuth refresh can't run) spawns a vendor
+# binary with no bound of its own, and macOS launchd won't start a new tick
+# while one is still running, so one wedged subprocess would silently kill
+# the timer forever. Upgrade path: make this configurable if a provider's CLI
+# proxy routinely needs longer than this.
+_REFRESH_TIMEOUT_SEC = 300
+
+
+def _run_token_refresh_everywhere() -> str:
+    """Default *refresh*: direct-OAuth token refresh, across all four providers.
+
+    Drives the same four provider CLIs :func:`_run_autoswitch_everywhere` does
+    (via :data:`ai_accounts.ai_accounts._TOOLS`, so the provider list is never
+    duplicated), with ``refresh --all`` — already a ``<provider>-accounts
+    refresh --all`` command on every one of them — in place of ``autoswitch``.
+
+    Captured rather than run through :func:`ai_accounts.ai_accounts.cmd_forward`
+    (which inherits stdio so its interactive commands — switch pickers, login
+    flows — keep working): capturing here is what lets the caller tell a
+    revoked refresh token apart from a routine, silent rotation. A hung
+    provider is cut off after :data:`_REFRESH_TIMEOUT_SEC` rather than
+    blocking the tick forever. Returns the combined stdout+stderr text — the
+    exit code isn't surfaced, matching :func:`_run_autoswitch_everywhere`,
+    whose analogous default ``check`` reports nothing back to ``run_once``
+    either.
+    """
+    output_parts: list[str] = []
+    for label, module in ai_accounts._TOOLS:
+        ai_accounts._header(label)
+        try:
+            result = u.run(
+                [sys.executable, "-m", module, "refresh", "--all"],
+                capture_output=True,
+                timeout=_REFRESH_TIMEOUT_SEC,
+            )
+            stdout, stderr = result.stdout, result.stderr
+        except subprocess.TimeoutExpired as exc:
+            stdout, stderr = exc.stdout or "", exc.stderr or ""
+            u.log_red(f"❌ {label} refresh timed out after {_REFRESH_TIMEOUT_SEC}s")
+        if stdout:
+            print(stdout, end="")
+            output_parts.append(stdout)
+        if stderr:
+            print(stderr, end="", file=sys.stderr)
+            output_parts.append(stderr)
+        print()
+    return "\n".join(output_parts)
+
+
+def run_once(
+    check: Callable[[], None] | None = None,
+    refresh: Callable[[], str] | None = None,
+) -> int:
     """The scheduled job's entry point — invoked on every timer tick.
 
-    A silent no-op while the feature's master switch (config ``enabled``) is
-    off: no probing, no notification. *check* is the actual quota-probe /
-    switch call; when omitted it defaults to :func:`_run_autoswitch_everywhere`
-    (a test may still inject its own to observe the call without driving real
-    provider subprocesses).
+    Auto-switch and token-refresh are two INDEPENDENT gates, each reading its
+    own config flag — ``enabled`` for the quota auto-switch check,
+    ``token_refresh`` for renewing tokens across all four providers. Either,
+    both, or neither run on a given tick: a user who does not want automatic
+    account switching still wants live tokens (plan.md §4 phase 4 — this is
+    the fix for `enabled=false` silently disabling refresh too).
+
+    *check* / *refresh* are the actual quota-probe/switch and token-refresh
+    calls; when omitted they default to :func:`_run_autoswitch_everywhere` /
+    :func:`_run_token_refresh_everywhere` (a test may still inject its own to
+    observe the call without driving real provider subprocesses).
+
+    A refresh tick alerts via :func:`ai_accounts.autoswitch.notify_once` only
+    when the refresh output mentions a revoked refresh token — never for a
+    routine, successful rotation.
     """
-    if not aw.config_flag("enabled"):  # fail closed: only a JSON `true` runs
-        return 0
-    (check or _run_autoswitch_everywhere)()
+    if aw.config_flag("enabled"):  # fail closed: only a JSON `true` runs
+        (check or _run_autoswitch_everywhere)()
+    if aw.config_flag("token_refresh"):  # fail closed: same rule, own flag
+        output = (refresh or _run_token_refresh_everywhere)().lower()
+        if any(marker in output for marker in _REVOKED_MARKERS):
+            aw.notify_once(
+                "token-refresh:revoked",
+                "ai-accounts: an account needs a fresh login",
+                "A scheduled token refresh found a revoked refresh token for "
+                "at least one account. Run `ai-accounts refresh --all` to see "
+                "which provider/profile, then `<provider>-accounts "
+                "login-switch <name>`.",
+            )
     return 0
 
 

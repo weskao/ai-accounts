@@ -170,6 +170,13 @@ FIELDS: tuple[Field, ...] = (
         help="Switch antigravity accounts even without usage data.",
         group="Provider behavior",
     ),
+    Field(
+        key="token_refresh",
+        type=bool,
+        default=True,
+        label="Automatic token refresh",
+        help="Refresh OAuth tokens on the scheduled timer, independent of auto-switch.",
+    ),
 )
 
 

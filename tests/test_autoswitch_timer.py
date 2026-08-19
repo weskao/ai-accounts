@@ -335,13 +335,20 @@ class StatusTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCas
 
 
 class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
+    """`refresh` is stubbed with a clean no-op in every test that isn't
+    specifically exercising the token-refresh gate — `token_refresh` defaults
+    to True, so leaving it unstubbed would spawn four real provider
+    subprocesses against the real ``~/.ai-accounts`` store."""
+
+    _clean_refresh = staticmethod(lambda: "")
+
     def test_run_once_does_not_probe_when_disabled(self) -> None:
         # Given: the master switch is off (the config default)
         aw.save_config({"enabled": False})
         probe = mock.Mock()
 
         # When: the scheduled job's entry point fires
-        result = at.run_once(check=probe)
+        result = at.run_once(check=probe, refresh=self._clean_refresh)
 
         # Then: it exits cleanly and never touches the probe
         self.assertEqual(result, 0)
@@ -357,7 +364,7 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
         probe = mock.Mock()
 
         # When: the scheduled job's entry point fires
-        result = at.run_once(check=probe)
+        result = at.run_once(check=probe, refresh=self._clean_refresh)
 
         # Then: the master switch fails CLOSED — a silent no-op, as documented
         self.assertEqual(result, 0)
@@ -369,15 +376,16 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
         probe = mock.Mock()
 
         # When: the scheduled job's entry point fires
-        result = at.run_once(check=probe)
+        result = at.run_once(check=probe, refresh=self._clean_refresh)
 
         # Then: the check runs and the entry point exits cleanly
         self.assertEqual(result, 0)
         probe.assert_called_once_with()
 
     def test_run_once_default_check_drives_autoswitch_across_all_providers(self) -> None:
-        # Given: the master switch is on, and no explicit check is supplied
-        aw.save_config({"enabled": True})
+        # Given: the master switch is on (refresh disabled — this test is only
+        # about the autoswitch half), and no explicit check is supplied
+        aw.save_config({"enabled": True, "token_refresh": False})
 
         # When: the scheduled job's entry point fires with its default check
         with mock.patch.object(at, "_run_autoswitch_everywhere") as run:
@@ -388,8 +396,9 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
         run.assert_called_once_with()
 
     def test_run_once_default_check_is_not_invoked_when_disabled(self) -> None:
-        # Given: the master switch is off
-        aw.save_config({"enabled": False})
+        # Given: the master switch is off (refresh disabled too — not this
+        # test's concern)
+        aw.save_config({"enabled": False, "token_refresh": False})
 
         # When: the scheduled job's entry point fires with its default check
         with mock.patch.object(at, "_run_autoswitch_everywhere") as run:
@@ -423,6 +432,211 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
         )
 
 
+class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
+    """`token_refresh` is an INDEPENDENT gate from `enabled` (plan.md §4 phase
+    4): a user with auto-switch off must still get scheduled token refresh."""
+
+    def test_token_refresh_runs_even_when_autoswitch_is_disabled(self) -> None:
+        # Given: auto-switch off, token_refresh on — the exact bug being fixed
+        aw.save_config({"enabled": False, "token_refresh": True})
+        check = mock.Mock()
+        refresh = mock.Mock(return_value="")
+
+        # When: the scheduled job's entry point fires
+        result = at.run_once(check=check, refresh=refresh)
+
+        # Then: refresh runs despite auto-switch being off, and autoswitch does not
+        self.assertEqual(result, 0)
+        refresh.assert_called_once_with()
+        check.assert_not_called()
+
+    def test_token_refresh_does_not_run_when_its_own_flag_is_off(self) -> None:
+        # Given: auto-switch on, token_refresh explicitly off
+        aw.save_config({"enabled": True, "token_refresh": False})
+        check = mock.Mock()
+        refresh = mock.Mock(return_value="")
+
+        # When: the scheduled job's entry point fires
+        result = at.run_once(check=check, refresh=refresh)
+
+        # Then: only autoswitch runs
+        self.assertEqual(result, 0)
+        check.assert_called_once_with()
+        refresh.assert_not_called()
+
+    def test_both_gates_run_independently_when_both_enabled(self) -> None:
+        # Given: both flags on
+        aw.save_config({"enabled": True, "token_refresh": True})
+        check = mock.Mock()
+        refresh = mock.Mock(return_value="")
+
+        # When: the scheduled job's entry point fires
+        result = at.run_once(check=check, refresh=refresh)
+
+        # Then: both ran on this one tick
+        self.assertEqual(result, 0)
+        check.assert_called_once_with()
+        refresh.assert_called_once_with()
+
+    def test_neither_gate_runs_when_both_are_off(self) -> None:
+        # Given: both flags off
+        aw.save_config({"enabled": False, "token_refresh": False})
+        check = mock.Mock()
+        refresh = mock.Mock(return_value="")
+
+        # When: the scheduled job's entry point fires
+        result = at.run_once(check=check, refresh=refresh)
+
+        # Then: neither ran
+        self.assertEqual(result, 0)
+        check.assert_not_called()
+        refresh.assert_not_called()
+
+    def test_token_refresh_defaults_to_on(self) -> None:
+        # Given: no explicit token_refresh setting (schema default is True)
+        aw.save_config({"enabled": False})
+        refresh = mock.Mock(return_value="")
+
+        # When: the scheduled job's entry point fires
+        result = at.run_once(refresh=refresh)
+
+        # Then: refresh still runs — "on by default" per config_schema
+        self.assertEqual(result, 0)
+        refresh.assert_called_once_with()
+
+    def test_clean_refresh_never_notifies(self) -> None:
+        # Given: token_refresh on, and a refresh call whose output describes a
+        # routine, successful rotation (no revoked-token language anywhere)
+        aw.save_config({"enabled": False, "token_refresh": True})
+        refresh = mock.Mock(
+            return_value="All 3 profile(s) refreshed.\n(token was expired — refreshed in place)"
+        )
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(aw, "notify_once") as notify_once:
+            result = at.run_once(refresh=refresh)
+
+        # Then: no alert for routine, non-revoked rotation
+        self.assertEqual(result, 0)
+        notify_once.assert_not_called()
+
+    def test_codex_transient_http_error_does_not_notify(self) -> None:
+        # Given: codex's OWN transient-failure wording, which mentions the bare
+        # word "revoked" without matching either real revoked-marker phrase —
+        # codex_accounts.py:560 `_refresh_reason` returns this for EVERY HTTP
+        # status, so a 5xx (server hiccup) prints the same "...may be expired
+        # or revoked..." text a 4xx would if it weren't already reclassified.
+        # This must never be mistaken for an actual revocation.
+        aw.save_config({"enabled": False, "token_refresh": True})
+        refresh = mock.Mock(
+            return_value=(
+                "❌ Refresh failed for wes: HTTP 503 from token endpoint "
+                "(refresh token may be expired or revoked)\n"
+                "   Token endpoint unreachable — retry later."
+            )
+        )
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(aw, "notify_once") as notify_once:
+            result = at.run_once(refresh=refresh)
+
+        # Then: no alert — this is a transient 5xx, not a revocation
+        self.assertEqual(result, 0)
+        notify_once.assert_not_called()
+
+    def test_revoked_refresh_token_triggers_exactly_one_notification(self) -> None:
+        # Given: token_refresh on, and a refresh call reporting a revoked token
+        # (the exact wording each provider's _is_revoked_error path logs)
+        aw.save_config({"enabled": False, "token_refresh": True})
+        refresh = mock.Mock(
+            return_value=(
+                "❌ Refresh token revoked/dead for wes: revoked: refresh token "
+                "rejected (invalid_grant)\n   Re-login with: "
+                "claude-accounts login-switch wes"
+            )
+        )
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(aw, "notify_once") as notify_once:
+            result = at.run_once(refresh=refresh)
+
+        # Then: exactly one alert, keyed so repeated ticks de-duplicate
+        self.assertEqual(result, 0)
+        notify_once.assert_called_once()
+        args, _ = notify_once.call_args
+        self.assertEqual(args[0], "token-refresh:revoked")
+
+    def test_bulk_revoked_summary_alone_still_triggers_notification(self) -> None:
+        # Given: codex's bulk-only wording (a profile with no refresh_token to
+        # even attempt never prints "Refresh token revoked" inline — only the
+        # end-of-run "❌ Revoked (re-login required): <names>" summary)
+        aw.save_config({"enabled": False, "token_refresh": True})
+        refresh = mock.Mock(return_value="❌ Revoked (re-login required): gkm85664")
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(aw, "notify_once") as notify_once:
+            result = at.run_once(refresh=refresh)
+
+        # Then: the bulk phrase alone is enough to trigger the alert
+        self.assertEqual(result, 0)
+        notify_once.assert_called_once()
+
+    def test_transient_refresh_failure_does_not_notify(self) -> None:
+        # Given: a non-zero exit that is NOT a revocation (e.g. network error) —
+        # the marker-scan must not treat every failure as revocation
+        aw.save_config({"enabled": False, "token_refresh": True})
+        refresh = mock.Mock(
+            return_value="⚠️  Direct refresh unavailable (timeout) — using the Grok CLI."
+        )
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(aw, "notify_once") as notify_once:
+            result = at.run_once(refresh=refresh)
+
+        # Then: no revocation language, no alert
+        self.assertEqual(result, 0)
+        notify_once.assert_not_called()
+
+    def test_default_refresh_drives_all_four_providers_refresh_all(self) -> None:
+        # Given: the default refresh callable (no explicit `refresh` injected)
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        # When: _run_token_refresh_everywhere runs with u.run mocked
+        with mock.patch.object(at.u, "run", return_value=completed) as run:
+            output = at._run_token_refresh_everywhere()
+
+        # Then: one `<module> refresh --all` call per provider in ai_accounts._TOOLS
+        self.assertEqual(output, "")
+        called_modules = [c.args[0][2] for c in run.call_args_list]
+        expected_modules = [module for _, module in at.ai_accounts._TOOLS]
+        self.assertEqual(called_modules, expected_modules)
+        for c in run.call_args_list:
+            self.assertEqual(c.args[0][-2:], ["refresh", "--all"])
+            self.assertEqual(c.kwargs.get("timeout"), at._REFRESH_TIMEOUT_SEC)
+
+    def test_a_hung_provider_is_cut_off_rather_than_blocking_the_tick(self) -> None:
+        # Given: one provider's refresh subprocess never returns in time
+        timeout = subprocess.TimeoutExpired(
+            cmd=["python", "-m", "ai_accounts.grok_accounts", "refresh", "--all"],
+            timeout=at._REFRESH_TIMEOUT_SEC,
+            output="partial output before the hang",
+            stderr="",
+        )
+
+        # When: _run_token_refresh_everywhere runs with u.run always timing out
+        with mock.patch.object(at.u, "run", side_effect=timeout):
+            output = at._run_token_refresh_everywhere()
+
+        # Then: it returns instead of hanging, carrying whatever was captured
+        self.assertIn("partial output before the hang", output)
+
+
+# KNOWN ISSUE (pre-existing, out of scope for the token-refresh project): a
+# second `class MainDispatchTests` is defined further down this file. Python
+# rebinds the module-level name, so pytest only collects the LATER class —
+# the two tests below (test_main_run_invokes_run_once,
+# test_main_install_invokes_install) are silently dropped from collection.
+# Flagged here rather than fixed/renamed, per T6's scope.
 class MainDispatchTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, _ConfigMixin, unittest.TestCase):
     def test_main_run_invokes_run_once(self) -> None:
         # Given: the "run" subcommand, as the scheduler would invoke it
