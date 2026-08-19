@@ -143,10 +143,13 @@ class LinuxInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.T
         service_text = service_path.read_text(encoding="utf-8")
         self.assertIn("ai_accounts.autoswitch_timer run", service_text)
 
-        # And: systemctl was used to enable it — no crontab touched
-        systemctl_calls = [c for c in calls if c["cmd"][0] == "systemctl"]
-        self.assertEqual(len(systemctl_calls), 1)
-        self.assertIn("enable", systemctl_calls[0]["cmd"])
+        # And: systemd re-read the units, THEN enabled the timer — no crontab
+        # touched. daemon-reload must precede enable, otherwise a re-install
+        # with a new interval is ignored (systemd caches unit contents).
+        systemctl_verbs = [
+            c["cmd"][2] for c in calls if c["cmd"][0] == "systemctl"
+        ]
+        self.assertEqual(systemctl_verbs, ["daemon-reload", "enable"])
         self.assertFalse(any(c["cmd"][0] == "crontab" for c in calls))
 
     def test_install_without_systemctl_falls_back_to_cron(self) -> None:
@@ -415,3 +418,111 @@ class MainDispatchTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, _ConfigMix
         # Then: install() fired
         install.assert_called_once_with()
         self.assertEqual(rc, 0)
+
+
+class RunCommandQuotingTests(unittest.TestCase):
+    """An interpreter path with a space must survive the shell.
+
+    uv/pyenv installs live under paths like `~/Library/Application Support/...`;
+    an unquoted ExecStart or crontab line silently splits at the space and the
+    scheduled job never runs.
+    """
+
+    def test_a_posix_run_command_round_trips_through_shell_splitting(self) -> None:
+        # Given: an interpreter whose path contains a space
+        spaced = "/tmp/py 3/bin/python"
+        # When: composing the command scheduled by cron / systemd
+        with mock.patch.object(at.sys, "executable", spaced):
+            command = at._run_command()
+        # Then: a shell parses the interpreter back out as ONE argument
+        import shlex
+
+        self.assertEqual(shlex.split(command)[0], spaced)
+
+    def test_the_windows_run_command_double_quotes_a_spaced_interpreter(self) -> None:
+        # Given: the same spaced interpreter, on the schtasks path
+        spaced = r"C:\Program Files\Python\python.exe"
+        # When
+        with mock.patch.object(at.sys, "executable", spaced):
+            command = at._run_command_windows()
+        # Then: cmd.exe-style double quoting, not POSIX single quotes
+        self.assertTrue(command.startswith(f'"{spaced}"'), command)
+
+
+class CronIntervalClampTests(unittest.TestCase):
+    """`*/N` in cron's minute field is only valid for N in 0-59."""
+
+    def test_an_interval_longer_than_an_hour_is_clamped_to_a_valid_minute_field(self) -> None:
+        # Given: a 2-hour interval, which would naively render as */120
+        line = at._cron_line(2 * 60 * 60)
+        # When: reading back the minute field
+        minute_field = line.split()[0]
+        step = int(minute_field.removeprefix("*/"))
+        # Then: it stays inside cron's 0-59 minute range
+        self.assertLessEqual(step, 59, line)
+        self.assertGreaterEqual(step, 1, line)
+
+
+class ReinstallIdempotencyTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
+    """Re-installing with a new interval must actually take effect.
+
+    Rewriting the plist/unit alone leaves the already-loaded job running on the
+    OLD interval, so a "change the interval" flow silently does nothing.
+    """
+
+    def test_reinstalling_on_macos_unloads_the_stale_job_before_loading(self) -> None:
+        # Given: a timer already installed on macOS
+        self.force_platform(macos=True)
+        calls = self.capture_subprocess()
+        at.install(1800)
+        calls.clear()
+        # When: re-installing with a different interval
+        at.install(600)
+        # Then: the stale job is unloaded before the new one is loaded
+        verbs = [c["cmd"][1] for c in calls if c["cmd"][0] == "launchctl"]
+        self.assertIn("unload", verbs, calls)
+        self.assertLess(verbs.index("unload"), verbs.index("load"), verbs)
+
+    def test_reinstalling_on_linux_systemd_reloads_the_daemon(self) -> None:
+        # Given: systemd available on Linux
+        self.force_platform(linux=True)
+        with mock.patch.object(u, "have", return_value=True):
+            calls = self.capture_subprocess()
+            # When
+            at.install(600)
+        # Then: systemd is told to re-read the rewritten unit files
+        joined = [" ".join(c["cmd"]) for c in calls]
+        self.assertTrue(
+            any("daemon-reload" in c for c in joined),
+            joined,
+        )
+
+
+class MainDispatchTests(_PlatformMixin, _HomeMixin, _ConfigMixin, _SubprocessMixin, unittest.TestCase):
+    """`python -m ai_accounts.autoswitch_timer <cmd>` — the scheduled entry point."""
+
+    def test_main_routes_uninstall(self) -> None:
+        with mock.patch.object(at, "uninstall") as uninstall:
+            rc = at.main(["uninstall"])
+        self.assertEqual(rc, 0)
+        uninstall.assert_called_once_with()
+
+    def test_main_routes_status_and_prints_it(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with mock.patch.object(at, "status", return_value="not installed"), redirect_stdout(buf):
+            rc = at.main(["status"])
+        self.assertEqual(rc, 0)
+        self.assertIn("not installed", buf.getvalue())
+
+    def test_main_rejects_an_unknown_command_with_exit_2(self) -> None:
+        import io
+        from contextlib import redirect_stderr
+
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            rc = at.main(["bogus"])
+        self.assertEqual(rc, 2)
+        self.assertIn("bogus", buf.getvalue())

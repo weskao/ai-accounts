@@ -21,6 +21,7 @@ directly — so tests can force a platform without touching the real OS:
 from __future__ import annotations
 
 import plistlib
+import shlex
 import sys
 from pathlib import Path
 from typing import Callable, Sequence
@@ -35,9 +36,19 @@ CRON_TAG = "# ai-accounts-autoswitch"
 
 
 def _run_command() -> str:
-    # ponytail: no shell-quoting of sys.executable — breaks if the interpreter
-    # path ever contains a space. Add shlex.quote() if that surfaces.
-    return f"{sys.executable} -m ai_accounts.autoswitch_timer run"
+    """The scheduled command line, quoted for a POSIX shell (cron, systemd).
+
+    uv and pyenv interpreters live under paths like
+    ``~/Library/Application Support/...``; unquoted, cron and systemd split the
+    ExecStart at the space and the job silently never runs.
+    """
+    return f"{shlex.quote(sys.executable)} -m ai_accounts.autoswitch_timer run"
+
+
+def _run_command_windows() -> str:
+    """Same command for ``schtasks /TR`` — cmd.exe wants double quotes, and
+    POSIX single-quoting would be taken literally."""
+    return f'"{sys.executable}" -m ai_accounts.autoswitch_timer run'
 
 
 def _launchd_plist_path() -> Path:
@@ -57,20 +68,24 @@ def _systemd_service_path() -> Path:
 
 
 def _cron_line(interval_sec: int) -> str:
-    # ponytail: not clamped to cron's 0-59 minute field — fine at the shipped
-    # 30-min default; clamp to 59 if a caller ever passes a longer interval.
-    minutes = max(1, interval_sec // 60)
+    """A crontab line running the check every *interval_sec*.
+
+    cron's minute field only accepts a 0-59 step, so an interval longer than an
+    hour is clamped to hourly rather than emitting an invalid ``*/120``.
+    """
+    minutes = min(59, max(1, interval_sec // 60))
     return f"*/{minutes} * * * * {_run_command()} {CRON_TAG}"
 
 
 # ── install ───────────────────────────────────────────────────────────────
 
 def _install_macos(interval_sec: int) -> None:
-    # ponytail: re-install (changing the interval) rewrites the plist but
-    # doesn't unload the already-loaded job first — launchd won't pick up the
-    # new interval until an explicit unload/reload. Fine for a fresh install;
-    # revisit if/when a "change interval" flow lands.
     plist_path = _launchd_plist_path()
+    # Re-install must unload the stale job first: launchd keeps running the
+    # already-loaded plist on its OLD StartInterval, so rewriting the file alone
+    # makes "change the interval" silently do nothing.
+    if plist_path.is_file():
+        u.run(["launchctl", "unload", str(plist_path)])
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     plist_path.write_bytes(
         plistlib.dumps(
@@ -91,8 +106,6 @@ def _install_macos(interval_sec: int) -> None:
 
 
 def _install_linux_systemd(interval_sec: int) -> None:
-    # ponytail: same re-install caveat as macOS — an already-loaded unit needs
-    # `systemctl --user daemon-reload` to notice rewritten unit file contents.
     unit_dir = _systemd_unit_dir()
     unit_dir.mkdir(parents=True, exist_ok=True)
     _systemd_service_path().write_text(
@@ -106,6 +119,9 @@ def _install_linux_systemd(interval_sec: int) -> None:
         "[Install]\nWantedBy=timers.target\n",
         encoding="utf-8",
     )
+    # daemon-reload before enable: systemd caches unit contents, so a re-install
+    # with a new interval is ignored until it re-reads them.
+    u.run(["systemctl", "--user", "daemon-reload"])
     u.run(["systemctl", "--user", "enable", "--now", f"{LABEL}.timer"])
 
 
@@ -134,7 +150,7 @@ def _install_windows(interval_sec: int) -> None:
             "/TN",
             LABEL,
             "/TR",
-            _run_command(),
+            _run_command_windows(),
             "/SC",
             "MINUTE",
             "/MO",
