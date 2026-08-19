@@ -600,7 +600,10 @@ Saved Claude profiles  (2)
   concern. Only a profile without a usable refresh token shows a raw expiry time,
   color-coded (green = valid, yellow = expiring within 24h, red = `EXPIRED`).
 - `who` and `switch` render a bordered "Current Auth Claims" panel; expiry is shown the
-  same way, with the state also spelled out in text, not color alone.
+  same way, with the state also spelled out in text, not color alone. When the stored
+  credential carries a `refreshTokenExpiresAt` claim, the panel adds a `Refreshable
+  until` line — the date the account actually stops working, distinct from the short-lived
+  access token above it; it reads red once that date has passed.
 - `switch` backs up the previous credentials (timestamped, `chmod 600`) before overwriting.
 - `list` shows a spinner (with a live "which profile" label) on a TTY while it fetches usage
   for each profile; it's automatically skipped when output isn't a terminal (piping, `ai-accounts`).
@@ -658,8 +661,9 @@ agy-accounts list                  # list profiles with agy model-family quota
 agy-accounts usage                 # show only the active account's quota row
 agy-accounts switch [<name>]       # switch by name; no name = interactive picker
 agy-accounts remove [<name>]       # delete a saved profile; no name = interactive picker
-agy-accounts refresh [<name>]      # let agy refresh the session/quota and save rotations
-agy-accounts refresh --all         # refresh every saved profile through agy
+agy-accounts refresh [<name>]      # renew tokens via the Google OAuth refresh grant
+                                   #   (no browser, no agy launch); falls back to agy
+agy-accounts refresh --all         # renew every saved profile in one run
 agy-accounts sync                  # copy the active Keychain session to its profile
 agy-accounts login-switch <name>   # official agy browser login + save as <name>
 agy-accounts autoswitch            # leave the active account when its quota runs out
@@ -703,16 +707,30 @@ agy-accounts who               # confirm the current account
 ### agy-accounts Session upkeep
 
 The roughly one-hour expiry is for the access token, not the login. Saved sessions include a
-refresh token, and `agy` renews the access token automatically without a Gemini API key:
+long-lived refresh token, so an "expired" profile is renewable without a browser:
 
 ```sh
-agy-accounts refresh --all     # refresh every profile and its quota through agy
-agy-accounts refresh work      # refresh one profile and save rotated tokens
-agy-accounts refresh           # refresh the active session and sync it back
+agy-accounts refresh --all     # renew every saved profile
+agy-accounts refresh work      # renew one profile and save the new token
+agy-accounts refresh           # renew the active session and sync it back
 agy-accounts sync              # copy the current Keychain session to its profile
 ```
 
-If a refresh token is revoked, re-login with `agy-accounts login-switch <name>`.
+`refresh` posts the OAuth refresh grant straight to Google
+(`https://oauth2.googleapis.com/token`) — one HTTPS request, no `agy` process, fast enough
+to run from a timer. Google does not rotate the refresh token, so only the access token and
+its expiry are rewritten, into both the profile and (for the active account) the Keychain
+session. The client id/secret come from `ANTIGRAVITY_OAUTH_CLIENT_ID` /
+`ANTIGRAVITY_OAUTH_CLIENT_SECRET` if set, otherwise from the installed `Antigravity.app`
+bundle; when neither resolves — or when Google is unreachable — `refresh` falls back to the
+old path of letting `agy` renew the session and reading the result back.
+
+`switch` self-heals too: activating a profile whose access token is expired (or within five
+minutes of it) refreshes it in place first, so `agy` never starts on a dead token.
+
+If a refresh token is genuinely revoked (Google answers `invalid_grant`), re-login with
+`agy-accounts login-switch <name>`. Network errors and server hiccups are reported as
+transient and never trigger a re-login.
 
 ### agy-accounts Examples
 
@@ -753,9 +771,15 @@ Session types:
 - `browser` — session was restored from a browser login snapshot (no refresh token stored)
 - `api-key` — profile uses a Gemini API key instead of an OAuth session
 - `expired` — refresh token has expired; re-login required (`agy-accounts login-switch <name>`)
+- `malformed` — credential file parses as JSON but doesn't look like an Antigravity/Google
+  OAuth record (e.g. one misfiled from another provider)
 
-- `who` and `switch` render a bordered "Current Auth Claims" panel with token expiry color-coded
-  (green = valid, yellow = expiring within 24 h, red = `EXPIRED`).
+- `who` and `switch` render a bordered "Current Auth Claims" panel. Its expiry line is
+  refreshable-first, same as the `list` table above: `refreshable` (green) whenever the
+  profile carries a refresh token, otherwise the raw access-token expiry color-coded
+  (green = valid, yellow = expiring within 24 h, red = `EXPIRED`). A malformed credential
+  file replaces the entire panel body with a single yellow "Malformed credential file"
+  line instead of the usual Account/Google ID/Workspace/Issuer/Expires rows.
 - `switch` backs up the previous Keychain session (timestamped, `chmod 600`) before overwriting it.
 - `list` shows a spinner (with a live "which profile" label) on a TTY while it queries `agy`
   for each profile; it's automatically skipped when output isn't a terminal (piping, `ai-accounts`).
@@ -781,6 +805,8 @@ Config](#config) for the full key reference.
 | `ANTIGRAVITY_HOME` | `~/.ai-accounts/antigravity` | Profile and credential-mirror root |
 | `ANTIGRAVITY_OAUTH_JSON` | `$ANTIGRAVITY_HOME/oauth_creds.json` | Active Keychain session mirror |
 | `ANTIGRAVITY_ACCOUNT_DIR` | `$ANTIGRAVITY_HOME/accounts` | Saved profiles |
+| `ANTIGRAVITY_OAUTH_CLIENT_ID` | discovered from `Antigravity.app` | OAuth client id used by `refresh` |
+| `ANTIGRAVITY_OAUTH_CLIENT_SECRET` | discovered from `Antigravity.app` | OAuth client secret used by `refresh` |
 | `ANTIGRAVITY_CLI_PATH` | resolved from `PATH` | Override the `agy` executable used for quota checks |
 
 ---
@@ -803,8 +829,8 @@ grok-accounts list                  # list saved profiles
 grok-accounts usage                 # show only the active account (session & expiry)
 grok-accounts switch [<name>]       # switch by name; no name = interactive picker
 grok-accounts remove [<name>]       # delete a saved profile; no name = interactive picker
-grok-accounts refresh [<name>]      # let Grok refresh the active/profile session
-grok-accounts refresh --all         # refresh every saved profile through Grok
+grok-accounts refresh [<name>]      # renew the active/named session's access token
+grok-accounts refresh --all         # renew every saved profile's access token
 grok-accounts sync                  # copy the active auth back to its matching profile
 grok-accounts login-switch <name>   # fresh browser login + save as <name>
 grok-accounts autoswitch            # reports that grok has no quota API to switch on
@@ -829,27 +855,43 @@ grok-accounts who
 For another account, use `grok-accounts login-switch work`; then switch at any
 time with `grok-accounts switch personal` or `grok-accounts switch work`.
 
-`refresh` deliberately runs `grok models` under the selected session. This
-lets Grok Build refresh and rotate its own OAuth credentials without ai-accounts
-depending on a private xAI token endpoint. The original active session is
-restored after refreshing an inactive profile.
+`refresh` performs a standard OIDC refresh grant — one HTTPS POST, no
+subprocess. Nothing is hardcoded: the token endpoint is discovered at runtime
+from `<oidc_issuer>/.well-known/openid-configuration`, using the issuer and
+client id the credential itself carries. The grant is attempted as a public
+client (no client secret); if x.ai rejects it because client authentication is
+required, ai-accounts falls back to running `grok models` under the selected
+session so Grok Build rotates its own credentials — the original active session
+is restored afterwards. A rejected *refresh token* (`invalid_grant`) is not
+retried through the CLI: only `grok-accounts login-switch <name>` fixes that.
+
+`switch` self-heals: if the restored access token is expired or within 5 minutes
+of expiring, it is refreshed in place and the rotation mirrored back into the
+profile, so the Grok CLI is never handed a dead token.
 
 ### grok-accounts Output
 
 - `grok-accounts -h` displays current Grok model and pricing reference: grok-4.5 (500k context, agentic tool calling), API pricing, and consumer plan tiers (Free, SuperGrok).
-- `list` renders a bordered table with account, principal type/ID, team, created/expiry
-  timestamps, data-retention setting, session type, and active state:
+- `list` renders a bordered table with account, principal type/ID, team, created timestamp,
+  refresh-token health, data-retention setting, session type, and active state:
 
 ```text
 ❯ grok-accounts list
 Saved Grok profiles  (2)
-┌──────────┬──────────────────────────────────┬──────┬───────────────┬───────────┬──────────────┬──────────────┬──────────┬─────────────────┬────────┐
-│ PROFILE  │ ACCOUNT                          │ TYPE │ ID            │ TEAM      │ CREATED      │ EXPIRES      │ DATA     │ SESSION         │ STATE  │
-├──────────┼──────────────────────────────────┼──────┼───────────────┼───────────┼──────────────┼──────────────┼──────────┼─────────────────┼────────┤
-│ demo-one │ Casey Demo <casey.demo@x.ai>     │ User │ principa…0abc │ team-91d2 │ May 15 18:00 │ Jul 22 08:00 │ standard │ OAUTH · refresh │ ACTIVE │
-│ demo-two │ Alex Example <alex.example@x.ai> │ User │ principa…9c21 │ team-4b7e │ Jun 01 11:04 │ Aug 02 11:04 │ opt-out  │ OIDC · refresh  │ —      │
-└──────────┴──────────────────────────────────┴──────┴───────────────┴───────────┴──────────────┴──────────────┴──────────┴─────────────────┴────────┘
+┌──────────┬──────────────────────────────────┬──────┬───────────────┬───────────┬──────────────┬─────────────┬──────────┬─────────────────┬────────┐
+│ PROFILE  │ ACCOUNT                          │ TYPE │ ID            │ TEAM      │ CREATED      │ EXPIRES     │ DATA     │ SESSION         │ STATE  │
+├──────────┼──────────────────────────────────┼──────┼───────────────┼───────────┼──────────────┼─────────────┼──────────┼─────────────────┼────────┤
+│ demo-one │ Casey Demo <casey.demo@x.ai>     │ User │ principa…0abc │ team-91d2 │ May 15 18:00 │ refreshable │ standard │ OAUTH · refresh │ ACTIVE │
+│ demo-two │ Alex Example <alex.example@x.ai> │ User │ principa…9c21 │ team-4b7e │ Jun 01 11:04 │ refreshable │ opt-out  │ OIDC · refresh  │ —      │
+└──────────┴──────────────────────────────────┴──────┴───────────────┴───────────┴──────────────┴─────────────┴──────────┴─────────────────┴────────┘
 ```
+
+  `EXPIRES` is refreshable-first: `refreshable` (green) whenever the profile carries a
+  refresh token — x.ai's 1-hour access token is renewed automatically and isn't worth
+  alarming over. Only a profile with no refresh token shows the raw access-token expiry,
+  color-coded (green = valid, yellow = expiring within 24 h, red = `EXPIRED`). A credential
+  file that parses but doesn't match Grok's OAuth record shape (e.g. one misfiled from
+  another provider) shows `malformed` (yellow) instead.
 
 - `who` and `switch` render two bordered cyan panels — a "Grok Login Status" panel and a "Current Auth Claims" panel — matching the layout and accent color of `codex-accounts`, `claude-accounts`, and `agy-accounts`.
 - `save` and `sync` also print a bordered green "Profile: <name>" claims panel after the
@@ -882,6 +924,13 @@ Config](#config) for the full key reference.
 | `GROK_HOME` | `~/.grok` | Base Grok Build config directory |
 | `GROK_AUTH_JSON` | `$GROK_HOME/auth.json` | Active Grok Build OAuth file |
 | `GROK_ACCOUNT_DIR` | `~/.ai-accounts/grok/accounts` | Where saved profiles are stored |
+
+**Residual note:** `grok-accounts`' credential writes go through its own local
+`_write_json` (tempfile + `os.replace`), not the shared `_utils.atomic_write_json`
+the other three tools use. This is a deliberate, already-reviewed choice, not an
+oversight — both give the same atomic-write guarantee, they just aren't literally
+the same function, which is worth a maintainer knowing before assuming a change to
+one affects the other.
 
 ---
 
@@ -949,10 +998,10 @@ ai-accounts config get [key]       Print the auto-switch config (or just one key
                                     telegram bot token is always masked
 ai-accounts config set <key> <val> Set one auto-switch config key (rejects unknown keys)
 ai-accounts install-timer [--interval N]
-                                    Schedule the auto-switch check with the OS (default:
-                                    every 1800s / 30 minutes)
-ai-accounts uninstall-timer        Remove the scheduled auto-switch check
-ai-accounts timer-status           Report whether the auto-switch check is scheduled
+                                    Schedule the auto-switch check and the token-refresh
+                                    check with the OS (default: every 1800s / 30 minutes)
+ai-accounts uninstall-timer        Remove the scheduled checks
+ai-accounts timer-status           Report whether the scheduled checks are installed
 ai-accounts -h | --help | help     Show this help
 ```
 
@@ -1026,6 +1075,7 @@ Running `config` with no arguments on a TTY opens an interactive menu:
 │    Telegram chat id            (unset)                                    │
 │  Provider behavior                                                        │
 │    Antigravity blind switch    false                                      │
+│    Automatic token refresh     true                                       │
 │  When the active account reaches the limit below, switch to the …         │
 │                                                                           │
 │  ↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/…        │
@@ -1038,9 +1088,10 @@ label, not by the key name you would pass to `config get`/`config set`. The
 mapping is: `Enable automatic switching` = `enabled`, `↳ Switch at usage (%)`
 = `switch_when_used_pct`, `↳ Quota window` = `switch_window`, `Notifications`
 = `notify`, `Telegram bot token` = `telegram_bot_token`, `Telegram chat id` =
-`telegram_chat_id`, `Antigravity blind switch` = `agy_blind_switch`. Masked
-fields render as `********` plus the last four characters (all stars when the
-stored value is 12 characters or shorter).
+`telegram_chat_id`, `Antigravity blind switch` = `agy_blind_switch`, and
+`Automatic token refresh` = `token_refresh`. Masked fields render as
+`********` plus the last four characters (all stars when the stored value is
+12 characters or shorter).
 
 Keybindings: `↑`/`↓` move the cursor; `⏎` edits the highlighted field — for a
 boolean or an enum (`notify`, `switch_window`) this **cycles** its allowed
@@ -1057,7 +1108,7 @@ than attempting to read arrow keys.
 `config get`/`config set` remain the scriptable form, unchanged. `set` rejects
 any key outside the table below with a message listing the valid ones, and
 validates the value before writing: `notify` must be one of the three
-channels, `switch_window` one of the two windows, `switch_when_used_pct` must be an integer 1-100, and the two
+channels, `switch_window` one of the two windows, `switch_when_used_pct` must be an integer 1-100, and the three
 booleans are parsed strictly — a hand-typed `"false"` is stored as `False`,
 not Python's `bool("false") == True`. One behaviour changed from the legacy
 `ai-accounts`-only implementation: `config set telegram_bot_token <value>` now
@@ -1078,6 +1129,7 @@ value to be wrong — the same rule guards `agy_blind_switch`.
 | `telegram_bot_token` | string | `""` | Bot API token; stored in `~/.ai-accounts/config.json` (mode `0600`) and masked by `config get` |
 | `telegram_chat_id` | string | `""` | Bot API chat id to notify |
 | `agy_blind_switch` | bool | `false` | Opt-in: let `agy-accounts autoswitch` switch without verifying the candidate's quota first (see the support matrix below) |
+| `token_refresh` | bool | `true` | Independent of `enabled` — lets the scheduled timer renew OAuth tokens across all four providers even when auto-switching itself is off. Only a JSON `true` is on |
 
 🔴 **`switch_when_used_pct` is how much quota is USED, not how much remains**,
 and the trigger fires at `used >= switch_when_used_pct`. The default, 90,
@@ -1125,11 +1177,22 @@ ai-accounts timer-status                 # "installed" | "not installed"
 ai-accounts uninstall-timer              # remove the scheduled check
 ```
 
-The scheduled job runs `python -m ai_accounts.autoswitch_timer run`, which is a
-silent no-op unless `enabled` is `true`; when it is, it checks Codex, Claude,
-and macOS agy concurrently. No `jq` dependency is required: hook configuration
-uses Python's standard JSON library.
-Installed per OS as:
+The scheduled job runs `python -m ai_accounts.autoswitch_timer run`, which drives
+**two independent checks**, each gated by its own config key:
+
+- **Auto-switch** — gated by `enabled` (default `false`). When on, it runs the
+  same quota check as `ai-accounts autoswitch`, across all four providers.
+- **Token refresh** — gated by `token_refresh` (default `true`). When on, it
+  runs `<provider>-accounts refresh --all` for every provider, keeping OAuth
+  tokens renewed on the timer's own schedule — independent of `enabled`, so
+  a user with auto-switching off still gets live tokens. A revoked refresh
+  token (one that needs a fresh login, not just a retry) triggers a
+  de-duplicated notification via the same `notify` channel; a routine
+  rotation or a transient network failure stays silent.
+
+Either, both, or neither check runs on a given tick, depending on which flags
+are set. No `jq` dependency is required: hook configuration uses Python's
+standard JSON library. Installed per OS as:
 
 | OS | Mechanism |
 | --- | --- |
