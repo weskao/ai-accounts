@@ -87,6 +87,13 @@ class _HomeMixin(unittest.TestCase):
         os.environ.pop("ANTIGRAVITY_OAUTH_JSON", None)
         self.active = None
 
+        # No test may reach Google. Default every case to "client credentials
+        # unresolvable", which is exactly the agy-CLI fallback branch; the direct
+        # OAuth tests below opt in explicitly.
+        creds = mock.patch.object(ga, "_client_credentials", return_value=None)
+        creds.start()
+        self.addCleanup(creds.stop)
+
         read = mock.patch.object(ga, "_read_cli_keyring_secret", side_effect=self._secret)
         write = mock.patch.object(ga, "_write_cli_auth_text", side_effect=self._write)
         delete = mock.patch.object(ga, "_delete_cli_auth", side_effect=self._delete)
@@ -198,6 +205,24 @@ class ClaimsTests(unittest.TestCase):
         text = ga._ANSI_RE.sub("", "\n".join(ga._claims_lines(claims)))
         self.assertIn("Refreshable by agy", text)
         self.assertNotIn("soon", text)
+
+    def test_a_misfiled_foreign_credential_is_flagged_malformed_not_expired(self) -> None:
+        # Given: a genuine credential shape (has access_token/refresh_token/expiry_date)
+        self.assertFalse(ga._claims_from_auth(_creds("sub", "a@x.com"))["malformed"])
+        # Given: plan.md §2.4 — an x.ai payload dropped into the antigravity dir by
+        # mistake. It parses as JSON but carries none of the expected OAuth keys.
+        foreign = {
+            "https://auth.x.ai::client": {
+                "auth_mode": "oidc",
+                "email": "a@x.com",
+                "refresh_token": "secret-refresh-token",
+                "key": "secret-access-token",
+            }
+        }
+        claims = ga._claims_from_auth(foreign)
+        # Then: reported as malformed, not silently read as expired/blank
+        self.assertTrue(claims["malformed"])
+        self.assertIsNone(claims["expires_epoch"])
 
 
 class KeyringTests(unittest.TestCase):
@@ -1130,6 +1155,212 @@ class AgyAutoswitchRestartTests(_AutoswitchMixin):
                 mock.patch.object(ga.subprocess, "run") as spawn:
             self.assertTrue(ga._antigravity_ide_running())
         spawn.assert_not_called()
+
+
+class AgyClientCredentialTests(unittest.TestCase):
+    """Resolution order: env vars → Antigravity.app bundle → None (CLI fallback)."""
+
+    def setUp(self) -> None:
+        ga._client_credentials.cache_clear()
+        self.addCleanup(ga._client_credentials.cache_clear)
+
+    def test_env_vars_win_and_skip_the_bundle_scan(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "ANTIGRAVITY_OAUTH_CLIENT_ID": "1-aaaaaaaaaaaaaaaaaaaaaa.apps.googleusercontent.com",
+                "ANTIGRAVITY_OAUTH_CLIENT_SECRET": "GOCSPX-envplaceholdersecret0001",
+            },
+            clear=False,
+        ), mock.patch.object(ga, "_antigravity_app_paths") as paths:
+            self.assertEqual(
+                ga._client_credentials(),
+                (
+                    "1-aaaaaaaaaaaaaaaaaaaaaa.apps.googleusercontent.com",
+                    "GOCSPX-envplaceholdersecret0001",
+                ),
+            )
+        paths.assert_not_called()
+
+    def test_bundle_regex_finds_both_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp) / "Antigravity.app"
+            main_js = app / ga._APP_MAIN_JS
+            main_js.parent.mkdir(parents=True)
+            main_js.write_text(
+                'const a="2-bbbbbbbbbbbbbbbbbbbbbb.apps.googleusercontent.com",'
+                'b="GOCSPX-bundleplaceholdersecret02";',
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                ga, "_antigravity_app_paths", return_value=(app,)
+            ):
+                self.assertEqual(
+                    ga._client_credentials(),
+                    (
+                        "2-bbbbbbbbbbbbbbbbbbbbbb.apps.googleusercontent.com",
+                        "GOCSPX-bundleplaceholdersecret02",
+                    ),
+                )
+
+    def test_missing_app_resolves_to_none_instead_of_crashing(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            ga, "_antigravity_app_paths", return_value=(Path("/nope/Antigravity.app"),)
+        ):
+            self.assertIsNone(ga._client_credentials())
+
+
+class AgyErrorClassificationTests(unittest.TestCase):
+    def test_invalid_grant_is_revoked_whatever_the_status(self) -> None:
+        message = ga._http_error_message(400, '{"error":"invalid_grant"}')
+        self.assertTrue(ga._is_revoked_error(message))
+
+    def test_other_400s_are_transient(self) -> None:
+        self.assertFalse(
+            ga._is_revoked_error(ga._http_error_message(400, '{"error":"invalid_client"}'))
+        )
+        self.assertFalse(ga._is_revoked_error(ga._http_error_message(500, "boom")))
+        self.assertFalse(ga._is_revoked_error("network error: timed out"))
+
+    def test_expiry_skew_is_five_minutes_not_a_day(self) -> None:
+        self.assertEqual(ga._REFRESH_SKEW_SECONDS, 300)
+        now = int(time.time())
+        self.assertFalse(ga._token_expired_or_soon({"expires_epoch": now + 3600}))
+        self.assertTrue(ga._token_expired_or_soon({"expires_epoch": now + 60}))
+        self.assertTrue(ga._token_expired_or_soon({"expires_epoch": now - 60}))
+        self.assertFalse(ga._token_expired_or_soon({"expires_epoch": None}))
+
+
+class AgyDirectRefreshTests(_HomeMixin):
+    """The direct Google path, with the token endpoint mocked — never a real POST."""
+
+    def enable(self, response: object) -> mock.MagicMock:
+        creds = mock.patch.object(
+            ga,
+            "_client_credentials",
+            return_value=(
+                "3-cccccccccccccccccccccc.apps.googleusercontent.com",
+                "GOCSPX-testplaceholdersecret003",
+            ),
+        )
+        creds.start()
+        self.addCleanup(creds.stop)
+        post = mock.patch.object(ga, "oauth_token_refresh", return_value=response)
+        handle = post.start()
+        self.addCleanup(post.stop)
+        return handle
+
+    def test_refresh_writes_new_token_and_recomputed_ms_expiry(self) -> None:
+        profile = self.write_profile(
+            "work", _creds("sub-w", "user@example.com", access_token="at-stale")
+        )
+        post = self.enable(({"access_token": "at-fresh", "expires_in": 3600}, None))
+        with mock.patch.object(ga.gemini_usage, "fetch_usage") as spawn:
+            self.assertEqual(self.quiet(ga.cmd_refresh, "work"), 0)
+        spawn.assert_not_called()  # no agy subprocess on the fast path
+
+        saved = json.loads(profile.read_text())
+        self.assertEqual(saved["access_token"], "at-fresh")
+        self.assertEqual(saved["refresh_token"], "rt-old")  # Google never rotates it
+        self.assertAlmostEqual(
+            saved["expiry_date"] / 1000, time.time() + 3600, delta=5
+        )
+        # The POST is form-encoded and carries the four required fields.
+        self.assertTrue(post.call_args.kwargs["form_encoded"])
+        self.assertEqual(
+            set(post.call_args.args[1]),
+            {"client_id", "client_secret", "refresh_token", "grant_type"},
+        )
+
+    def test_revoked_token_reports_relogin_and_never_spawns_agy(self) -> None:
+        self.write_profile("work", _creds("sub-w", "user@example.com"))
+        self.enable((None, "revoked: refresh token rejected (invalid_grant)"))
+        with mock.patch.object(ga.gemini_usage, "fetch_usage") as spawn:
+            code, _, error = self.capture(ga.cmd_refresh, "work")
+        self.assertEqual(code, 1)
+        self.assertIn("login-switch work", error)
+        spawn.assert_not_called()
+
+    def test_transient_failure_falls_back_to_the_agy_path(self) -> None:
+        profile = self.write_profile(
+            "work", _creds("sub-w", "user@example.com", access_token="at-stale")
+        )
+        self.enable((None, "network error: timed out"))
+
+        def refresh(*_args, **_kwargs) -> gu.UsageSnapshot:
+            if self.active is None:
+                self.fail("expected activated profile")
+            self.active["access_token"] = "at-via-agy"
+            return _usage(email="user@example.com")
+
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=refresh):
+            self.assertEqual(self.quiet(ga.cmd_refresh, "work"), 0)
+        self.assertEqual(json.loads(profile.read_text())["access_token"], "at-via-agy")
+
+    def test_active_profile_refresh_updates_the_keyring_blob_too(self) -> None:
+        auth = _creds("sub-w", "user@example.com", access_token="at-stale")
+        profile = self.write_profile("work", auth)
+        self.set_active(auth)
+        self.mark_current("work")
+        self.enable(({"access_token": "at-fresh", "expires_in": 3600}, None))
+        self.assertEqual(self.quiet(ga.cmd_refresh, "work"), 0)
+
+        self.assertEqual(json.loads(profile.read_text())["access_token"], "at-fresh")
+        if self.active is None:
+            self.fail("expected a live session")
+        self.assertEqual(self.active["access_token"], "at-fresh")
+        # Round-tripping through the keyring encoding keeps the ms expiry intact.
+        secret = ga._keyring_secret_from_auth(self.active)
+        self.assertIsNotNone(secret)
+        decoded = ga._auth_from_keyring_secret(secret or "")
+        self.assertIsNotNone(decoded)
+        self.assertAlmostEqual(
+            (decoded or {})["expiry_date"] / 1000, time.time() + 3600, delta=5
+        )
+
+    def test_active_auth_refresh_syncs_back_without_agy(self) -> None:
+        auth = _creds("sub-w", "user@example.com", access_token="at-stale")
+        profile = self.write_profile("work", auth)
+        self.set_active(auth)
+        self.mark_current("work")
+        self.enable(({"access_token": "at-fresh", "expires_in": 3600}, None))
+        with mock.patch.object(ga.gemini_usage, "fetch_usage") as spawn:
+            self.assertEqual(self.quiet(ga.cmd_refresh, None), 0)
+        spawn.assert_not_called()
+        self.assertEqual(json.loads(profile.read_text())["access_token"], "at-fresh")
+
+    def test_switch_self_heals_an_expired_snapshot(self) -> None:
+        profile = self.write_profile(
+            "work",
+            _creds(
+                "sub-w", "user@example.com", access_token="at-dead", expires_in_ms=-60_000
+            ),
+        )
+        self.enable(({"access_token": "at-fresh", "expires_in": 3600}, None))
+        self.assertEqual(self.quiet(ga.cmd_switch, "work"), 0)
+        self.assertEqual(json.loads(profile.read_text())["access_token"], "at-fresh")
+        if self.active is None:
+            self.fail("expected a live session")
+        self.assertEqual(self.active["access_token"], "at-fresh")
+
+    def test_switch_leaves_a_healthy_token_untouched(self) -> None:
+        self.write_profile("work", _creds("sub-w", "user@example.com"))
+        post = self.enable(({"access_token": "at-fresh", "expires_in": 3600}, None))
+        self.assertEqual(self.quiet(ga.cmd_switch, "work"), 0)
+        post.assert_not_called()
+
+    def test_switch_onto_a_revoked_profile_still_switches_and_hints(self) -> None:
+        self.write_profile(
+            "work",
+            _creds(
+                "sub-w", "user@example.com", access_token="at-dead", expires_in_ms=-60_000
+            ),
+        )
+        self.enable((None, "revoked: refresh token rejected (invalid_grant)"))
+        code, output, error = self.capture(ga.cmd_switch, "work")
+        self.assertEqual(code, 0)
+        self.assertIn("login-switch work", ga._ANSI_RE.sub("", output + error))
+        self.assertIsNotNone(self.active)
 
 
 if __name__ == "__main__":

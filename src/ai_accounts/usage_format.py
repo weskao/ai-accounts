@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final, TypeAlias
 
-from ._utils import DIM, RESET, log_yellow
+from ._utils import DIM, GREEN, RESET, YELLOW, log_yellow
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonDict: TypeAlias = dict[str, JsonValue]
@@ -190,6 +190,22 @@ def _request_usage(access_token: str, account_id: str | None) -> JsonDict | str:
 
 def _clamp_percent(value: int) -> int:
     return max(0, min(100, value))
+
+
+def credential_status_prefix(claims: JsonDict | None) -> tuple[str, str] | None:
+    """(text, color) for a malformed or refreshable credential, else ``None``
+    so the caller falls through to its own time-based expiry logic. Shared by
+    every provider's expiry-status renderer — a live refresh token means the
+    account is healthy regardless of the (often short-lived) access token's
+    own expiry; a shape-mismatched credential is reported as malformed rather
+    than silently reading as expired."""
+    if not claims:
+        return None
+    if claims.get("malformed"):
+        return "malformed", YELLOW
+    if claims.get("refreshable"):
+        return "refreshable", GREEN
+    return None
 
 
 def format_unix_time_compact(value: int | None) -> str:

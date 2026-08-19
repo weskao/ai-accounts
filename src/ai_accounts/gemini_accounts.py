@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime
+from functools import cache
 from pathlib import Path
 from typing import TypeAlias
 
@@ -33,17 +34,20 @@ from ._utils import (
     RESET,
     YELLOW,
     Spinner,
+    atomic_write_json,
     email_local_part,
     ensure_tool,
     have,
     log_red,
     log_yellow,
+    oauth_token_refresh,
     plan_tier_color,
     resolve_data_dir,
 )
 from .usage_format import (
     UsageWindow,
     capitalize_first,
+    credential_status_prefix,
     format_unix_time_compact,
     format_usage_window,
     print_no_active_account,
@@ -75,7 +79,8 @@ USAGE
   agy-accounts usage                 Show only the active account's quota row
   agy-accounts switch [<name>]       Switch by name; no name = interactive picker
   agy-accounts remove [<name>]       Delete by name; no name = interactive picker
-  agy-accounts refresh [<name>]      Let agy refresh a session and its quota;
+  agy-accounts refresh [<name>]      Renew tokens via the Google OAuth refresh grant
+                                     (no browser, no agy launch; falls back to agy);
                                      no name = refresh active session + sync it back
   agy-accounts refresh --all         Refresh every saved profile
   agy-accounts sync                  Copy the active auth back to its matching profile
@@ -241,10 +246,10 @@ def _write_cli_auth_text(auth_text: str) -> bool:
     secret = _keyring_secret_from_auth(auth)
     if secret is None or not _store_keychain_secret(secret):
         return False
-    auth_path = _auth_file()
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
-    auth_path.write_text(json.dumps(auth, indent=2) + "\n", encoding="utf-8")
-    auth_path.chmod(0o600)
+    try:
+        atomic_write_json(_auth_file(), auth)
+    except OSError:
+        return False
     return True
 
 
@@ -345,6 +350,14 @@ def _format_unix_time(value: object) -> str | None:
         return None
 
 
+# A genuine Antigravity/Google OAuth credential always carries at least one
+# of these top-level keys (written by both the keyring round-trip and the
+# OAuth refresh response). A file that parses as JSON but has none of them is
+# a misfiled/foreign credential (e.g. an x.ai record dropped in this dir by
+# mistake) rather than a merely-expired one — see plan.md §2.4.
+_EXPECTED_OAUTH_KEYS = ("access_token", "refresh_token", "expiry_date")
+
+
 def _claims_from_auth(auth: JsonDict) -> Claims:
     """Extract non-secret account claims from parsed Antigravity credentials.
 
@@ -372,6 +385,7 @@ def _claims_from_auth(auth: JsonDict) -> Claims:
         "expires_epoch": exp,
         "expires_str": _format_unix_time(exp),
         "refreshable": bool(_string(auth.get("refresh_token"))),
+        "malformed": not any(key in auth for key in _EXPECTED_OAUTH_KEYS),
     }
 
 
@@ -500,11 +514,205 @@ def _copy_active_auth_to(dest: Path) -> None:
     dest.chmod(0o600)
 
 
+# ── direct Google OAuth refresh (no agy subprocess) ─────────────────────────
+
+# Antigravity's access token lives ~1h, so the proactive window has to be small:
+# Codex's 24h skew would mark every healthy Antigravity token "about to expire".
+_REFRESH_SKEW_SECONDS = 300
+
+_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+# The desktop client's OAuth id/secret ship in plain text inside the app bundle;
+# they are a public-client credential pair, not a user secret, but they are still
+# never printed — only handed to the token endpoint.
+_APP_MAIN_JS = "Contents/Resources/app/out/main.js"
+_CLIENT_ID_RE = re.compile(r"\d+-[A-Za-z0-9]{20,}\.apps\.googleusercontent\.com")
+_CLIENT_SECRET_RE = re.compile(r"GOCSPX-[A-Za-z0-9_-]{20,}")
+
+# Not an error the user should act on: it only means "use the agy CLI path".
+_NO_CLIENT_CREDENTIALS = "no Google client credentials"
+
+
+def _antigravity_app_paths() -> tuple[Path, ...]:
+    return (
+        Path("/Applications/Antigravity.app"),
+        Path.home() / "Applications" / "Antigravity.app",
+    )
+
+
+@cache
+def _client_credentials() -> tuple[str, str] | None:
+    """(client_id, client_secret) for the Antigravity OAuth client, or None.
+
+    Env override first, then discovery from the installed app bundle. Cached:
+    `refresh --all` must not re-scan a 12 MB bundle once per profile. Returns
+    None — never raises, never logs a value — when neither source resolves, and
+    callers fall back to the agy CLI refresh."""
+    client_id = os.environ.get("ANTIGRAVITY_OAUTH_CLIENT_ID")
+    client_secret = os.environ.get("ANTIGRAVITY_OAUTH_CLIENT_SECRET")
+    if client_id and client_secret:
+        return client_id, client_secret
+    for app in _antigravity_app_paths():
+        try:
+            blob = (app / _APP_MAIN_JS).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        found_id = _CLIENT_ID_RE.search(blob)
+        found_secret = _CLIENT_SECRET_RE.search(blob)
+        if found_id and found_secret:
+            return found_id.group(0), found_secret.group(0)
+    return None
+
+
+def _http_error_message(code: int, detail: str) -> str:
+    """Antigravity's classifier for the shared refresh helper. Google answers
+    400 for both a malformed request and a dead refresh token, so the JSON body
+    decides — only ``invalid_grant`` means the token itself is gone."""
+    error = ""
+    try:
+        body = json.loads(detail)
+        if isinstance(body, dict):
+            error = _string(body.get("error")) or ""
+    except ValueError:
+        pass
+    if error == "invalid_grant":
+        return "revoked: refresh token rejected (invalid_grant)"
+    if error:
+        # invalid_client / unauthorized_client etc. mean our *client* credentials
+        # are wrong — a fresh user login would not fix that, so not "revoked".
+        return f"HTTP {code} from token endpoint ({error})"
+    return f"HTTP {code} from token endpoint"
+
+
+def _is_revoked_error(error: str | None) -> bool:
+    """True only when Google rejected the refresh token itself — the one case a
+    browser re-login fixes. Network errors, 5xx and client-credential problems
+    are transient/fallback-worthy, and must never pop a login."""
+    return (error or "").startswith("revoked")
+
+
+def _oauth_refresh(refresh_token: str) -> tuple[dict | None, str | None]:
+    """Exchange a refresh_token for a fresh access token against Google.
+    (response, None) on success, (None, error) on failure — never raises, never
+    logs tokens. Google does not rotate the refresh token on this grant."""
+    credentials = _client_credentials()
+    if credentials is None:
+        return None, _NO_CLIENT_CREDENTIALS
+    client_id, client_secret = credentials
+    return oauth_token_refresh(
+        _OAUTH_TOKEN_URL,
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        },
+        form_encoded=True,
+        http_error=_http_error_message,
+    )
+
+
+def _apply_refreshed_auth(auth: JsonDict, refreshed: dict) -> JsonDict:
+    """Merge a token response into a credential dict. ``expiry_date`` is Google's
+    epoch-**milliseconds** field, recomputed from ``expires_in`` seconds."""
+    updated = dict(auth)
+    access_token = _string(refreshed.get("access_token"))
+    if access_token:
+        updated["access_token"] = access_token
+    token_type = _string(refreshed.get("token_type"))
+    if token_type:
+        updated["token_type"] = token_type
+    expires_in = refreshed.get("expires_in")
+    if isinstance(expires_in, int | float):
+        updated["expiry_date"] = int((time.time() + int(expires_in)) * 1000)
+    return updated
+
+
+def _direct_refresh_auth(auth: JsonDict) -> tuple[JsonDict | None, str | None]:
+    """Refresh one parsed credential straight against Google.
+    (updated credential, None) on success; (None, error) otherwise, where the
+    error is `_NO_CLIENT_CREDENTIALS`, a "revoked: …" message, or transient."""
+    refresh_token = _string(auth.get("refresh_token"))
+    if not refresh_token:
+        return None, "revoked: no refresh_token in the saved credential"
+    refreshed, error = _oauth_refresh(refresh_token)
+    if refreshed is None:
+        return None, error
+    return _apply_refreshed_auth(auth, refreshed), None
+
+
+def _direct_refresh_profile(profile_file: Path) -> tuple[JsonDict | None, str | None]:
+    """`_direct_refresh_auth` for a saved profile, persisting the result.
+
+    On success the profile file is rewritten atomically and — when it is the
+    live account — mirrored into the keyring blob (`expiry_date` ms → the
+    keyring's ISO-8601 `expiry`) so agy sees the fresh token too."""
+    try:
+        auth = json.loads(profile_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, "unreadable credential file"
+    if not isinstance(auth, dict):
+        return None, "unreadable credential file"
+    updated, error = _direct_refresh_auth(auth)
+    if updated is None:
+        return None, error
+    try:
+        atomic_write_json(profile_file, updated)
+    except OSError as exc:
+        return None, f"could not write {profile_file.name}: {exc.strerror}"
+    if _active_profile() == profile_file:
+        _write_cli_auth_text(json.dumps(updated))
+    return updated, None
+
+
+def _token_expired_or_soon(claims: Claims | None) -> bool:
+    """True when the access token is expired or inside `_REFRESH_SKEW_SECONDS`
+    of expiring. Unknown expiry returns False — no network call on a token we
+    cannot judge."""
+    if not claims:
+        return False
+    expires_epoch = claims.get("expires_epoch")
+    if not isinstance(expires_epoch, int):
+        return False
+    return expires_epoch - datetime.now().timestamp() < _REFRESH_SKEW_SECONDS
+
+
+def _recover_switched_auth(profile_file: Path, name: str) -> None:
+    """Bring a just-activated but expired token back to life without a browser.
+
+    Best-effort by design — the switch itself already succeeded, so nothing here
+    fails the command: a revoked refresh token escalates to a login hint, and a
+    transient failure (or unresolvable client credentials) leaves the tokens in
+    place for the next use to retry."""
+    updated, error = _direct_refresh_profile(profile_file)
+    if updated is not None:
+        print(f"{DIM}   (token was expired — refreshed in place){RESET}")
+        return
+    if _is_revoked_error(error):
+        log_yellow(f"⚠️  Saved token for '{name}' is revoked — a fresh login is needed.")
+        print(f"{DIM}   Run: agy-accounts login-switch {name}{RESET}")
+        return
+    if error == _NO_CLIENT_CREDENTIALS:
+        log_yellow(
+            f"⚠️  '{name}' has an expired access token and the Google client "
+            f"credentials could not be resolved."
+        )
+        print(f"{DIM}   Run: agy-accounts refresh {name}{RESET}")
+        return
+    log_yellow(f"⚠️  Could not refresh after switch ({error}); agy will retry on next use.")
+
+
 # ── terminal rendering ───────────────────────────────────────────────────
 
 
 def _expiry_status(claims: Claims | None) -> tuple[str, str]:
-    """(display text, color) — color carries meaning but text never relies on it alone."""
+    """(display text, color) — color carries meaning but text never relies on
+    it alone. Refreshable-first, matching ``_list_expiry_status``: a live
+    refresh token means the account is healthy regardless of the access
+    token's own expiry."""
+    prefix = credential_status_prefix(claims)
+    if prefix is not None:
+        return prefix
     if not claims or not claims.get("expires_str"):
         return "—", DIM
     now = datetime.now().timestamp()
@@ -519,10 +727,11 @@ def _expiry_status(claims: Claims | None) -> tuple[str, str]:
 
 
 def _list_expiry_status(claims: Claims | None) -> tuple[str, str]:
+    prefix = credential_status_prefix(claims)
+    if prefix is not None:
+        return prefix
     if not claims:
         return "—", DIM
-    if claims.get("refreshable"):
-        return "refreshable", GREEN
     expires_epoch = claims.get("expires_epoch")
     if not isinstance(expires_epoch, int):
         return "—", DIM
@@ -539,6 +748,11 @@ def _claims_lines(claims: Claims | None) -> list[str]:
     if claims is None:
         return [
             f"{YELLOW}No auth file found.{RESET} Run: {BOLD}agy-accounts login-switch <name>{RESET}"
+        ]
+    if claims.get("malformed"):
+        return [
+            f"{YELLOW}Malformed credential file — not a recognizable "
+            f"Antigravity/Google OAuth record.{RESET}"
         ]
 
     has_any = any(
@@ -880,6 +1094,12 @@ def cmd_switch(name: str) -> int:
 
     ok("Switched Antigravity profile to", name)
     print(f"{DIM}   agy will use this account on its next launch.{RESET}")
+
+    # Self-heal an expired snapshot in place so agy starts with a live token —
+    # a profile parked for over an hour always has a dead access token.
+    if _token_expired_or_soon(_read_claims(profile_file)):
+        _recover_switched_auth(profile_file, name)
+
     print()
     return cmd_who()
 
@@ -937,6 +1157,25 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
         print()
         cmd_list()
         return 1, None
+
+    # Fast path: one HTTPS POST to Google. Only a transient failure or
+    # unresolvable client credentials falls through to the agy subprocess below.
+    updated, error = _direct_refresh_profile(profile_file)
+    if updated is not None:
+        if show_summary:
+            success_panel(
+                "Refreshed Antigravity profile",
+                name,
+                _claims_lines(_read_claims(profile_file)),
+                title=f"Profile: {name}",
+            )
+        return 0, None
+    if _is_revoked_error(error):
+        log_red(f"❌ Refresh token revoked/dead for {name}: {error}")
+        log_yellow(f"   Re-login with: agy-accounts login-switch {name}")
+        return 1, "revoked"
+    if error != _NO_CLIENT_CREDENTIALS:
+        log_yellow(f"⚠️  Direct Google refresh failed for {name} ({error}) — trying agy.")
 
     original_text = _read_active_auth_text()
     is_active = _active_profile(original_text) == profile_file
@@ -1001,6 +1240,40 @@ def _refresh_active_auth() -> int:
         return 1
 
     profile_path = _active_profile(active_text)
+
+    # Fast path: refresh the live credential straight against Google, then fold
+    # it back into its profile. Falls through to agy only when that can't run.
+    updated, error = _direct_refresh_auth(json.loads(active_text))
+    if updated is not None:
+        if not _write_cli_auth_text(json.dumps(updated)):
+            log_red("❌ Could not update the agy CLI keyring session")
+            return 1
+        if profile_path is not None:
+            saved = json.loads(profile_path.read_text(encoding="utf-8"))
+            saved.update(updated)
+            atomic_write_json(profile_path, saved)
+            _set_current_profile(profile_path)
+            details = (f"(synced back to profile: {profile_path.stem})",)
+        else:
+            log_yellow(
+                "⚠️  No unambiguous current profile — run: agy-accounts switch <name>"
+            )
+            details = ()
+        success_panel(
+            "Refreshed active Antigravity auth.",
+            None,
+            _claims_lines(_read_claims(_auth_file())),
+            title="Current Auth Claims",
+            details=details,
+        )
+        return 0
+    if _is_revoked_error(error):
+        log_red(f"❌ Refresh token revoked/dead: {error}")
+        log_yellow("   Re-login with: agy-accounts login-switch <profile_name>")
+        return 1
+    if error != _NO_CLIENT_CREDENTIALS:
+        log_yellow(f"⚠️  Direct Google refresh failed ({error}) — trying agy.")
+
     claims = _read_claims(profile_path) if profile_path is not None else None
     usage = _validated_usage(gemini_usage.fetch_usage(), claims)
     if usage.error:

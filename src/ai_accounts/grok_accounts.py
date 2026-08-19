@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -7,7 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,9 +24,10 @@ from ._utils import (
     email_local_part,
     log_red,
     log_yellow,
+    oauth_token_refresh,
     resolve_account_dir,
 )
-from .usage_format import print_no_active_account
+from .usage_format import credential_status_prefix, print_no_active_account
 
 JsonDict = dict[str, Any]
 
@@ -39,8 +41,8 @@ USAGE
   grok-accounts usage                 Show only the active account (session & expiry)
   grok-accounts switch [<name>]       Switch by name; no name = interactive picker
   grok-accounts remove [<name>]       Delete a saved profile; no name = interactive picker
-  grok-accounts refresh [<name>]      Let Grok refresh the active/profile session
-  grok-accounts refresh --all         Refresh every saved profile through Grok
+  grok-accounts refresh [<name>]      Renew the active/named session's token
+  grok-accounts refresh --all         Renew every saved profile's token
   grok-accounts sync                  Copy the active auth back to its matching profile
   grok-accounts autoswitch            Report that grok has no quota API to switch on
   grok-accounts login-switch <name>   Fresh Grok OAuth login + save as <name>
@@ -67,8 +69,12 @@ MODEL
 
 Profiles live under ~/.ai-accounts/grok/accounts/<name>.json (override with
 $GROK_ACCOUNT_DIR). Treat that directory as secrets — profiles contain OAuth
-tokens. `refresh` runs `grok models`, allowing the official CLI to refresh and
-rotate credentials instead of ai-accounts calling a private OAuth endpoint.
+tokens. `refresh` performs a standard OIDC refresh grant against the token
+endpoint discovered from the credential's own issuer — nothing is hardcoded. It
+falls back to running `grok models` (letting the official CLI rotate the
+credential) when that grant needs a client secret ai-accounts does not hold.
+`switch` refreshes in place when the restored token is expired or within 5
+minutes of expiring.
 """
 
 
@@ -156,9 +162,15 @@ def _record(payload: JsonDict) -> JsonDict | None:
 
 
 def _claims(payload: JsonDict | None) -> JsonDict:
-    record = _record(payload or {})
-    if record is None:
+    if not payload:
         return {}
+    record = _record(payload)
+    if record is None:
+        # The file parses as JSON but none of its values look like a Grok
+        # OAuth record (auth_mode/refresh_token/email) — e.g. an Antigravity
+        # credential misfiled into this dir. Distinct from "no file at all"
+        # so callers can report it as malformed rather than as expired/blank.
+        return {"malformed": True}
     return {
         "email": str(record.get("email") or "—"),
         "name": str(record.get("first_name") or "").strip(),
@@ -170,6 +182,7 @@ def _claims(payload: JsonDict | None) -> JsonDict:
         "auth_mode": str(record.get("auth_mode") or "—").upper(),
         "refreshable": bool(record.get("refresh_token")),
         "retention_opt_out": record.get("coding_data_retention_opt_out"),
+        "malformed": False,
     }
 
 
@@ -204,22 +217,32 @@ def _active_profile(active: JsonDict | None = None) -> Path | None:
     return matches[0] if len(matches) == 1 else None
 
 
-def _expiry_status(value: str) -> str:
+def _expiry_status(claims: JsonDict) -> tuple[str, str]:
+    """(display text, color) — refresh-token health first, mirroring
+    gemini_accounts._list_expiry_status. A live refresh_token means the
+    account is healthy regardless of the (1h-lived) access token's own
+    expiry; RED is reserved for what actually needs a human: no refresh
+    token present, a malformed record, or (once refresh lands) one revoked
+    by x.ai."""
+    prefix = credential_status_prefix(claims)
+    if prefix is not None:
+        return prefix
+    value = str(claims.get("expires_at") or "")
     if not value:
-        return "—"
+        return "—", DIM
     try:
         when = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        return value[:19]
+        return value[:19], DIM
     seconds = (when - datetime.now(timezone.utc)).total_seconds()
     if seconds < 0:
-        return "EXPIRED"
+        return "EXPIRED", RED
     if seconds < 60 * 60:
-        return "<1h"
+        return "<1h", YELLOW
     if seconds < 24 * 60 * 60:
         hours, remainder = divmod(int(seconds), 60 * 60)
-        return f"{hours}h {remainder // 60:02d}m"
-    return when.astimezone().strftime("%b %d %H:%M")
+        return f"{hours}h {remainder // 60:02d}m", YELLOW
+    return when.astimezone().strftime("%b %d %H:%M"), GREEN
 
 
 def _timestamp(value: str) -> str:
@@ -257,15 +280,22 @@ def _identity_label(claims: JsonDict) -> str | None:
 def _claims_lines(claims: JsonDict, profile: Path | None) -> list[str]:
     if not claims:
         return [f"{YELLOW}No readable account claims found.{RESET}"]
+    if claims.get("malformed"):
+        return [
+            f"{YELLOW}Malformed credential file — not a recognizable Grok "
+            f"OAuth record.{RESET}",
+            f"{DIM}Profile{RESET}       : {profile.stem if profile else 'untracked'}",
+        ]
     name = claims["name"]
     account = f"{name} <{claims['email']}>" if name else claims["email"]
     session = f"{GREEN}refreshable{RESET}" if claims["refreshable"] else "browser login"
+    expires_text, expires_color = _expiry_status(claims)
     return [
         f"{BOLD}Account{RESET}       : {account}",
         f"{DIM}Principal{RESET}     : {claims['principal_id']}",
         f"{DIM}Team{RESET}          : {claims['team_id']}",
         f"{DIM}Session{RESET}       : {session}",
-        f"{DIM}Expires{RESET}       : {_expiry_status(claims['expires_at'])}",
+        f"{DIM}Expires{RESET}       : {expires_color}{expires_text}{RESET}",
         f"{DIM}Profile{RESET}       : {profile.stem if profile else 'untracked'}",
     ]
 
@@ -349,10 +379,12 @@ def cmd_list(*, only_active: bool = False) -> int:
     rows = []
     for path in profiles:
         claims = _claims(_read_json(path))
-        account = claims.get("email", "unreadable")
-        if claims.get("name"):
+        malformed = claims.get("malformed")
+        account = f"{YELLOW}malformed{RESET}" if malformed else claims.get("email", "unreadable")
+        if not malformed and claims.get("name"):
             account = f"{claims['name']} <{account}>"
         is_active = path == active
+        expires_text, expires_color = _expiry_status(claims)
         rows.append(
             {
                 "profile": f"{GREEN}{BOLD}{path.stem}{RESET}" if is_active else path.stem,
@@ -361,9 +393,9 @@ def cmd_list(*, only_active: bool = False) -> int:
                 "id": _short_id(claims.get("principal_id")),
                 "team": _short_id(claims.get("team_id")),
                 "created": _timestamp(str(claims.get("created_at", ""))),
-                "expires": _expiry_status(str(claims.get("expires_at", ""))),
+                "expires": f"{expires_color}{expires_text}{RESET}",
                 "data": _retention(claims.get("retention_opt_out")),
-                "session": f"{claims.get('auth_mode', '—')} · {'refresh' if claims['refreshable'] else 'browser'}",
+                "session": f"{claims.get('auth_mode', '—')} · {'refresh' if claims.get('refreshable') else 'browser'}",
                 "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
             }
         )
@@ -397,6 +429,10 @@ def cmd_switch(name: str) -> int:
     _set_marker(profile)
     ok("Switched Grok profile to", profile.stem)
     print(f"{DIM}   Grok Build CLI will use this account on its next launch.{RESET}")
+    if _token_expired_or_soon(_claims(payload)):
+        status = _recover_switched_auth(profile, name)
+        if status != 0:
+            return status
     print()
     return cmd_who()
 
@@ -444,6 +480,181 @@ def cmd_remove_interactive() -> int:
     return choose_and_run("a Grok", items, cmd_remove, cancel_message="Remove cancelled.")
 
 
+# ── direct OIDC refresh ──────────────────────────────────────────────────────
+
+# x.ai access tokens live ~1h, so the proactive window is minutes — not the 24h
+# codex uses for its 240h token.
+_REFRESH_SKEW_SECONDS = 300
+
+# The Grok CLI keeps the access token under "key". Only fields the record
+# already carries are ever rewritten, so an unfamiliar credential shape falls
+# back to the vendor CLI instead of getting an invented field.
+_ACCESS_TOKEN_FIELDS = ("key", "access_token")
+
+_TOKEN_ENDPOINTS: dict[str, str] = {}
+
+
+def _token_endpoint(issuer: str) -> str | None:
+    """Discover the OIDC token endpoint for `issuer`, cached per process.
+
+    Nothing is hardcoded: the issuer comes out of the credential itself, and
+    `<issuer>/.well-known/openid-configuration` names the endpoint.
+    """
+    if issuer in _TOKEN_ENDPOINTS:
+        return _TOKEN_ENDPOINTS[issuer]
+    import urllib.request  # keeps http.client/ssl off the import path
+
+    url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as response:
+            document = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    endpoint = document.get("token_endpoint") if isinstance(document, dict) else None
+    if not isinstance(endpoint, str) or not endpoint:
+        return None
+    _TOKEN_ENDPOINTS[issuer] = endpoint
+    return endpoint
+
+
+def _http_error_message(code: int, body: str) -> str:
+    """Grok's classifier for the shared refresh helper. Three outcomes, kept
+    deliberately distinct: "revoked:" (only a browser login helps),
+    "client-auth:" (this OIDC client wants a secret we do not have — fall back
+    to the vendor CLI, which holds one) and everything else (transient)."""
+    error = ""
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict):
+            error = str(parsed.get("error") or "")
+    except ValueError:
+        pass
+    if error == "invalid_grant":
+        return "revoked: refresh token rejected (invalid_grant)"
+    if error in ("invalid_client", "unauthorized_client"):
+        return f"client-auth: token endpoint requires client authentication ({error})"
+    if code == 401 and not error:
+        return "client-auth: token endpoint returned HTTP 401 with no OAuth error"
+    return f"HTTP {code} from token endpoint{f' ({error})' if error else ''}"
+
+
+def _is_revoked_error(error: str | None) -> bool:
+    """The refresh token itself is dead — a fresh login is the only fix."""
+    return (error or "").startswith("revoked")
+
+
+def _needs_client_secret(error: str | None) -> bool:
+    """Not a revocation and not a hiccup: the client must authenticate, and no
+    secret is available to us. The vendor CLI has one — hand off to it."""
+    return (error or "").startswith("client-auth")
+
+
+def _oidc_refresh(record: JsonDict) -> tuple[JsonDict | None, str | None]:
+    """Standard OIDC refresh grant against the endpoint discovered from the
+    record's own issuer, attempted *without* a client secret (public/PKCE
+    clients need none). (response, None) on success, (None, error) otherwise —
+    never raises, never logs a token."""
+    refresh_token = record.get("refresh_token")
+    issuer = str(record.get("oidc_issuer") or "")
+    client_id = str(record.get("oidc_client_id") or "")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        return None, "unsupported: credential carries no refresh token"
+    if not issuer or not client_id:
+        return None, "unsupported: credential carries no OIDC issuer/client id"
+    endpoint = _token_endpoint(issuer)
+    if endpoint is None:
+        return None, "discovery failed: no token_endpoint for this issuer"
+    return oauth_token_refresh(
+        endpoint,
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+        },
+        form_encoded=True,
+        headers={"Accept": "application/json"},
+        http_error=_http_error_message,
+    )
+
+
+def _apply_refreshed(payload: JsonDict, refreshed: JsonDict) -> JsonDict | None:
+    """Merge a token response into a copy of the credential payload, or None
+    when the record has no access-token field to update."""
+    updated = copy.deepcopy(payload)
+    record = _record(updated)
+    access = refreshed.get("access_token")
+    if record is None or not isinstance(access, str) or not access:
+        return None
+    fields = [field for field in _ACCESS_TOKEN_FIELDS if field in record]
+    if not fields:
+        return None
+    for field in fields:
+        record[field] = access
+    rotated = refreshed.get("refresh_token")
+    if isinstance(rotated, str) and rotated:
+        # Unlike Google's, an OIDC refresh grant may rotate the refresh token —
+        # keep the new one when the endpoint sends it, the old one when it does not.
+        record["refresh_token"] = rotated
+    expires_in = refreshed.get("expires_in")
+    if isinstance(expires_in, (int, float)):
+        record["expires_at"] = (
+            (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in)))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+    return updated
+
+
+def _direct_refresh(payload: JsonDict) -> tuple[JsonDict | None, str | None]:
+    """One HTTPS round trip in place of a CLI launch. Returns the refreshed
+    credential payload, or (None, error) for the caller to classify."""
+    record = _record(payload)
+    if record is None:
+        return None, "unsupported: not a recognizable Grok OAuth record"
+    refreshed, error = _oidc_refresh(record)
+    if refreshed is None:
+        return None, error
+    updated = _apply_refreshed(payload, refreshed)
+    if updated is None:
+        return None, "unsupported: no access-token field to update"
+    return updated, None
+
+
+def _token_expired_or_soon(claims: JsonDict) -> bool:
+    """True when the access token is gone or inside the skew window. An
+    unreadable expiry returns False — no point forcing a call we can't judge."""
+    value = str(claims.get("expires_at") or "")
+    if not value:
+        return False
+    try:
+        when = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return (when - datetime.now(timezone.utc)).total_seconds() < _REFRESH_SKEW_SECONDS
+
+
+def _recover_switched_auth(profile: Path, name: str) -> int:
+    """Refresh a just-restored but (nearly) expired token in place and mirror
+    the rotation back into the profile — the self-heal codex/claude already do
+    on switch. Only a genuine revocation escalates to a browser login."""
+    payload = _read_json(_auth_file())
+    if payload is None:
+        return 0
+    updated, error = _direct_refresh(payload)
+    if updated is not None:
+        if _write_json(_auth_file(), updated):
+            _write_json(profile, updated)
+            print(f"{DIM}   (token was expired — refreshed in place){RESET}")
+        return 0
+    if _is_revoked_error(error):
+        log_yellow(f"⚠️  Saved token for '{name}' is revoked — re-logging in via browser…")
+        return cmd_login_switch(name)
+    log_yellow(f"⚠️  Could not refresh after switch ({error}); Grok will refresh on next use.")
+    return 0
+
+
 def _run_grok_refresh() -> int:
     executable = shutil.which("grok")
     if executable is None:
@@ -460,6 +671,29 @@ def _run_grok_refresh() -> int:
 
 
 def _refresh_profile(profile: Path) -> int:
+    """Direct OIDC refresh first; the `grok models` subprocess only when the
+    direct grant cannot resolve it (client secret required, unknown credential
+    shape, transient failure). A revoked refresh token stops here — spawning
+    the CLI cannot revive it."""
+    payload = _read_json(profile)
+    if payload is None:
+        log_red(f"❌ Profile is unreadable: {profile.stem}")
+        return 1
+    is_active = _active_profile() == profile
+    updated, error = _direct_refresh(payload)
+    if updated is not None:
+        if not _write_json(profile, updated):
+            return 1
+        return 0 if not is_active or _write_json(_auth_file(), updated) else 1
+    if _is_revoked_error(error):
+        log_red(f"❌ Refresh token revoked for {profile.stem}: {error}")
+        log_yellow(f"   Re-login with: grok-accounts login-switch {profile.stem}")
+        return 1
+    log_yellow(f"⚠️  Direct refresh unavailable for {profile.stem} ({error}) — using the Grok CLI.")
+    return _refresh_profile_via_cli(profile)
+
+
+def _refresh_profile_via_cli(profile: Path) -> int:
     original = _read_json(_auth_file())
     payload = _read_json(profile)
     if payload is None:
@@ -521,10 +755,20 @@ def cmd_refresh(target: str | None) -> int:
         return 0
     if target:
         return _refresh_one_profile(target)
-    if _read_json(_auth_file()) is None:
+    payload = _read_json(_auth_file())
+    if payload is None:
         log_red("❌ No Grok login found. Run: grok login --oauth")
         return 1
-    status = _run_grok_refresh()
+    updated, error = _direct_refresh(payload)
+    if updated is None and _is_revoked_error(error):
+        log_red(f"❌ Refresh token revoked for the active Grok auth: {error}")
+        log_yellow("   Re-login with: grok-accounts login-switch <name>")
+        return 1
+    if updated is not None:
+        status = 0 if _write_json(_auth_file(), updated) else 1
+    else:
+        log_yellow(f"⚠️  Direct refresh unavailable ({error}) — using the Grok CLI.")
+        status = _run_grok_refresh()
     profile = _active_profile()
     refreshed = _read_json(_auth_file())
     if status != 0:
