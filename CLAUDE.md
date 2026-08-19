@@ -34,6 +34,20 @@ Before writing any new helper, **first check [`src/ai-accounts/_utils.py`](src/a
 - **Usage / table formatting**: [`usage_format.py`](src/ai-accounts/usage_format.py) (`UsageWindow`, `format_usage_window`, `align_usage_cells`, `format_unix_time_compact`) is the shared formatting module for **all three** account tools — imported by `gemini_accounts.py`, `claude_accounts.py`, and `claude_usage.py`. (Formerly `codex_usage.py`: codex-accounts came first and the others built on it; renamed to a provider-neutral name to match its shared role.) `gemini_usage.py`/`claude_usage.py` hold only per-provider `fetch_usage` API logic, not formatting — don't duplicate these helpers there.
 - **Profile store**: each tool keeps profiles as `<name>.json` files plus a `.current-profile` marker under the central `~/.ai-accounts/<app>/accounts/` dir (override via `CODEX_ACCOUNT_DIR` / `CLAUDE_ACCOUNT_DIR` / `ANTIGRAVITY_ACCOUNT_DIR`), resolved through `_utils.resolve_account_dir` — kept out of the app dotdirs so dotfiles repos never swallow token snapshots.
 
+## Adding a config setting: one line in the schema
+
+The config menu reads a list of keys. To add a new key, add one line to that list. The menu shows it. The old text commands accept it too.
+
+That list is `FIELDS` in [`config_schema.py`](src/ai-accounts/config_schema.py) — the single source of truth for every config key. One frozen `Field` per key carries its type, default, allowed values, validator, masked flag and label. `autoswitch.DEFAULTS` and `NOTIFY_CHANNELS` derive from it, so a key is declared exactly once.
+
+Rules:
+
+1. **Add the `Field`, nothing else.** [`config_menu.py`](src/ai-accounts/config_menu.py) (renderer, state machine, `cmd_config`) and the non-TTY fallback are all schema-driven. If a new key needs an edit anywhere but `FIELDS`, that is a bug in the menu — fix the menu, don't special-case the key.
+2. **Never add a per-key `if`/`elif` chain.** Cyclable rows (bools, and anything with allowed values) are derived from the descriptor. Per-key *semantics* elsewhere (`config_flag("enabled")`, `cfg["switch_when_used_pct"]`) are business logic and fine — a second list of key names is not.
+3. **Secrets set `masked=True`.** Masking is `config_schema.mask_secret` and nothing else re-implements it; `autoswitch._mask` is an alias. A masked key added to `DEFAULTS` but *not* to `FIELDS` would default to unmasked and leak through `config get`.
+4. **Save only what changed.** `save_config` merges as `{**on_disk, **updates}`, so passing a whole snapshot makes a stale value win and silently reverts another terminal's write. Pass just the touched keys.
+5. **Every `save_config` caller catches `ValueError`.** It validates before writing and raises, so an invalid value already on disk would otherwise traceback. There are three callers in `config_menu.py` — a fourth must do the same.
+
 ## Test fixtures: no real data
 
 Tests must use placeholder values only — never real emails, names, account IDs, or other
