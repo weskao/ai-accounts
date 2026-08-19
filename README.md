@@ -981,16 +981,26 @@ against the one shared `~/.ai-accounts/config.json` (override with
 Running `config` with no arguments on a TTY opens an interactive menu:
 
 ```text
-┌─ ai-accounts config ─────────────────┐
-│  ❯ enabled              false        │
-│    switch_when_used_pct  90          │
-│    notify               desktop      │
-│    telegram_bot_token   ••••••1234   │
-│    telegram_chat_id     (unset)      │
-│    agy_blind_switch     false        │
-│  ↑↓ move · ⏎ edit · s save · q quit  │
-└──────────────────────────────────────┘
+┌─ ai-accounts config ───────────────────────┐
+│                                            │
+│  ❯ Auto-switch                false        │
+│    Switch threshold (% used)  90           │
+│    Notifications              desktop      │
+│    Telegram bot token         ********WXYZ │
+│    Telegram chat id           (unset)      │
+│    Antigravity blind switch   false        │
+│                                            │
+│  ↑↓ move · ⏎ edit · s save · q quit        │
+└────────────────────────────────────────────┘
 ```
+
+The menu lists each setting by its human-readable label, not by the key name
+you would pass to `config get`/`config set`. The mapping is: `Auto-switch` =
+`enabled`, `Switch threshold (% used)` = `switch_when_used_pct`,
+`Notifications` = `notify`, `Telegram bot token` = `telegram_bot_token`,
+`Telegram chat id` = `telegram_chat_id`, `Antigravity blind switch` =
+`agy_blind_switch`. Masked fields render as `********` plus the last four
+characters (all stars when the stored value is 12 characters or shorter).
 
 Keybindings: `↑`/`↓` move the cursor; `⏎` edits the highlighted field — for a
 boolean or an enum (`notify`) this **cycles** its allowed values instead of
