@@ -5,14 +5,11 @@ notification funnel used when a switch happens — or can't. Selection and
 trigger logic lives elsewhere; this module only stores settings and speaks to
 the user.
 
-Config schema (this is the whole of it)::
-
-    enabled              bool  auto-switching on/off                (False)
-    switch_when_used_pct int   USED-percent trigger threshold        (90)
-    notify               str   "desktop" | "telegram" | "none"       ("desktop")
-    telegram_bot_token   str   Bot API token, masked on display      ("")
-    telegram_chat_id     str   Bot API chat id                       ("")
-    agy_blind_switch     bool  switch antigravity without usage data (False)
+The key list itself is declared once, in :mod:`ai_accounts.config_schema` (type,
+default, allowed values, masked-ness, label); ``DEFAULTS`` and
+``NOTIFY_CHANNELS`` below are derived from it, so a new setting is added there
+and nothing here changes. Import direction is one-way: ``config_schema`` is a
+leaf and must never import this module.
 
 ``switch_when_used_pct`` is a **USED** percentage, matching
 ``usage_format.UsageWindow.percentage`` (0-100 used), and the trigger fires
@@ -35,20 +32,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import _utils as u
+from . import config_schema
 from .usage_format import UsageWindow
 
 CONFIG_ENV = "AI_ACCOUNTS_CONFIG_JSON"
 
-NOTIFY_CHANNELS = ("desktop", "telegram", "none")
+NOTIFY_CHANNELS = config_schema.NOTIFY_CHANNELS
 
-DEFAULTS: dict[str, object] = {
-    "enabled": False,
-    "switch_when_used_pct": 90,
-    "notify": "desktop",
-    "telegram_bot_token": "",
-    "telegram_chat_id": "",
-    "agy_blind_switch": False,
-}
+DEFAULTS: dict[str, object] = config_schema.defaults()
 
 
 def config_path() -> Path:
@@ -124,17 +115,22 @@ def save_config(updates: dict) -> dict:
     return stored
 
 
-def _mask(secret: str) -> str:
-    """Stars, plus at most the last 4 chars — never enough to reuse."""
-    if not secret:
-        return ""
-    return "*" * 8 + secret[-4:] if len(secret) > 12 else "*" * 8
+# Masking lives in config_schema (the schema needs it to render a masked field);
+# kept under the historical private name for this module's callers.
+_mask = config_schema.mask_secret
 
 
 def masked_config() -> dict:
-    """:func:`load_config` with the bot token masked — safe to print or log."""
+    """:func:`load_config` with every secret masked — safe to print or log.
+
+    Which keys are secret is read off the schema, not named here: a masked key
+    added to ``config_schema.FIELDS`` must not leak on the way out just
+    because this function was never updated.
+    """
     cfg = load_config()
-    cfg["telegram_bot_token"] = _mask(str(cfg.get("telegram_bot_token", "")))
+    for field in config_schema.FIELDS:
+        if field.masked:
+            cfg[field.key] = _mask(str(cfg.get(field.key, "")))
     return cfg
 
 
