@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import autoswitch, usage_format
+from . import config_menu as cm
 from ._present import (
     _ANSI_RE as _ANSI_RE,
     accounts_table,
@@ -74,6 +75,9 @@ USAGE
   codex-accounts refresh --all         Refresh every saved profile
   codex-accounts sync                  Copy the active auth back to its matching profile
   codex-accounts login-switch <name>   Isolated codex login + save as <name>
+  codex-accounts config                Interactive config menu shared by every ai-accounts CLI
+  codex-accounts config get [key]      Print the shared auto-switch config (or one key)
+  codex-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
   codex-accounts -h | --help | help    Show this help
 
 EXAMPLES
@@ -1317,6 +1321,8 @@ def main(argv: list[str] | None = None) -> int:
 
     command, *rest = argv
 
+    if command == "config":
+        return cm.cmd_config(rest, prog="codex-accounts")
     if command in ("who", "current"):
         return cmd_who()
     if command == "save":

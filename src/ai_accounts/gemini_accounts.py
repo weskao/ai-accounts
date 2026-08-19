@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from . import autoswitch, gemini_usage
+from . import config_menu as cm
 from ._present import (
     _ANSI_RE as _ANSI_RE,
     accounts_table,
@@ -82,6 +83,10 @@ USAGE
                                      (only the live session's quota is readable, so
                                      switching needs "agy_blind_switch": true)
   agy-accounts login-switch <name>   Antigravity Google login + save as <name>
+  agy-accounts config                Interactive config menu shared by every ai-accounts CLI
+                                     (works on every platform, not just macOS)
+  agy-accounts config get [key]      Print the shared auto-switch config (or one key)
+  agy-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
   agy-accounts -h | --help | help    Show this help
 
 EXAMPLES
@@ -1314,6 +1319,12 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(HELP)
         return 0
+
+    # `config` edits the shared ~/.ai-accounts/config.json, not anything
+    # Keychain-backed — handle it before the macOS gate so it works on every
+    # platform, same as every other ai-accounts CLI.
+    if argv[0] == "config":
+        return cm.cmd_config(argv[1:], prog="agy-accounts")
 
     if sys.platform != "darwin":
         log_red("❌ agy-accounts currently requires macOS Keychain.")

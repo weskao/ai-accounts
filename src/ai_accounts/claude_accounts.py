@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Final
 
 from . import autoswitch, claude_usage
+from . import config_menu as cm
 from .usage_format import (
     capitalize_first,
     format_unix_time_compact,
@@ -90,6 +91,9 @@ USAGE
   claude-accounts refresh --all         Refresh every saved profile
   claude-accounts sync                  Copy the active auth back to its matching profile
   claude-accounts login-switch <name>   `claude auth login` + save as <name>
+  claude-accounts config                Interactive config menu shared by every ai-accounts CLI
+  claude-accounts config get [key]      Print the shared auto-switch config (or one key)
+  claude-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
   claude-accounts -h | --help | help    Show this help
 
 EXAMPLES
@@ -1238,6 +1242,8 @@ def main(argv: list[str] | None = None) -> int:
 
     command, *rest = argv
 
+    if command == "config":
+        return cm.cmd_config(rest, prog="claude-accounts")
     if command in ("who", "current"):
         return cmd_who()
     if command == "save":

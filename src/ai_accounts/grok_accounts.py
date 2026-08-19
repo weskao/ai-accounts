@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import config_menu as cm
 from ._present import accounts_table, choose_and_run, choose_profile, ok, panel, success_panel
 from ._utils import (
     BOLD,
@@ -43,6 +44,9 @@ USAGE
   grok-accounts sync                  Copy the active auth back to its matching profile
   grok-accounts autoswitch            Report that grok has no quota API to switch on
   grok-accounts login-switch <name>   Fresh Grok OAuth login + save as <name>
+  grok-accounts config                Interactive config menu shared by every ai-accounts CLI
+  grok-accounts config get [key]      Print the shared auto-switch config (or one key)
+  grok-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
   grok-accounts -h | --help | help    Show this help
 
 EXAMPLES
@@ -589,6 +593,8 @@ def main(argv: list[str] | None = None) -> int:
         print(HELP)
         return 0
     command, *rest = argv
+    if command == "config":
+        return cm.cmd_config(rest, prog="grok-accounts")
     if command in ("who", "current"):
         return cmd_who()
     if command == "save":
