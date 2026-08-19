@@ -7,11 +7,13 @@ individual tools stay platform-agnostic.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Sequence
@@ -545,6 +547,94 @@ def run(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
     """Thin wrapper around subprocess.run that uses text=True by default."""
     kwargs.setdefault("text", True)
     return subprocess.run(cmd, **kwargs)
+
+
+# ── credential files ─────────────────────────────────────────────────────────
+
+def atomic_write_json(path: Path, payload, *, indent: int = 2, mode: int = 0o600) -> None:
+    """Write `payload` as JSON to `path` atomically, 0600 by default.
+
+    A same-directory temp file is filled, chmod'd and `replace`d onto the
+    target, so a crash mid-write — or a vendor CLI reading the same credential
+    concurrently — never sees a truncated file. Raises OSError on failure,
+    after removing the temp file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as handle:
+            json.dump(payload, handle, indent=indent)
+            handle.write("\n")
+            temporary = Path(handle.name)
+        temporary.chmod(mode)
+        temporary.replace(path)
+        path.chmod(mode)
+    except OSError:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise
+
+
+# ── OAuth token refresh ──────────────────────────────────────────────────────
+
+def oauth_token_refresh(
+    url: str,
+    payload: dict,
+    *,
+    form_encoded: bool = False,
+    headers: dict | None = None,
+    timeout: int = 30,
+    http_error: Callable[[int, str], str] | None = None,
+) -> tuple[dict | None, str | None]:
+    """POST an OAuth refresh_token grant. Returns (response, None) on success,
+    (None, error message) on failure — never raises, never logs tokens.
+
+    Only the transport is shared. What an HTTP status *means* is per provider
+    (a bare 403 is a revoked token for one and a Cloudflare block for another),
+    so the caller passes `http_error`: it receives (status code, response body)
+    and returns the message its own `_is_revoked_error` then judges as
+    revoked-vs-transient. Network failures are always transient.
+    """
+    # urllib.request drags in http.client/ssl/email — keep it off the import
+    # path of the tools that never refresh a token.
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    if form_encoded:
+        data = urllib.parse.urlencode(payload).encode("utf-8")
+        content_type = "application/x-www-form-urlencoded"
+    else:
+        data = json.dumps(payload).encode("utf-8")
+        content_type = "application/json"
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": content_type, **(headers or {})},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8")), None
+    except urllib.error.HTTPError as exc:  # subclass of URLError — must come first
+        if http_error is None:
+            return None, f"HTTP {exc.code} from token endpoint"
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace")
+        except Exception:
+            pass
+        return None, http_error(exc.code, body)
+    except urllib.error.URLError as exc:
+        return None, f"network error: {exc.reason}"
+    except Exception as exc:  # malformed JSON response, etc.
+        return None, str(exc)
 
 
 # ── git helpers ──────────────────────────────────────────────────────────────

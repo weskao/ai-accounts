@@ -57,12 +57,14 @@ from ._utils import (
     RESET,
     YELLOW,
     Spinner,
+    atomic_write_json,
     email_local_part,
     ensure_tool,
     fetch_parallel,
     have,
     log_red,
     log_yellow,
+    oauth_token_refresh,
     plan_tier_color,
     resolve_account_dir,
 )
@@ -307,6 +309,10 @@ def _claims_from_oauth(oauth: dict) -> dict:
     scopes = oauth.get("scopes")
     expires_ms = oauth.get("expiresAt")
     exp = int(expires_ms / 1000) if isinstance(expires_ms, (int, float)) else None
+    # The refresh token is the credential that decides when the account really
+    # dies — the access token above rotates every few hours on its own.
+    refresh_ms = oauth.get("refreshTokenExpiresAt")
+    refresh_exp = int(refresh_ms / 1000) if isinstance(refresh_ms, (int, float)) else None
     return {
         "plan": oauth.get("subscriptionType") or oauth.get("rateLimitTier"),
         "subscription_type": oauth.get("subscriptionType"),
@@ -316,6 +322,8 @@ def _claims_from_oauth(oauth: dict) -> dict:
         "expires_epoch": exp,
         "expires_str": _format_unix_time(exp),
         "refreshable": bool(oauth.get("refreshToken")),
+        "refresh_expires_epoch": refresh_exp,
+        "refresh_expires_str": _format_unix_time(refresh_exp),
     }
 
 
@@ -465,11 +473,9 @@ def _write_active_oauth(oauth: dict) -> None:
     """Set the live account to `oauth`, in both the file and the keychain mirror,
     preserving any unrelated keys (mcpOAuth) already in each store."""
     creds = _creds_file()
-    creds.parent.mkdir(parents=True, exist_ok=True)
     current = creds.read_text(encoding="utf-8") if creds.is_file() else None
     merged = _inject_oauth(current, oauth)
-    creds.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
-    creds.chmod(0o600)
+    atomic_write_json(creds, merged)
     _mirror_active_oauth_to_keychain(oauth)
 
 
@@ -502,8 +508,7 @@ def _write_profile(profile_file: Path, oauth: dict, identity: dict | None = None
     ident = identity or _read_profile_identity(profile_file)
     if ident:
         container[_IDENTITY_KEY] = ident
-    profile_file.write_text(json.dumps(container, indent=2) + "\n", encoding="utf-8")
-    profile_file.chmod(0o600)
+    atomic_write_json(profile_file, container)
 
 
 def _fold_active_into_profile(profile: Path) -> None:
@@ -524,52 +529,42 @@ _OAUTH_CLIENT_ID: Final = os.environ.get(
 _OAUTH_USER_AGENT: Final = "claude-cli/1.0 (ai-accounts, cli)"
 
 
+def _http_error_message(code: int, detail: str) -> str:
+    """Claude's classifier for the shared refresh helper. Only a message
+    prefixed "revoked" sends the user back through a browser login
+    (_is_revoked_error); everything else is transient and retried later."""
+    if code in (400, 401) and "invalid_grant" in detail:
+        return "revoked: refresh token rejected (invalid_grant)"
+    # A 403 without an OAuth error body is an edge/WAF block (e.g. Cloudflare
+    # 1010), not a revoked token — that's transient, retry-able, not relogin.
+    if code == 403 and "invalid_" not in detail:
+        return "HTTP 403 blocked before token endpoint (edge/WAF, not the token)"
+    if code in (401, 403):  # endpoint reached but rejected the token — relogin, not retry
+        return f"revoked: token endpoint returned HTTP {code}"
+    return f"HTTP {code} from token endpoint"
+
+
 def _oauth_refresh(refresh_token: str) -> tuple[dict | None, str | None]:
     """Exchange a refresh_token for fresh tokens. (response, None) on success;
     (None, error) on failure — never raises, never logs tokens. An error that
     starts with "revoked" means only a fresh login helps; anything else is
     transient and safe to retry."""
-    body = urllib.parse.urlencode(
+    return oauth_token_refresh(
+        _OAUTH_TOKEN_URL,
         {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": _OAUTH_CLIENT_ID,
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        _OAUTH_TOKEN_URL,
-        data=body,
+        },
+        form_encoded=True,
         headers={
-            "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json",
             # Cloudflare (error 1010) blocks the default Python-urllib UA before
             # the request ever reaches the OAuth endpoint — send a real one.
             "User-Agent": _OAUTH_USER_AGENT,
         },
-        method="POST",
+        http_error=_http_error_message,
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8")), None
-    except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            detail = exc.read().decode("utf-8", "replace")
-        except Exception:
-            pass
-        if exc.code in (400, 401) and "invalid_grant" in detail:
-            return None, "revoked: refresh token rejected (invalid_grant)"
-        # A 403 without an OAuth error body is an edge/WAF block (e.g. Cloudflare
-        # 1010), not a revoked token — that's transient, retry-able, not relogin.
-        if exc.code == 403 and "invalid_" not in detail:
-            return None, "HTTP 403 blocked before token endpoint (edge/WAF, not the token)"
-        if exc.code in (401, 403):  # endpoint reached but rejected the token — relogin, not retry
-            return None, f"revoked: token endpoint returned HTTP {exc.code}"
-        return None, f"HTTP {exc.code} from token endpoint"
-    except urllib.error.URLError as exc:
-        return None, f"network error: {exc.reason}"
-    except Exception as exc:  # malformed JSON response, etc.
-        return None, str(exc)
 
 
 def _is_revoked_error(error: str | None) -> bool:
@@ -663,6 +658,12 @@ def _claims_lines(claims: dict | None) -> list[str]:
     session = f"{GREEN}refreshable{RESET}" if claims.get("refreshable") else f"{color}{expires_text}{RESET}"
     lines.append(f"{DIM}Expires{RESET}       : {color}{expires_text}{RESET}")
     lines.append(f"{DIM}Session{RESET}       : {session}")
+    if claims.get("refresh_expires_str"):
+        # The refresh token's own expiry — the date the account actually stops
+        # working, unlike the short-lived access token above (see plan.md).
+        refresh_exp = claims["refresh_expires_epoch"]
+        refresh_color = RED if refresh_exp <= datetime.now().timestamp() else DIM
+        lines.append(f"{DIM}Refreshable until{RESET}: {refresh_color}{claims['refresh_expires_str']}{RESET}")
     return lines
 
 

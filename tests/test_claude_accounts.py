@@ -97,6 +97,24 @@ class ClaimsTests(unittest.TestCase):
         claims = ca._claims_from_oauth(_oauth(sub="pro", tier="default_claude_pro"))
         self.assertEqual(ca._plan_cell(claims), "Pro")
 
+    def test_claims_lines_surface_refresh_token_expiry_with_color_by_recency(self) -> None:
+        # Given: a refresh token that expires in the future
+        future_ms = int(time.time() * 1000) + 3600_000
+        oauth = _oauth()
+        oauth["refreshTokenExpiresAt"] = future_ms
+        lines = ca._claims_lines(ca._claims_from_oauth(oauth))
+        future_line = next(line for line in lines if "Refreshable until" in line)
+        # Then: the line is present and not colored red (not yet expired)
+        self.assertNotIn(ca.RED, future_line)
+
+        # Given: a refresh token that already expired
+        past_ms = int(time.time() * 1000) - 3600_000
+        oauth["refreshTokenExpiresAt"] = past_ms
+        lines = ca._claims_lines(ca._claims_from_oauth(oauth))
+        past_line = next(line for line in lines if "Refreshable until" in line)
+        # Then: flagged red — this is the date the account actually dies on
+        self.assertIn(ca.RED, past_line)
+
     def test_list_expiry_reports_refreshable_over_soon(self) -> None:
         # A near-expiry access token that is refreshable must not read as "soon":
         # Claude Code auto-renews it, so the list column mirrors the who-panel

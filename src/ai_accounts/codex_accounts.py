@@ -19,8 +19,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,12 +42,14 @@ from ._utils import (
     RESET,
     YELLOW,
     Spinner,
+    atomic_write_json,
     email_local_part,
     ensure_tool,
     fetch_parallel,
     have,
     log_red,
     log_yellow,
+    oauth_token_refresh,
     plan_tier_color,
     resolve_account_dir,
 )
@@ -553,30 +553,25 @@ _OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 _OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 
+def _http_error_message(code: int, _body: str) -> str:
+    """Codex's classifier for the shared refresh helper: any 4xx is the token
+    endpoint rejecting the refresh_token itself (revoked — see
+    _is_revoked_error), 5xx is transient. The response body is not consulted."""
+    return f"HTTP {code} from token endpoint (refresh token may be expired or revoked)"
+
+
 def _oauth_refresh(refresh_token: str) -> tuple[dict | None, str | None]:
     """Exchange a refresh_token for fresh tokens. Returns (response, None) on
     success, (None, error message) on failure — never raises, never logs tokens."""
-    request = urllib.request.Request(
+    return oauth_token_refresh(
         _OAUTH_TOKEN_URL,
-        data=json.dumps(
-            {
-                "client_id": _OAUTH_CLIENT_ID,
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-            }
-        ).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
+        {
+            "client_id": _OAUTH_CLIENT_ID,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        },
+        http_error=_http_error_message,
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8")), None
-    except urllib.error.HTTPError as exc:
-        return None, f"HTTP {exc.code} from token endpoint (refresh token may be expired or revoked)"
-    except urllib.error.URLError as exc:
-        return None, f"network error: {exc.reason}"
-    except Exception as exc:  # malformed JSON response, etc.
-        return None, str(exc)
 
 
 def _read_refresh_token(path: Path) -> str | None:
@@ -599,8 +594,7 @@ def _apply_refreshed_tokens(path: Path, refreshed: dict) -> None:
     auth["last_refresh"] = (
         datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
     )
-    path.write_text(json.dumps(auth, indent=2) + "\n", encoding="utf-8")
-    path.chmod(0o600)
+    atomic_write_json(path, auth)
     # Keep codex's keychain in lock-step when we just rewrote the active auth
     # (no-op for profile files and off-macOS).
     _mirror_active_auth_to_keychain(path)
