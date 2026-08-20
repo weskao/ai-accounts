@@ -1137,11 +1137,13 @@ mapping is: `Enable automatic switching` = `enabled`, `↳ Switch at usage (%)`
 `Automatic token refresh` = `token_refresh`, and `Language` = `language`.
 Labels, help text, group headings, key hints and validation errors are all
 translated: cycle the `Language` row and the whole menu repaints in that
-language **before** you save, so you can see what you are choosing. The row
-shows each language by its own name — `English`, `繁體中文` — not by its code,
-and the default reads `English (system)` / `繁體中文（系統）` to say it is
-following the OS. `config get language` still prints the code (`auto`, `en`,
-`zh-TW`) so its output can be fed straight back to `config set`. Masked fields render as
+language **before** you save, so you can see what you are choosing. Only the
+two supported languages are offered — the row cycles between `English` and
+`繁體中文`, shown by name, not by code. Left unset, the row still shows a
+plain name (whichever the OS resolves to, no extra "system" option or
+wording) — pick a value and it stops following the OS. `config get language`
+prints that code (`en`/`zh-TW`) so its output can be fed straight back to
+`config set`. Masked fields render as
 `********` plus the last four characters (all stars when the stored value is
 12 characters or shorter).
 
@@ -1160,8 +1162,8 @@ than attempting to read arrow keys.
 `config get`/`config set` remain the scriptable form, unchanged. `set` rejects
 any key outside the table below with a message listing the valid ones, and
 validates the value before writing: `notify` must be one of the three
-channels, `switch_window` one of the two windows, `language` one of `auto`,
-`en` or `zh-TW`, `switch_when_used_pct` must be an integer 1-100, and the three
+channels, `switch_window` one of the two windows, `language` one of `en` or
+`zh-TW`, `switch_when_used_pct` must be an integer 1-100, and the three
 booleans are parsed strictly — a hand-typed `"false"` is stored as `False`,
 not Python's `bool("false") == True`. One behaviour changed from the legacy
 `ai-accounts`-only implementation: `config set telegram_bot_token <value>` now
@@ -1183,7 +1185,7 @@ value to be wrong — the same rule guards `agy_blind_switch`.
 | `telegram_chat_id` | string | `""` | Bot API chat id to notify |
 | `agy_blind_switch` | bool | `false` | Opt-in: let `agy-accounts autoswitch` switch without verifying the candidate's quota first (see the support matrix below) |
 | `token_refresh` | bool | `true` | Independent of `enabled` — lets the scheduled timer renew OAuth tokens across all four providers even when auto-switching itself is off. Only a JSON `true` is on |
-| `language` | `auto` \| `en` \| `zh-TW` | `auto` | Language of notifications **and** of the `config` menu itself. `auto` follows the OS locale on every platform — `LC_ALL`/`LC_MESSAGES`/`LANG` on macOS and Linux, the user default locale on Windows — and falls back to English for any locale with no translation (`zh_CN`/`zh_Hans` included: Simplified deliberately does not resolve to Traditional). An unrecognised value behaves as `auto` rather than failing a notification |
+| `language` | `en` \| `zh-TW` | the OS locale | Language of notifications **and** of the `config` menu itself. Only `en`/`zh-TW` are settable choices — there is no separate "system" option. Until you pick one, it follows the OS locale on every platform — `LC_ALL`/`LC_MESSAGES`/`LANG` on macOS and Linux, the user default locale on Windows — and falls back to English for any locale with no translation (`zh_CN`/`zh_Hans` included: Simplified deliberately does not resolve to Traditional). An unrecognised stored value behaves the same as unset rather than failing a notification |
 
 🔴 **`switch_when_used_pct` is how much quota is USED, not how much remains**,
 and the trigger fires at `used >= switch_when_used_pct`. The default, 90,

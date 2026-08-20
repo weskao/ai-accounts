@@ -240,7 +240,10 @@ FIELDS: tuple[Field, ...] = (
     Field(
         key="language",
         type=str,
-        default=i18n.AUTO,
+        # Resolved once, at import — the OS locale of this process's own start,
+        # not the "auto" sentinel: only real languages are valid choices (see
+        # `choices` below), and a field's default must be one of them.
+        default=i18n.system_language(),
         choices=i18n.CHOICES,
         choice_labels=i18n.language_labels,
         label="Language",

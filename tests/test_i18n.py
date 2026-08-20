@@ -161,16 +161,15 @@ class CachedLanguageTests(_ConfigMixin):
         # Then: the next lookup sees it — the cache was dropped on write
         self.assertEqual(i18n.current_language(), "zh-TW")
 
-    def test_auto_follows_the_system_locale(self) -> None:
-        # Given: language left at its "auto" default
+    def test_unset_language_defaults_to_the_os_locale_at_install_time(self) -> None:
+        # Given: no "language" key ever written — a fresh install
         aw.save_config({"enabled": True})
-        # When/Then: the OS decides
-        with mock.patch.object(i18n, "system_language", return_value="zh-TW"):
-            i18n.refresh()
-            self.assertEqual(i18n.current_language(), "zh-TW")
-
-    def test_language_defaults_to_auto_so_a_fresh_install_follows_the_os(self) -> None:
-        self.assertEqual(aw.DEFAULTS["language"], i18n.AUTO)
+        # Then: the baked-in default is a real language, not the "auto"
+        # sentinel (a field's default must be one of its own choices), and it
+        # is the language this process's OS locale resolved to at import
+        self.assertIn(aw.DEFAULTS["language"], i18n.LANGUAGE_CODES)
+        self.assertEqual(aw.DEFAULTS["language"], i18n.system_language())
+        self.assertEqual(i18n.current_language(), aw.DEFAULTS["language"])
 
 
 class ConfigLabelTests(_ConfigMixin):
@@ -215,11 +214,15 @@ class ConfigLabelTests(_ConfigMixin):
 
     def test_language_is_a_cyclable_choice_the_menu_can_offer(self) -> None:
         field = cs._require("language")
-        self.assertEqual(field.choices, i18n.CHOICES)
-        self.assertIn(i18n.AUTO, field.choices or ())
+        self.assertEqual(field.choices, i18n.LANGUAGE_CODES)
+        # Only the two real languages cycle — "auto" is the unset default's
+        # internal sentinel, never a third row to land on.
+        self.assertNotIn(i18n.AUTO, field.choices or ())
         self.assertEqual(field.parse("zh-TW"), "zh-TW")
         with self.assertRaises(ValueError):
             field.parse("klingon")
+        with self.assertRaises(ValueError):
+            field.parse(i18n.AUTO)
 
 
 class LanguageChoiceDisplayTests(_ConfigMixin):
@@ -232,11 +235,12 @@ class LanguageChoiceDisplayTests(_ConfigMixin):
 
     def test_auto_reports_the_language_it_resolves_to(self) -> None:
         # Given: the OS asking for Traditional Chinese
+        # Then: the unset default's row shows that plain language name — no
+        # separate "system" wording, since it is not an offered choice
         with mock.patch.object(i18n, "system_language", return_value="zh-TW"):
-            # Then: the row answers with a language, marked as coming from the OS
-            self.assertIn("繁體中文", i18n.language_labels(lang="zh-TW")[i18n.AUTO])
-            self.assertIn("系統", i18n.language_labels(lang="zh-TW")[i18n.AUTO])
-            self.assertIn("system", i18n.language_labels(lang="en")[i18n.AUTO])
+            self.assertEqual(i18n.language_labels()[i18n.AUTO], "繁體中文")
+        with mock.patch.object(i18n, "system_language", return_value="en"):
+            self.assertEqual(i18n.language_labels()[i18n.AUTO], "English")
 
     def test_the_menu_shows_the_name_and_config_get_shows_the_code(self) -> None:
         # Given: the language field

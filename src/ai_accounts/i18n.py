@@ -61,8 +61,10 @@ LANGUAGES: tuple[Language, ...] = (
 
 LANGUAGE_CODES: tuple[str, ...] = tuple(lang.code for lang in LANGUAGES)
 
-# What the config key accepts: "auto" plus every real language.
-CHOICES: tuple[str, ...] = (AUTO, *LANGUAGE_CODES)
+# What the config key accepts. AUTO is never one of these — it is only the
+# unset default's internal sentinel (see FIELDS in config_schema.py), never a
+# third menu row: with two languages, the menu shows exactly those two.
+CHOICES: tuple[str, ...] = LANGUAGE_CODES
 
 
 def _system_locale() -> str:
@@ -109,13 +111,12 @@ def language_labels(lang: str | None = None) -> dict[str, str]:
 
     Every language names itself in its own script (``English``, ``繁體中文``),
     which is the convention language pickers use and means these names need no
-    translating. ``auto`` shows the language it currently resolves to, so the
-    row reads as an answer ("繁體中文（系統）") rather than as a mode.
+    translating. The unset (``auto``) default is not a selectable choice —
+    only the two real languages are — but still needs a name to show while
+    unset, so it renders as whichever of them it currently resolves to.
     """
-    resolved = system_language()
     names = {lang.code: lang.label for lang in LANGUAGES}
-    system_name = names.get(resolved, resolved)
-    return {AUTO: t("language.auto", lang=lang, name=system_name), **names}
+    return {AUTO: names.get(system_language(), system_language()), **names}
 
 
 def resolve_language(configured: object) -> str:
@@ -251,12 +252,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.language.label": {"zh-TW": "語言"},
     "config.language.help": {
         "zh-TW": "通知訊息與本選單的語言。未指定前跟隨系統語系。"
-    },
-    # How a language names itself needs no translating; "auto" reports what it
-    # currently resolves to, so the row reads as an answer, not as a mode.
-    "language.auto": {
-        "en": "{name} (system)",
-        "zh-TW": "{name}（系統）",
     },
     # Booleans keep their JSON spelling on purpose: `true`/`false` are what
     # `config set` accepts, so showing 開/關 would name a value nobody can type.
