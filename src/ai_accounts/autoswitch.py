@@ -267,6 +267,31 @@ def _used_pct(probe: Callable[[str], UsageWindow | None], name: str) -> int | No
     return None if window is None else window.percentage
 
 
+def pick_window(
+    hourly: UsageWindow | None,
+    weekly: UsageWindow | None,
+    cfg: dict | None = None,
+) -> UsageWindow | None:
+    """The window the trigger reads, per the ``switch_window`` setting.
+
+    Providers report both a short (5-hour) and a weekly quota; exactly one of
+    them decides whether to switch, and which one is config rather than
+    per-provider code so codex and claude cannot drift apart. It defaults to
+    the weekly window: the short one is frequently absent (the usage table
+    renders it "—"), and a trigger reading it would sit idle on an account
+    that is 93% through its week.
+
+    The choice is honoured strictly — when the selected window is missing the
+    answer is None and the engine reports ``unknown``, never the other window.
+    Silently reading a window the user did not choose is how a switch fires on
+    a quota they were not watching. Anything other than ``"5h"`` reads as the
+    default, so a hand-edited value cannot quietly disable the trigger. Pass
+    *cfg* to reuse a config the caller already loaded.
+    """
+    chosen = (load_config() if cfg is None else cfg).get("switch_window")
+    return hourly if chosen == "5h" else weekly
+
+
 def _restarted(restart: Callable[[], bool]) -> bool:
     """Run the caller's restart hook; a hook that fails is False, never a raise."""
     try:

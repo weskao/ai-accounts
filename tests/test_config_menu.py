@@ -577,12 +577,12 @@ class FallbackTest(_ConfigFileMixin, unittest.TestCase):
         self.assertNotIn(TOKEN, out)
 
     def test_a_number_then_a_value_saves(self) -> None:
-        rc, out, _ = self.fallback(["3", "telegram"])
+        rc, out, _ = self.fallback([str(index_of("notify") + 1), "telegram"])
         self.assertEqual(rc, 0)
         self.assertEqual(self.stored()["notify"], "telegram")
 
     def test_an_invalid_value_is_rejected_without_writing(self) -> None:
-        rc, out, err = self.fallback(["3", "carrier-pigeon"])
+        rc, out, err = self.fallback([str(index_of("notify") + 1), "carrier-pigeon"])
         self.assertEqual(rc, 1)
         self.assertFalse(self.config_path.exists())
 

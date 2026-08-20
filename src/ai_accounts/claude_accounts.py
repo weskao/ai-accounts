@@ -919,11 +919,14 @@ def cmd_switch_interactive() -> int:
 # (threshold, candidate selection, notifications) — see autoswitch.py.
 
 def _autoswitch_probe(name: str) -> claude_usage.UsageWindow | None:
-    """One saved profile's 5-hour usage window, probed with its OWN access
-    token. Never writes the live credentials file or keychain — this must be
-    safe to call on every saved profile, active or not, without changing which
-    account is live. None on a missing/unreadable profile, no access token, or
-    a probe error (incl. HTTP 401/403) — skips the candidate."""
+    """One saved profile's usage window, probed with its OWN access token.
+
+    Which window (weekly by default, 5h opt-in) is the shared engine's call —
+    see ``autoswitch.pick_window``; picking one here is how the providers would
+    drift apart. Never writes the live credentials file or keychain — this must
+    be safe to call on every saved profile, active or not, without changing
+    which account is live. None on a missing/unreadable profile, no access
+    token, or a probe error (incl. HTTP 401/403) — skips the candidate."""
     profile_file = _profile_file(name)
     if profile_file is None or not profile_file.is_file():
         return None
@@ -935,7 +938,7 @@ def _autoswitch_probe(name: str) -> claude_usage.UsageWindow | None:
     snapshot = claude_usage.fetch_usage(access_token, plan=(claims or {}).get("plan"))
     if snapshot.error:
         return None
-    return snapshot.five_hour
+    return autoswitch.pick_window(snapshot.five_hour, snapshot.seven_day)
 
 
 def _autoswitch_switch(name: str) -> bool:

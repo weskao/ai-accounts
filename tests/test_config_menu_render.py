@@ -157,17 +157,20 @@ class EditModeTests(unittest.TestCase):
         # cleartext (it's the user's own terminal and their own new value —
         # not the previously-saved secret, which stays masked everywhere
         # else). This test locks in that choice.
+        # Located by key, not by index: a field appended to the schema ahead of
+        # it must not silently retarget this assertion at another row.
+        cursor = [f.key for f in cs.FIELDS].index("telegram_bot_token")
         lines = _clean(
             config_menu.render(
                 "t",
                 cs.FIELDS,
                 _default_values(),
-                cursor=3,
+                cursor=cursor,
                 editing=True,
                 edit_buffer="new-typed-secret",
             )
         )
-        row = next(line for line in lines if cs.FIELDS[3].label in line)
+        row = next(line for line in lines if cs.FIELDS[cursor].label in line)
         self.assertIn("new-typed-secret", row)
 
 

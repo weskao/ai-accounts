@@ -643,13 +643,61 @@ class AutoswitchCommandTests(_HomeMixin):
         aw.save_config(cfg)
 
     @staticmethod
-    def _snapshot(five_hour_pct=None, error=None) -> cu.UsageSnapshot:
-        window = (
-            None
-            if five_hour_pct is None
-            else cu.UsageWindow(percentage=five_hour_pct, reset_time=None, window_minutes=300)
+    def _snapshot(used_pct=None, error=None) -> cu.UsageSnapshot:
+        """A snapshot reporting *used_pct* in BOTH quota windows.
+
+        Which window the trigger reads is a config choice (``switch_window``),
+        so a fixture that filled only one would make every test here pass or
+        fail on that setting instead of on the behaviour under test.
+        """
+        def window(minutes: int) -> cu.UsageWindow | None:
+            if used_pct is None:
+                return None
+            return cu.UsageWindow(
+                percentage=used_pct, reset_time=None, window_minutes=minutes
+            )
+
+        return cu.UsageSnapshot(
+            five_hour=window(300),
+            seven_day=window(7 * 24 * 60),
+            plan="max",
+            refreshed_at=1,
+            error=error,
         )
-        return cu.UsageSnapshot(five_hour=window, seven_day=None, plan="max", refreshed_at=1, error=error)
+
+    def test_the_weekly_window_decides_when_the_5h_window_is_unavailable(self):
+        # Given: no 5-hour figure (the usage table renders it "—") while the
+        # weekly quota is 93% spent, and a spare account is fresh. Default
+        # config: no `switch_window` written.
+        self._enable_autoswitch()
+        self.set_active(_oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("alpha", _oauth(access="at-alpha", refresh="rt-alpha"))
+        self.write_profile("beta", _oauth(access="at-beta", refresh="rt-beta"))
+        self.mark_current("alpha")
+
+        def fake_fetch(access_token, *, plan=None, timeout=20):
+            pct = 93 if access_token == "at-alpha" else 5
+            return cu.UsageSnapshot(
+                five_hour=None,
+                seven_day=cu.UsageWindow(
+                    percentage=pct, reset_time=None, window_minutes=7 * 24 * 60
+                ),
+                plan="max",
+                refreshed_at=1,
+                error=None,
+            )
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.claude_usage, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch", return_value=0) as switch, \
+                mock.patch.object(ca, "_autoswitch_resume", return_value=False):
+            rc, out, err = self.capture(ca.cmd_autoswitch)
+
+        # Then: it switches on the weekly figure instead of reporting "could
+        # not determine usage" because only the 5-hour window was missing
+        self.assertEqual(rc, 0)
+        switch.assert_called_once_with("beta")
+        self.assertNotIn("Could not determine usage", out + err)
 
     def test_candidates_are_probed_via_their_own_token_never_the_live_creds(self):
         # Given: two profiles, both at/above the switch threshold (no qualifying candidate)

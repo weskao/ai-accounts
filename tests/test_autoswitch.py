@@ -1072,6 +1072,51 @@ class EngineThresholdConfigTests(_EngineMixin):
         self.assertEqual(outcome.to_profile, "spare")
 
 
+class PickWindowTests(_ConfigMixin):
+    """Which quota window the trigger reads — the ``switch_window`` setting.
+
+    A provider snapshot carries both a short window and a weekly one; only one
+    of them decides whether to switch. The choice is config, not per-provider
+    code, so codex and claude cannot drift apart.
+    """
+
+    HOURLY = UsageWindow(percentage=10, reset_time=None, window_minutes=60)
+    WEEKLY = UsageWindow(percentage=93, reset_time=None, window_minutes=7 * 24 * 60)
+
+    def test_the_weekly_window_is_the_default(self) -> None:
+        # Given: no config file at all
+        self.assertFalse(self.config.exists())
+        # When/Then: the weekly window drives the decision
+        self.assertIs(aw.pick_window(self.HOURLY, self.WEEKLY), self.WEEKLY)
+
+    def test_the_short_window_is_used_when_configured(self) -> None:
+        # Given: a user who opted back into the 5-hour window
+        aw.save_config({"switch_window": "5h"})
+        # When/Then: that is the window read
+        self.assertIs(aw.pick_window(self.HOURLY, self.WEEKLY), self.HOURLY)
+
+    def test_a_hand_edited_junk_window_falls_back_to_the_weekly_default(self) -> None:
+        # Given: the key hand-edited to something the schema never allowed
+        self.config.write_text('{"switch_window": "nonsense"}', encoding="utf-8")
+        # When/Then: the documented default still protects the user, no crash
+        self.assertIs(aw.pick_window(self.HOURLY, self.WEEKLY), self.WEEKLY)
+
+    def test_a_missing_selected_window_is_never_substituted(self) -> None:
+        # Given: the provider reports no weekly figure but a live 5-hour one
+        # Then: None — the engine reports "unknown" rather than silently
+        # deciding on a window the user did not choose.
+        self.assertIsNone(aw.pick_window(self.HOURLY, None))
+
+    def test_a_caller_supplied_config_is_reused_not_re_read(self) -> None:
+        # Given: a config the caller already loaded (one read per autoswitch run)
+        aw.save_config({"switch_window": "1week"})
+        # When: it says 5h, that wins over what is on disk
+        self.assertIs(
+            aw.pick_window(self.HOURLY, self.WEEKLY, {"switch_window": "5h"}),
+            self.HOURLY,
+        )
+
+
 # ── restart ladder ───────────────────────────────────────────────────────────
 # See docs/autoswitch-hot-reload-spike.md — no provider hot-reloads
 # credentials, so every provider ships auto-restart (never seamless) subject

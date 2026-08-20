@@ -30,6 +30,9 @@ from dataclasses import dataclass
 
 NOTIFY_CHANNELS = ("desktop", "telegram", "none")
 
+# The quota windows every provider reports, longest first — the default leads.
+SWITCH_WINDOWS = ("1week", "5h")
+
 _TRUE = ("true", "1", "yes", "on")
 _FALSE = ("false", "0", "no", "off")
 
@@ -122,6 +125,15 @@ FIELDS: tuple[Field, ...] = (
         maximum=100,
         label="↳ Switch at usage (%)",
         help="Start switching at this usage. 90% means the active account has 10% quota left.",
+        group="Automatic switching",
+    ),
+    Field(
+        key="switch_window",
+        type=str,
+        default="1week",
+        choices=SWITCH_WINDOWS,
+        label="↳ Quota window",
+        help="Which quota decides a switch: 1week, or 5h for the short window.",
         group="Automatic switching",
     ),
     Field(

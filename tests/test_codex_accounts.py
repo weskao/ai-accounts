@@ -1700,13 +1700,86 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         aw.save_config(cfg)
 
     @staticmethod
-    def _snapshot(hourly_pct=None, error=None) -> usage_format.UsageSnapshot:
-        window = (
-            None
-            if hourly_pct is None
-            else usage_format.UsageWindow(percentage=hourly_pct, reset_time=None, window_minutes=60)
+    def _snapshot(used_pct=None, error=None) -> usage_format.UsageSnapshot:
+        """A snapshot reporting *used_pct* in BOTH quota windows.
+
+        Which window the trigger reads is a config choice (``switch_window``),
+        so a fixture that filled only one would make every test here pass or
+        fail on that setting instead of on the behaviour under test. The two
+        tests that do care about the window build their own snapshots.
+        """
+        def window(minutes: int) -> usage_format.UsageWindow | None:
+            if used_pct is None:
+                return None
+            return usage_format.UsageWindow(
+                percentage=used_pct, reset_time=None, window_minutes=minutes
+            )
+
+        return usage_format.UsageSnapshot(
+            hourly=window(60), weekly=window(7 * 24 * 60), refreshed_at=1, error=error
         )
-        return usage_format.UsageSnapshot(hourly=window, weekly=None, refreshed_at=1, error=error)
+
+    def test_the_weekly_window_decides_when_the_5h_window_is_unavailable(self):
+        # Given: the shape a real account hits — codex reports no 5-hour figure
+        # (the table shows "—") while the weekly quota is 93% spent, and a
+        # spare account is fresh. Default config: no `switch_window` written.
+        self._enable_autoswitch()
+        self.write_auth(_auth_payload("acct-a", "a@x.com"))
+        self.write_profile("alpha", _auth_payload("acct-a", "a@x.com"))
+        self.write_profile("beta", _auth_payload("acct-b", "b@x.com"))
+        self.mark_current("alpha")
+
+        def fake_fetch(path):
+            pct = 93 if path.stem == "alpha" else 5
+            return usage_format.UsageSnapshot(
+                hourly=None,
+                weekly=usage_format.UsageWindow(
+                    percentage=pct, reset_time=None, window_minutes=7 * 24 * 60
+                ),
+                refreshed_at=1,
+                error=None,
+            )
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch", return_value=0) as switch:
+            rc, out, err = self.run_capture(ca.cmd_autoswitch)
+
+        # Then: it switches on the weekly figure instead of reporting "could
+        # not determine usage" because only the 5-hour window was missing
+        self.assertEqual(rc, 0)
+        switch.assert_called_once_with("beta")
+        self.assertNotIn("Could not determine usage", out + err)
+
+    def test_switch_window_5h_reads_the_short_window_not_the_weekly_one(self):
+        # Given: a user who opted back into the 5-hour window, an active
+        # account whose 5h is fine but whose weekly is spent, and a spare
+        self._enable_autoswitch(switch_window="5h")
+        self.write_auth(_auth_payload("acct-a", "a@x.com"))
+        self.write_profile("alpha", _auth_payload("acct-a", "a@x.com"))
+        self.write_profile("beta", _auth_payload("acct-b", "b@x.com"))
+        self.mark_current("alpha")
+
+        def fake_fetch(path):
+            return usage_format.UsageSnapshot(
+                hourly=usage_format.UsageWindow(
+                    percentage=10, reset_time=None, window_minutes=60
+                ),
+                weekly=usage_format.UsageWindow(
+                    percentage=99, reset_time=None, window_minutes=7 * 24 * 60
+                ),
+                refreshed_at=1,
+                error=None,
+            )
+
+        # When: cmd_autoswitch runs
+        with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=fake_fetch), \
+                mock.patch.object(ca, "cmd_switch") as switch:
+            rc = self.run_quiet(ca.cmd_autoswitch)
+
+        # Then: the spent weekly quota is ignored — their chosen window has room
+        self.assertEqual(rc, 0)
+        switch.assert_not_called()
 
     def test_candidates_are_probed_via_their_own_file_never_the_live_auth(self):
         # Given: two profiles, both at/above the switch threshold (no qualifying candidate)

@@ -1010,11 +1010,14 @@ def cmd_switch_interactive() -> int:
 # (threshold, candidate selection, notifications) — see autoswitch.py.
 
 def _autoswitch_probe(name: str) -> usage_format.UsageWindow | None:
-    """One saved profile's hourly usage window, read from its OWN file.
+    """One saved profile's usage window, read from its OWN file.
 
-    Never touches the live auth.json or keychain — this must be safe to call
-    on every saved profile, active or not, without changing which account is
-    live. None on a missing profile or a probe error (skips the candidate).
+    Which window (weekly by default, 5h opt-in) is the shared engine's call —
+    see ``autoswitch.pick_window``; picking one here is how the providers would
+    drift apart. Never touches the live auth.json or keychain — this must be
+    safe to call on every saved profile, active or not, without changing which
+    account is live. None on a missing profile or a probe error (skips the
+    candidate).
     """
     profile_file = _profile_file(name)
     if profile_file is None or not profile_file.is_file():
@@ -1022,7 +1025,7 @@ def _autoswitch_probe(name: str) -> usage_format.UsageWindow | None:
     snapshot = usage_format.fetch_usage(profile_file)
     if snapshot.error:
         return None
-    return snapshot.hourly
+    return autoswitch.pick_window(snapshot.hourly, snapshot.weekly)
 
 
 def _autoswitch_switch(name: str) -> bool:
