@@ -1082,23 +1082,49 @@ against the one shared `~/.ai-accounts/config.json` (override with
 Running `config` with no arguments on a TTY opens an interactive menu:
 
 ```text
-┌─ ai-accounts config (v3.0.0) ───────────────────────────────────────────────────────────────────────────┐
-│                                                                                                         │
-│  Automatic switching                                                                                    │
-│  ❯ Enable automatic switching  false                                                                    │
-│    ↳ Switch at usage (%)       90                                                                       │
-│    ↳ Quota window              1week                                                                    │
-│  Notifications                                                                                          │
-│    Notifications               desktop                                                                  │
-│    Telegram bot token          ********WXYZ                                                             │
-│    Telegram chat id            (unset)                                                                  │
-│  Provider behavior                                                                                      │
-│    Antigravity blind switch    false                                                                    │
-│    Automatic token refresh     true                                                                     │
-│  When the active account reaches the limit below, switch to the saved account with the most quota left. │
-│                                                                                                         │
-│  ↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/Ctrl-C quit                            │
-└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ ai-accounts config (v3.0.0) ────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                      │
+│  Automatic switching                                                                                                 │
+│  ❯ Enable automatic switching  false                                                                                 │
+│    ↳ Switch at usage (%)       90                                                                                    │
+│    ↳ Quota window              1week                                                                                 │
+│  Notifications                                                                                                       │
+│    Notifications               desktop                                                                               │
+│    Telegram bot token          ********WXYZ                                                                          │
+│    Telegram chat id            (unset)                                                                               │
+│  Provider behavior                                                                                                   │
+│    Antigravity blind switch    false                                                                                 │
+│    Automatic token refresh     true                                                                                  │
+│  General                                                                                                             │
+│    Language                    English                                                                               │
+│  When the active account reaches the limit below, switch to the saved account with the most quota left.              │
+│                                                                                                                      │
+│  ↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/Ctrl-C quit                                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+Cycle the `Language` row and the same menu repaints before you save:
+
+```text
+┌─ ai-accounts config (v3.0.0) ────────────────────────────────────────────┐
+│                                                                          │
+│  自動切換                                                                │
+│    啟用自動切換        false                                             │
+│    ↳ 切換門檻（%）     90                                                │
+│    ↳ 配額視窗          1week                                             │
+│  通知                                                                    │
+│    通知方式            desktop                                           │
+│    Telegram bot token  ********WXYZ                                      │
+│    Telegram chat id    （未設定）                                        │
+│  各家 CLI 行為                                                           │
+│    Antigravity 盲切    false                                             │
+│    自動更新 token      true                                              │
+│  一般                                                                    │
+│  ❯ 語言                繁體中文                                          │
+│  通知訊息與本選單的語言。未指定前跟隨系統語系。                          │
+│                                                                          │
+│  ↑↓ 移動 · ←→ 切換 · Enter 編輯/切換 · s 儲存 · Esc 取消 · q/Ctrl-C 離開 │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 Rows are grouped under a bold heading, and the highlighted row's help text
@@ -1108,9 +1134,14 @@ mapping is: `Enable automatic switching` = `enabled`, `↳ Switch at usage (%)`
 = `switch_when_used_pct`, `↳ Quota window` = `switch_window`, `Notifications`
 = `notify`, `Telegram bot token` = `telegram_bot_token`, `Telegram chat id` =
 `telegram_chat_id`, `Antigravity blind switch` = `agy_blind_switch`,
-`Automatic token refresh` = `token_refresh`, and `Notification language` =
-`language`. Labels and help text are themselves translated — set `language`
-to `zh-TW` and the menu renders in Traditional Chinese. Masked fields render as
+`Automatic token refresh` = `token_refresh`, and `Language` = `language`.
+Labels, help text, group headings, key hints and validation errors are all
+translated: cycle the `Language` row and the whole menu repaints in that
+language **before** you save, so you can see what you are choosing. The row
+shows each language by its own name — `English`, `繁體中文` — not by its code,
+and the default reads `English (system)` / `繁體中文（系統）` to say it is
+following the OS. `config get language` still prints the code (`auto`, `en`,
+`zh-TW`) so its output can be fed straight back to `config set`. Masked fields render as
 `********` plus the last four characters (all stars when the stored value is
 12 characters or shorter).
 
@@ -1152,7 +1183,7 @@ value to be wrong — the same rule guards `agy_blind_switch`.
 | `telegram_chat_id` | string | `""` | Bot API chat id to notify |
 | `agy_blind_switch` | bool | `false` | Opt-in: let `agy-accounts autoswitch` switch without verifying the candidate's quota first (see the support matrix below) |
 | `token_refresh` | bool | `true` | Independent of `enabled` — lets the scheduled timer renew OAuth tokens across all four providers even when auto-switching itself is off. Only a JSON `true` is on |
-| `language` | `auto` \| `en` \| `zh-TW` | `auto` | Language of notifications and of the `config` menu's own labels. `auto` follows the OS locale on every platform — `LC_ALL`/`LC_MESSAGES`/`LANG` on macOS and Linux, the user default locale on Windows — and falls back to English for any locale with no translation. An unrecognised value behaves as `auto` rather than failing a notification |
+| `language` | `auto` \| `en` \| `zh-TW` | `auto` | Language of notifications **and** of the `config` menu itself. `auto` follows the OS locale on every platform — `LC_ALL`/`LC_MESSAGES`/`LANG` on macOS and Linux, the user default locale on Windows — and falls back to English for any locale with no translation (`zh_CN`/`zh_Hans` included: Simplified deliberately does not resolve to Traditional). An unrecognised value behaves as `auto` rather than failing a notification |
 
 🔴 **`switch_when_used_pct` is how much quota is USED, not how much remains**,
 and the trigger fires at `used >= switch_when_used_pct`. The default, 90,
@@ -1162,27 +1193,42 @@ as a used-percent ceiling, not a remaining-percent floor.
 
 ### Notification messages
 
-Each situation sends one message. Telegram receives it as a monospace `<pre>`
-block framed in box-drawing characters, so the rows line up regardless of how
-much CJK text or how many emoji they hold; a desktop notification gets the
-same two lines as its title and body, unframed.
+Each situation sends one plain-text message: a headline line, then one line
+saying what to do about it. Telegram and desktop notifications get the same
+two lines (the desktop one uses them as title and body).
 
 ```
-┌───────────────────────────────────────┐
-│ 🔄 codex: work (93%) → personal (15%) │
-│ ⚠️ Restart your session to use it     │
-└───────────────────────────────────────┘
+🔄 codex: work (93%) → personal (15%)
+⚠️ Restart your session to use it
 
-┌────────────────────────────────────────────┐
-│ 🚫 agy: work at 96%, nothing to switch to  │
-│ 💡 Others are 90%+ or unreadable — wait    │
-└────────────────────────────────────────────┘
+🔄 claude: work (91%) → personal (8%)
+✅ Session restarted — the new account is live
 
-┌─────────────────────────────────────────────────────────────┐
-│ 🔑 ai-accounts: a token expired, re-login needed               │
-│ ai-accounts refresh --all → <provider>-accounts login-switch│
-└─────────────────────────────────────────────────────────────┘
+🚫 agy: work at 96%, nothing to switch to
+💡 Others are 90%+ or unreadable — wait for the reset, or add one
+
+🔑 ai-accounts: a token expired, re-login needed
+ai-accounts refresh --all → <provider>-accounts login-switch <name>
 ```
+
+In Traditional Chinese the same four read:
+
+```
+🔄 codex：work（93%）→ personal（15%）
+⚠️ 需重啟 session 才會生效
+
+🔄 claude：work（91%）→ personal（8%）
+✅ 已自動重啟 session，新帳號已生效
+
+🚫 agy：work 已用 96%，無帳號可切
+💡 其他帳號都在 90% 以上或讀不到用量 — 等配額重置，或再新增一個
+
+🔑 ai-accounts：token 已失效，需重新登入
+ai-accounts refresh --all → 再 <provider>-accounts login-switch <name>
+```
+
+Provider names, profile names and commands stay untranslated — they are
+identifiers you type, not prose.
 
 The switch message names the usage of **both** accounts, so it is obvious
 whether the switch bought an hour or a week, and its second line reports what
