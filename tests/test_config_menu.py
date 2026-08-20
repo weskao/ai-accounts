@@ -798,8 +798,9 @@ class CmdConfigLegacyTest(_ConfigFileMixin, unittest.TestCase):
     def test_the_prog_name_labels_the_panel_title(self) -> None:
         with mock.patch.object(cm, "run_menu", return_value=0) as run:
             with mock.patch.object(cm.kr, "is_interactive_tty", return_value=True):
-                cm.cmd_config([], prog="codex-accounts")
-        self.assertEqual(run.call_args[0][0], "codex-accounts config")
+                with mock.patch.object(cm, "package_version", return_value="9.9.9"):
+                    cm.cmd_config([], prog="codex-accounts")
+        self.assertEqual(run.call_args[0][0], "codex-accounts config (v9.9.9)")
 
 
 # NOTE (T4): ByteIdentityAgainstLegacyTest used to compare this module's

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from importlib import metadata
 from pathlib import Path
 import shutil
 import subprocess
@@ -201,6 +202,11 @@ def fetch_parallel(
 
 def have(cmd: str) -> bool:
     return shutil.which(cmd) is not None
+
+
+def package_version() -> str:
+    """Installed ai-accounts version, from package metadata (not source checkout)."""
+    return metadata.version("ai-accounts")
 
 
 def plan_tier_color(label: str, tiers: Sequence[str] = ()) -> str:

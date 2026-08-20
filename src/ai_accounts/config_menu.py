@@ -109,7 +109,7 @@ from . import autoswitch, config_schema
 from . import _keyreader as kr
 from ._present import visible_len
 from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, Spinner
-from ._utils import log_red, log_yellow
+from ._utils import log_red, log_yellow, package_version
 
 _CURSOR_MARK = "❯ "
 _NO_CURSOR_MARK = "  "
@@ -606,7 +606,7 @@ def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
     scriptable behaviour. *prog* only labels output (panel title, usage line).
     """
     if not rest:
-        title = f"{prog} config"
+        title = f"{prog} config (v{package_version()})"
         if kr.is_interactive_tty():
             result = run_menu(title)
             if result == 0 and autoswitch.config_flag("enabled"):

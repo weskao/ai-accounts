@@ -1077,23 +1077,23 @@ against the one shared `~/.ai-accounts/config.json` (override with
 Running `config` with no arguments on a TTY opens an interactive menu:
 
 ```text
-┌─ ai-accounts config ──────────────────────────────────────────────────────┐
-│                                                                           │
-│  Automatic switching                                                      │
-│  ❯ Enable automatic switching  false                                      │
-│    ↳ Switch at usage (%)       90                                         │
-│    ↳ Quota window              1week                                      │
-│  Notifications                                                            │
-│    Notifications               desktop                                    │
-│    Telegram bot token          ********WXYZ                               │
-│    Telegram chat id            (unset)                                    │
-│  Provider behavior                                                        │
-│    Antigravity blind switch    false                                      │
-│    Automatic token refresh     true                                       │
-│  When the active account reaches the limit below, switch to the …         │
-│                                                                           │
-│  ↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/…        │
-└───────────────────────────────────────────────────────────────────────────┘
+┌─ ai-accounts config (v3.0.0) ───────────────────────────────────────────────────────────────────────────┐
+│                                                                                                         │
+│  Automatic switching                                                                                    │
+│  ❯ Enable automatic switching  false                                                                    │
+│    ↳ Switch at usage (%)       90                                                                       │
+│    ↳ Quota window              1week                                                                    │
+│  Notifications                                                                                          │
+│    Notifications               desktop                                                                  │
+│    Telegram bot token          ********WXYZ                                                             │
+│    Telegram chat id            (unset)                                                                  │
+│  Provider behavior                                                                                      │
+│    Antigravity blind switch    false                                                                    │
+│    Automatic token refresh     true                                                                     │
+│  When the active account reaches the limit below, switch to the saved account with the most quota left. │
+│                                                                                                         │
+│  ↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/Ctrl-C quit                            │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Rows are grouped under a bold heading, and the highlighted row's help text
