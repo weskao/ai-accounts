@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from . import _utils as u
+from . import ai_accounts
 from . import autoswitch_hooks
 from . import autoswitch as aw
 
