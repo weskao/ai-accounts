@@ -1,3 +1,40 @@
+## [4.0.0] - 2026-08-20
+
+### 🚀 Features
+
+- **config:** Group menu settings and show inline help
+- **autoswitch:** Pick weekly quota by default, 5h opt-in
+- **config:** Register the OS timer when enabled toggles
+- **vibe-accounts:** Add vibe as a fifth managed provider
+- **autoswitch:** Add explicit setup lifecycle
+- **accounts:** Share oauth-refresh and atomic-write helpers
+- **accounts:** Direct oauth/oidc refresh for antigravity and grok
+- **config:** Add token_refresh flag and wire the timer to it
+- **config:** Show installed version in config panel title
+- **agy-accounts:** Support Windows and Linux credential stores
+- **i18n:** Add language setting and redesign notifications
+- **i18n:** Translate the whole config menu, drop notification frames
+- **notify:** Sound on desktop notifications, inert on click
+- **notify:** Prefer terminal-notifier on macOS, verify delivery
+- **i18n:** [**breaking**] Drop the "system" language menu option
+
+### 🐛 Bug Fixes
+
+- **vibe-accounts:** Finish ai integration
+- **config:** Stabilize and color menu
+- **vibe:** Read and write the credential store vibe actually uses
+- **autoswitch:** Import ai_accounts in the timer
+- **tests:** Make Windows CI portable for autoswitch/oauth tests
+- **tests:** Pin agy keyring tests to the mocked security path
+
+### 📚 Documentation
+
+- **config:** Document switch_window and timer auto-registration
+- Document token refresh across all four account tools
+- **config:** Clarify agy_blind_switch help text
+- **readme:** Document the language key and message formats
+- **readme:** Unframed notifications and the language row
+- **readme:** Document the terminal-notifier notification path
 ## [3.0.0] - 2026-08-20
 
 ### 🚀 Features
@@ -21,6 +58,7 @@
 - **config:** Document the interactive config menu
 - Record how to add a config setting
 - **config:** Correct the config menu mockup
+- **changelog:** Release v3.0.0
 
 ### ⚙️ Miscellaneous Tasks
 
