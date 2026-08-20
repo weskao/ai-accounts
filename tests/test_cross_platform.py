@@ -203,15 +203,163 @@ class ResolveAccountDirTests(unittest.TestCase):
             self.assertTrue((legacy / "old.json").exists())  # never merged/overwritten
 
 
-class PlatformLimitedCommandTests(unittest.TestCase):
-    def test_agy_accounts_fails_cleanly_outside_macos(self):
-        error = io.StringIO()
-        with mock.patch.object(ga.sys, "platform", "win32"), redirect_stderr(error):
-            self.assertEqual(ga.main(["who"]), 1)
-        self.assertIn("requires macOS Keychain", error.getvalue())
+class GoKeyringDispatchTests(_PlatformMixin, unittest.TestCase):
+    """The go-keyring slot trio must speak each platform's own dialect."""
 
-    def test_agy_help_remains_available_outside_macos(self):
-        with mock.patch.object(ga.sys, "platform", "linux"):
+    SERVICE = "gemini"
+    ACCOUNT = "antigravity"
+    SECRET = '{"token":{"access_token":"tok"}}'
+
+    def test_macos_wraps_the_secret_in_the_go_keyring_marker(self):
+        self.force_platform(macos=True)
+        with mock.patch.object(u, "keychain_write", return_value=True) as write:
+            self.assertTrue(u.go_keyring_write(self.SERVICE, self.ACCOUNT, self.SECRET))
+        stored = write.call_args.args[2]
+        self.assertTrue(stored.startswith("go-keyring-base64:"))
+        self.assertNotIn("tok", stored)  # the payload really is encoded
+
+        with mock.patch.object(u, "keychain_read", return_value=stored):
+            self.assertEqual(u.go_keyring_read(self.SERVICE, self.ACCOUNT), self.SECRET)
+
+    def test_macos_read_keeps_an_unmarked_secret_verbatim(self):
+        self.force_platform(macos=True)
+        with mock.patch.object(u, "keychain_read", return_value=self.SECRET):
+            self.assertEqual(u.go_keyring_read(self.SERVICE, self.ACCOUNT), self.SECRET)
+
+    def test_macos_read_rejects_a_corrupt_marked_secret(self):
+        self.force_platform(macos=True)
+        with mock.patch.object(u, "keychain_read", return_value="go-keyring-base64:!!"):
+            self.assertIsNone(u.go_keyring_read(self.SERVICE, self.ACCOUNT))
+
+    def _fake_secret_tool(self, stdout="", returncode=0):
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs.get("input")))
+            return u.subprocess.CompletedProcess(cmd, returncode, stdout, "")
+
+        p = mock.patch.object(u.subprocess, "run", side_effect=run)
+        p.start()
+        self.addCleanup(p.stop)
+        q = mock.patch.object(u, "have", return_value=True)
+        q.start()
+        self.addCleanup(q.stop)
+        return calls
+
+    def test_linux_stores_the_secret_verbatim_via_secret_tool(self):
+        self.force_platform(linux=True)
+        calls = self._fake_secret_tool()
+        self.assertTrue(u.go_keyring_write(self.SERVICE, self.ACCOUNT, self.SECRET))
+        cmd, stdin = calls[0]
+        self.assertEqual(cmd[:2], ["secret-tool", "store"])
+        self.assertIn("service", cmd)
+        self.assertIn(self.SERVICE, cmd)
+        self.assertIn("username", cmd)
+        self.assertIn(self.ACCOUNT, cmd)
+        self.assertEqual(stdin, self.SECRET)  # no marker, no base64
+
+    def test_linux_lookup_and_clear_match_on_both_attributes(self):
+        self.force_platform(linux=True)
+        calls = self._fake_secret_tool(stdout=self.SECRET + "\n")
+        self.assertEqual(u.go_keyring_read(self.SERVICE, self.ACCOUNT), self.SECRET)
+        self.assertTrue(u.go_keyring_delete(self.SERVICE, self.ACCOUNT))
+        self.assertEqual(
+            calls[0][0],
+            ["secret-tool", "lookup", "service", self.SERVICE, "username", self.ACCOUNT],
+        )
+        self.assertEqual(
+            calls[1][0],
+            ["secret-tool", "clear", "service", self.SERVICE, "username", self.ACCOUNT],
+        )
+
+    def test_linux_without_secret_tool_is_unavailable_with_a_hint(self):
+        self.force_platform(linux=True)
+        with mock.patch.object(u, "have", return_value=False):
+            reachable, reason = u.go_keyring_available()
+            self.assertIsNone(u.go_keyring_read(self.SERVICE, self.ACCOUNT))
+            self.assertFalse(u.go_keyring_write(self.SERVICE, self.ACCOUNT, self.SECRET))
+        self.assertFalse(reachable)
+        self.assertIn("libsecret", reason)
+
+    def test_windows_uses_the_service_colon_account_target(self):
+        self.force_platform(windows=True)
+        with mock.patch.object(u, "_wincred_read", return_value=self.SECRET) as read, \
+                mock.patch.object(u, "_wincred_write", return_value=True) as write, \
+                mock.patch.object(u, "_wincred_delete", return_value=True) as delete:
+            self.assertEqual(u.go_keyring_read(self.SERVICE, self.ACCOUNT), self.SECRET)
+            self.assertTrue(u.go_keyring_write(self.SERVICE, self.ACCOUNT, self.SECRET))
+            self.assertTrue(u.go_keyring_delete(self.SERVICE, self.ACCOUNT))
+        self.assertEqual(read.call_args.args[0], "gemini:antigravity")
+        self.assertEqual(write.call_args.args, ("gemini:antigravity", self.ACCOUNT, self.SECRET))
+        self.assertEqual(delete.call_args.args[0], "gemini:antigravity")
+        self.assertEqual(u.go_keyring_available(), (True, ""))
+
+    def test_macos_and_windows_need_no_extra_binary(self):
+        self.force_platform(macos=True)
+        self.assertEqual(u.go_keyring_available(), (True, ""))
+
+    def test_unknown_platform_degrades_instead_of_raising(self):
+        self.force_platform()  # none of the three
+        self.assertIsNone(u.go_keyring_read(self.SERVICE, self.ACCOUNT))
+        self.assertFalse(u.go_keyring_write(self.SERVICE, self.ACCOUNT, self.SECRET))
+        self.assertFalse(u.go_keyring_delete(self.SERVICE, self.ACCOUNT))
+        self.assertFalse(u.go_keyring_available()[0])
+
+
+class AgyLinuxSlotTests(_PlatformMixin, unittest.TestCase):
+    """agy-accounts' own shims must reach the Linux slot, not just _utils."""
+
+    SECRET = '{"token":{"access_token":"tok","refresh_token":"ref"},"auth_method":"consumer"}'
+
+    def test_read_and_store_go_through_secret_tool_on_linux(self):
+        self.force_platform(linux=True)
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs.get("input")))
+            return u.subprocess.CompletedProcess(cmd, 0, self.SECRET, "")
+
+        with mock.patch.object(u.subprocess, "run", side_effect=run), \
+                mock.patch.object(u, "have", return_value=True):
+            self.assertEqual(ga._read_cli_keyring_secret(), self.SECRET)
+            self.assertTrue(ga._store_keychain_secret(self.SECRET))
+            self.assertTrue(ga._delete_cli_auth())
+
+        verbs = [cmd[1] for cmd, _ in calls]
+        self.assertEqual(verbs, ["lookup", "store", "clear"])
+        for cmd, _ in calls:
+            self.assertEqual(cmd[0], "secret-tool")
+            self.assertIn("gemini", cmd)
+            self.assertIn("antigravity", cmd)
+        self.assertEqual(calls[1][1], self.SECRET)  # stored verbatim, no marker
+
+    def test_a_linux_session_decodes_into_usable_auth(self):
+        self.force_platform(linux=True)
+        with mock.patch.object(u, "have", return_value=True), mock.patch.object(
+            u.subprocess,
+            "run",
+            return_value=u.subprocess.CompletedProcess([], 0, self.SECRET, ""),
+        ):
+            secret = ga._read_cli_keyring_secret()
+        auth = ga._auth_from_keyring_secret(secret or "")
+        self.assertIsNotNone(auth)
+        assert auth is not None
+        self.assertEqual(auth["access_token"], "tok")
+        self.assertEqual(auth["refresh_token"], "ref")
+
+
+class PlatformLimitedCommandTests(unittest.TestCase):
+    def test_agy_accounts_fails_cleanly_without_a_credential_store(self):
+        error = io.StringIO()
+        with mock.patch.object(
+            ga, "go_keyring_available", return_value=(False, "sudo apt install libsecret-tools")
+        ), redirect_stderr(error):
+            self.assertEqual(ga.main(["who"]), 1)
+        self.assertIn("OS credential store", error.getvalue())
+        self.assertIn("libsecret-tools", error.getvalue())
+
+    def test_agy_help_remains_available_without_a_credential_store(self):
+        with mock.patch.object(ga, "go_keyring_available", return_value=(False, "nope")):
             self.assertEqual(ga.main(["--help"]), 0)
 
     def test_agy_usage_without_posix_modules_returns_error(self):

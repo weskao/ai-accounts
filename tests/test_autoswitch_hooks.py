@@ -35,6 +35,12 @@ class HookConfigTests(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
+        # `agy` is only a provider where the OS credential store is reachable;
+        # pin it so these cases assert the same hook set on every runner.
+        keyring = mock.patch.object(u, "go_keyring_available", return_value=(True, ""))
+        keyring.start()
+        self.addCleanup(keyring.stop)
+
     def read(self, relative: str) -> dict:
         return json.loads((self.home / relative).read_text(encoding="utf-8"))
 
@@ -82,8 +88,8 @@ class HookConfigTests(unittest.TestCase):
         self.assertEqual(self.read(".codex/hooks.json")["hooks"]["Stop"], [{"hooks": [{"command": "keep"}]}])
         self.assertNotIn(hooks.MANAGED_HOOK, self.read(".gemini/config/hooks.json"))
 
-    def test_linux_and_windows_skip_the_macos_only_agy_hook(self) -> None:
-        with mock.patch.object(u, "IS_MACOS", False):
+    def test_an_unreachable_credential_store_skips_the_agy_hook(self) -> None:
+        with mock.patch.object(u, "go_keyring_available", return_value=(False, "no secret-tool")):
             hooks.install()
             self.assertTrue(hooks.is_installed())
 

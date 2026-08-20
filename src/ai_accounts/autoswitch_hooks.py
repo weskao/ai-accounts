@@ -48,8 +48,13 @@ def _paths() -> dict[str, Path]:
 
 
 def providers() -> tuple[str, ...]:
-    """Quota-aware CLIs that can receive a Stop hook on this platform."""
-    return ("codex", "claude", "agy") if u.IS_MACOS else ("codex", "claude")
+    """Quota-aware CLIs that can receive a Stop hook on this platform.
+
+    `agy` switching needs the OS credential store the live session sits in, so
+    it drops out wherever that is unreachable (a Linux box with no libsecret).
+    """
+    reachable, _reason = u.go_keyring_available()
+    return ("codex", "claude", "agy") if reachable else ("codex", "claude")
 
 
 def _load(path: Path) -> JsonObject:

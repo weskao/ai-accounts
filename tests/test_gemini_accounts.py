@@ -249,15 +249,30 @@ class KeyringTests(unittest.TestCase):
         del auth["refresh_token"]
         self.assertIsNone(ga._keyring_secret_from_auth(auth))
 
-    def test_keyring_write_uses_encoded_keyring_secret(self) -> None:
+    def test_keyring_write_hands_over_the_plain_token_payload(self) -> None:
+        # Per-platform encoding (the darwin base64 marker) lives in
+        # _utils.go_keyring_write — this layer deals in plaintext JSON only.
         auth = _creds("sub", "a@x.com")
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
             os.environ, {"ANTIGRAVITY_HOME": tmp}
         ), mock.patch.object(ga, "_store_keychain_secret", return_value=True) as store:
             self.assertTrue(ga._write_cli_auth_text(json.dumps(auth)))
         secret = store.call_args.args[0]
-        self.assertTrue(secret.startswith("go-keyring-base64:"))
-        self.assertNotIn(auth["access_token"], secret)
+        self.assertFalse(secret.startswith("go-keyring-base64:"))
+        self.assertEqual(
+            json.loads(secret)["token"]["access_token"], auth["access_token"]
+        )
+
+    def test_keyring_secret_round_trip_goes_through_the_os_slot(self) -> None:
+        auth = _creds("sub", "a@x.com")
+        secret = ga._keyring_secret_from_auth(auth)
+        self.assertIsNotNone(secret)
+        with mock.patch.object(ga, "go_keyring_read", return_value=secret) as read:
+            restored = ga._auth_from_keyring_secret(ga._read_cli_keyring_secret() or "")
+        read.assert_called_once_with("gemini", "antigravity")
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(restored["access_token"], auth["access_token"])
 
 
 class UsageTests(unittest.TestCase):

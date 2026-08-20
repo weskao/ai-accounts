@@ -8,9 +8,11 @@ and Python ≥ 3.10. No GitHub token or SSH key is required to install — the
 repo is public.
 
 The package installs and every command starts cleanly on **macOS, Windows, and
-Linux**. `vcadd` and `agy-accounts` require macOS because their upstream
-credential/input-method integrations are macOS-only; they report that limitation
-without a traceback on other platforms.
+Linux**. `vcadd` requires macOS because the vChewing input method it edits is
+macOS-only; it reports that limitation without a traceback elsewhere.
+`agy-accounts` needs to reach the OS credential store holding the live `agy`
+session — built in on macOS and Windows, but on Linux it needs `secret-tool`
+(`libsecret`), and says so if that is missing.
 
 Install `uv` first:
 
@@ -633,13 +635,16 @@ Config](#config) for the full key reference.
 
 ## `agy-accounts` — Antigravity Account Manager
 
-**Platform:** macOS only. The official `agy` session used by this command is
-stored in macOS Keychain.
+**Platform:** macOS, Windows, and Linux. The official `agy` session lives in the
+OS credential store, which differs per platform — macOS Keychain, Windows
+Credential Manager, or the Linux Secret Service (needs `secret-tool` from
+`libsecret`; without it every command except `config` reports the missing binary
+and exits).
 
 Save, list, and switch between multiple sessions for the official Antigravity CLI (`agy`). It
 never requires a `GEMINI_API_KEY`, embeds no OAuth client credentials, and never prints raw
-tokens. The active session is stored in the macOS Keychain by `agy`; reusable profile snapshots
-live in ai-accounts's own `~/.ai-accounts/antigravity/` store.
+tokens. The active session is stored in the OS credential store by `agy`; reusable profile
+snapshots live in ai-accounts's own `~/.ai-accounts/antigravity/` store.
 
 `list` temporarily activates each profile, asks `agy` for the same quota data used by `/usage`,
 and restores the original session. It shows plan, Gemini weekly/5-hour use, Claude/GPT
@@ -647,7 +652,7 @@ weekly/5-hour use, refresh time, and active state.
 
 Unlike `codex-accounts list` / `claude-accounts list`, this fetch runs strictly
 one profile at a time — not a missed optimization but a hard constraint of how
-`agy` reads its session from a single shared macOS Keychain entry. See
+`agy` reads its session from a single shared credential-store entry. See
 [`docs/agy-parallel-limitation.md`](docs/agy-parallel-limitation.md) for why.
 
 ### agy-accounts Usage
@@ -664,7 +669,7 @@ agy-accounts remove [<name>]       # delete a saved profile; no name = interacti
 agy-accounts refresh [<name>]      # renew tokens via the Google OAuth refresh grant
                                    #   (no browser, no agy launch); falls back to agy
 agy-accounts refresh --all         # renew every saved profile in one run
-agy-accounts sync                  # copy the active Keychain session to its profile
+agy-accounts sync                  # copy the active session to its profile
 agy-accounts login-switch <name>   # official agy browser login + save as <name>
 agy-accounts autoswitch            # leave the active account when its quota runs out
                                    # (opt-in blind mode — see "Auto-switch on low quota")
@@ -683,7 +688,7 @@ agy --version
 ```
 
 Then add one or more accounts. `login-switch` launches `agy` itself; finish its browser login,
-then exit the CLI with Ctrl+D twice so the new Keychain session can be saved:
+then exit the CLI with Ctrl+D twice so the new session can be saved:
 
 ```sh
 agy-accounts login-switch personal   # log into the first account, save as "personal"
@@ -691,7 +696,7 @@ agy-accounts login-switch work       # log into the second account, save as "wor
 agy-accounts list                    # verify both profiles are saved
 ```
 
-The agy Keychain token carries no account identity, so `save` and `login-switch` fetch the
+The agy session token carries no account identity, so `save` and `login-switch` fetch the
 email from agy's usage service and store it in the profile (a brief "Fetching account identity…"
 step). If that fetch is momentarily unavailable, the account shows as `(unknown)` until the next
 `list` or `refresh` backfills it.
@@ -713,13 +718,13 @@ long-lived refresh token, so an "expired" profile is renewable without a browser
 agy-accounts refresh --all     # renew every saved profile
 agy-accounts refresh work      # renew one profile and save the new token
 agy-accounts refresh           # renew the active session and sync it back
-agy-accounts sync              # copy the current Keychain session to its profile
+agy-accounts sync              # copy the current session to its profile
 ```
 
 `refresh` posts the OAuth refresh grant straight to Google
 (`https://oauth2.googleapis.com/token`) — one HTTPS request, no `agy` process, fast enough
 to run from a timer. Google does not rotate the refresh token, so only the access token and
-its expiry are rewritten, into both the profile and (for the active account) the Keychain
+its expiry are rewritten, into both the profile and (for the active account) the credential store
 session. The client id/secret come from `ANTIGRAVITY_OAUTH_CLIENT_ID` /
 `ANTIGRAVITY_OAUTH_CLIENT_SECRET` if set, otherwise from the installed `Antigravity.app`
 bundle; when neither resolves — or when Google is unreachable — `refresh` falls back to the
@@ -780,7 +785,7 @@ Session types:
   (green = valid, yellow = expiring within 24 h, red = `EXPIRED`). A malformed credential
   file replaces the entire panel body with a single yellow "Malformed credential file"
   line instead of the usual Account/Google ID/Workspace/Issuer/Expires rows.
-- `switch` backs up the previous Keychain session (timestamped, `chmod 600`) before overwriting it.
+- `switch` backs up the previous session (timestamped, `chmod 600`) before overwriting it.
 - `list` shows a spinner (with a live "which profile" label) on a TTY while it queries `agy`
   for each profile; it's automatically skipped when output isn't a terminal (piping, `ai-accounts`).
 
@@ -803,7 +808,7 @@ Config](#config) for the full key reference.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ANTIGRAVITY_HOME` | `~/.ai-accounts/antigravity` | Profile and credential-mirror root |
-| `ANTIGRAVITY_OAUTH_JSON` | `$ANTIGRAVITY_HOME/oauth_creds.json` | Active Keychain session mirror |
+| `ANTIGRAVITY_OAUTH_JSON` | `$ANTIGRAVITY_HOME/oauth_creds.json` | Active credential-store session mirror |
 | `ANTIGRAVITY_ACCOUNT_DIR` | `$ANTIGRAVITY_HOME/accounts` | Saved profiles |
 | `ANTIGRAVITY_OAUTH_CLIENT_ID` | discovered from `Antigravity.app` | OAuth client id used by `refresh` |
 | `ANTIGRAVITY_OAUTH_CLIENT_SECRET` | discovered from `Antigravity.app` | OAuth client secret used by `refresh` |
@@ -1220,7 +1225,7 @@ standard JSON library. Installed per OS as:
 | --- | --- | --- |
 | `codex-accounts` | Full | Each saved profile's quota is probed from its own file — no profile is activated just to check it |
 | `claude-accounts` | Full | Same approach: each profile's usage is fetched with its own token, without switching |
-| `agy-accounts` | macOS, opt-in, blind | `agy` reports quota only for the *live* session — reading a candidate's quota would mean activating it, which hijacks the single shared Keychain slot a running `agy` process depends on. So candidates are never probed in advance; switching anyway is opt-in via `agy_blind_switch` (default off, reports and stops), and once switched the notification says the target's quota was **not pre-verified**. Blind mode's target is the alphabetically-first candidate (every candidate is treated as equally, unverifiably, empty). On Linux and Windows its config remains available, but hooks and timed checks skip it. |
+| `agy-accounts` | opt-in, blind | `agy` reports quota only for the *live* session — reading a candidate's quota would mean activating it, which hijacks the single shared credential-store slot a running `agy` process depends on. So candidates are never probed in advance; switching anyway is opt-in via `agy_blind_switch` (default off, reports and stops), and once switched the notification says the target's quota was **not pre-verified**. Blind mode's target is the alphabetically-first candidate (every candidate is treated as equally, unverifiably, empty). Where the credential store is unreachable (a Linux box without `secret-tool`) its config remains available, but hooks and timed checks skip it. |
 | `grok-accounts` | Not supported | xAI ships no quota API for Grok Build. `autoswitch` prints `autoswitch unsupported for grok: no quota API` and exits `0`, so the `ai-accounts autoswitch` fan-out is never reported as a failure over this one provider |
 | `vibe-accounts` | Not supported | Vibe uses static API keys and exposes no quota API. `autoswitch` prints `autoswitch unsupported for vibe: no quota API` and exits `0` |
 
@@ -1257,7 +1262,7 @@ package-manager command.
 | `html2md` | macOS / Windows / Linux | `pandoc` |
 | `vcadd` | macOS only | vChewing input method |
 | `codex-accounts` | macOS / Windows / Linux | `codex` CLI for `who` and `login-switch` |
-| `agy-accounts` | macOS only | Official `agy` CLI and macOS Keychain |
+| `agy-accounts` | macOS / Windows / Linux | Official `agy` CLI. The live session is read from / written to the OS credential store: macOS Keychain, Windows Credential Manager, or Linux Secret Service via `secret-tool` (`libsecret`) |
 | `grok-accounts` | macOS / Windows / Linux | Official `grok` CLI for refresh and login |
 | `vibe-accounts` | macOS / Windows / Linux | Official `vibe` CLI for `login-switch`. On macOS the live key is read from / written to the login keychain (service `ai.mistral.vibe`); elsewhere `$VIBE_HOME/.env` is the store |
 

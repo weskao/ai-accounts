@@ -14,12 +14,13 @@ has no such public endpoint for account usage. The only way to get live quota
 numbers is to launch the real `agy` binary and query the local RPC server it
 opens on `127.0.0.1` (`exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary`).
 
-`agy` reads its session from **one shared macOS Keychain entry**
-(service `gemini`, account `antigravity` — see the comment at
+`agy` reads its session from **one shared OS credential-store entry**
+(service `gemini`, account `antigravity` — macOS Keychain, Windows Credential
+Manager, or Linux Secret Service; see the comment at
 [`src/ai-accounts/gemini_accounts.py:56`](../src/ai-accounts/gemini_accounts.py#L56)).
 To fetch account A's usage, `cmd_list` has to:
 
-1. Write account A's credentials into that single Keychain entry
+1. Write account A's credentials into that single entry
    (`_write_cli_auth_text`)
 2. Launch `agy`, which reads whatever is currently in that entry at its own
    startup

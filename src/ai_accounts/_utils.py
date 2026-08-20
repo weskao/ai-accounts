@@ -7,9 +7,11 @@ individual tools stay platform-agnostic.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
+from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
 import shutil
@@ -318,6 +320,11 @@ _INSTALL_HINTS: dict[str, dict[str, str]] = {
         "linux": "npm install -g @openai/codex",
         "win32": "npm install -g @openai/codex",
     },
+    "secret-tool": {  # libsecret CLI — reaches Secret Service credential slots
+        "darwin": "brew install libsecret",
+        "linux": "sudo apt install libsecret-tools   (or: sudo dnf install libsecret / sudo pacman -S libsecret)",
+        "win32": "not needed on Windows — Credential Manager is built in",
+    },
 }
 
 
@@ -603,6 +610,230 @@ def keychain_write(service: str, account: str, secret: str) -> bool:
     except OSError:
         return False
     return result.returncode == 0
+
+
+# ── go-keyring credential slots ──────────────────────────────────────────────
+# Go CLIs built on github.com/zalando/go-keyring — the `agy` CLI is one — keep
+# their live session in the OS credential store, but each platform gets a
+# different backend *and* a different encoding:
+#
+#   macOS    `security` generic-password (service/account verbatim), secret
+#            base64-encoded behind a "go-keyring-base64:" marker.
+#   Linux    Secret Service item matched on the attributes {service, username},
+#            secret stored verbatim. Reached here through `secret-tool`.
+#   Windows  Credential Manager generic credential targeted "<service>:<account>",
+#            secret stored verbatim as UTF-8.
+#
+# The trio below hides that split: callers pass and receive the plaintext
+# secret and never see the darwin marker. Deliberately separate from
+# keychain_read/keychain_write above, which speak the plain macOS-only
+# generic-password protocol that codex- and claude-accounts mirror into — those
+# tools fall back to file storage off macOS on purpose, because the vendor CLI
+# does too.
+
+_GO_KEYRING_B64_PREFIX = "go-keyring-base64:"
+
+_CRED_TYPE_GENERIC = 1
+_CRED_PERSIST_LOCAL_MACHINE = 2
+
+
+@lru_cache(maxsize=1)
+def _wincred_api():
+    """Bind Credential Manager entry points. None off Windows or if unavailable."""
+    if not IS_WINDOWS:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _FILETIME(ctypes.Structure):
+            _fields_ = [
+                ("dwLowDateTime", wintypes.DWORD),
+                ("dwHighDateTime", wintypes.DWORD),
+            ]
+
+        class _CREDENTIALW(ctypes.Structure):
+            _fields_ = [
+                ("Flags", wintypes.DWORD),
+                ("Type", wintypes.DWORD),
+                ("TargetName", wintypes.LPWSTR),
+                ("Comment", wintypes.LPWSTR),
+                ("LastWritten", _FILETIME),
+                ("CredentialBlobSize", wintypes.DWORD),
+                ("CredentialBlob", ctypes.POINTER(ctypes.c_char)),
+                ("Persist", wintypes.DWORD),
+                ("AttributeCount", wintypes.DWORD),
+                ("Attributes", ctypes.c_void_p),
+                ("TargetAlias", wintypes.LPWSTR),
+                ("UserName", wintypes.LPWSTR),
+            ]
+
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        advapi32.CredReadW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.POINTER(_CREDENTIALW)),
+        ]
+        advapi32.CredReadW.restype = wintypes.BOOL
+        advapi32.CredWriteW.argtypes = [ctypes.POINTER(_CREDENTIALW), wintypes.DWORD]
+        advapi32.CredWriteW.restype = wintypes.BOOL
+        advapi32.CredDeleteW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+        ]
+        advapi32.CredDeleteW.restype = wintypes.BOOL
+        advapi32.CredFree.argtypes = [ctypes.c_void_p]
+        advapi32.CredFree.restype = None
+        return ctypes, advapi32, _CREDENTIALW
+    except (ImportError, OSError, AttributeError):
+        return None
+
+
+def _wincred_target(service: str, account: str) -> str:
+    """go-keyring's Windows target-name convention."""
+    return f"{service}:{account}"
+
+
+def _wincred_read(target: str) -> str | None:
+    api = _wincred_api()
+    if api is None:
+        return None
+    ctypes, advapi32, credentialw = api
+    handle = ctypes.POINTER(credentialw)()
+    if not advapi32.CredReadW(target, _CRED_TYPE_GENERIC, 0, ctypes.byref(handle)):
+        return None
+    try:
+        cred = handle.contents
+        blob = ctypes.string_at(cred.CredentialBlob, cred.CredentialBlobSize)
+    finally:
+        advapi32.CredFree(ctypes.cast(handle, ctypes.c_void_p))
+    try:
+        return blob.decode("utf-8") or None
+    except UnicodeDecodeError:
+        return None
+
+
+def _wincred_write(target: str, account: str, secret: str) -> bool:
+    api = _wincred_api()
+    if api is None:
+        return False
+    ctypes, advapi32, credentialw = api
+    blob = secret.encode("utf-8")
+    buffer = ctypes.create_string_buffer(blob, len(blob))
+    cred = credentialw()  # ctypes zero-initializes; only the used fields are set
+    cred.Type = _CRED_TYPE_GENERIC
+    cred.TargetName = target
+    cred.CredentialBlobSize = len(blob)
+    cred.CredentialBlob = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char))
+    cred.Persist = _CRED_PERSIST_LOCAL_MACHINE
+    cred.UserName = account
+    return bool(advapi32.CredWriteW(ctypes.byref(cred), 0))
+
+
+def _wincred_delete(target: str) -> bool:
+    api = _wincred_api()
+    if api is None:
+        return False
+    _ctypes, advapi32, _credentialw = api
+    return bool(advapi32.CredDeleteW(target, _CRED_TYPE_GENERIC, 0))
+
+
+def _secret_tool(
+    *args: str, stdin: str | None = None
+) -> subprocess.CompletedProcess[str] | None:
+    """Run `secret-tool`. None if the binary is absent or could not start."""
+    if not have("secret-tool"):
+        return None
+    try:
+        return subprocess.run(
+            ["secret-tool", *args], input=stdin, capture_output=True, text=True
+        )
+    except OSError:
+        return None
+
+
+def go_keyring_available() -> tuple[bool, str]:
+    """Can this platform reach a go-keyring slot? Second item is why not."""
+    if IS_MACOS or IS_WINDOWS:
+        return True, ""
+    if IS_LINUX:
+        if have("secret-tool"):
+            return True, ""
+        return False, _install_hint("secret-tool")
+    return False, f"unsupported platform: {sys.platform}"
+
+
+def go_keyring_read(service: str, account: str) -> str | None:
+    """Read a go-keyring secret as plaintext. None if absent or unsupported."""
+    if IS_MACOS:
+        secret = keychain_read(service, account)
+        if not secret:
+            return None
+        if not secret.startswith(_GO_KEYRING_B64_PREFIX):
+            # go-keyring only adds the marker when it encodes; take the rest
+            # verbatim rather than discarding a session we could still use.
+            return secret
+        try:
+            decoded = base64.b64decode(
+                secret.removeprefix(_GO_KEYRING_B64_PREFIX), validate=True
+            )
+            return decoded.decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+    if IS_LINUX:
+        result = _secret_tool("lookup", "service", service, "username", account)
+        if result is None or result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+    if IS_WINDOWS:
+        return _wincred_read(_wincred_target(service, account))
+    return None
+
+
+def go_keyring_write(service: str, account: str, secret: str) -> bool:
+    """Create-or-replace a go-keyring secret. False if unsupported or on failure."""
+    if IS_MACOS:
+        encoded = base64.b64encode(secret.encode("utf-8")).decode("ascii")
+        return keychain_write(service, account, _GO_KEYRING_B64_PREFIX + encoded)
+    if IS_LINUX:
+        # Writes land in the default collection, which on every mainstream
+        # desktop is the same "login" keyring go-keyring itself opens. The label
+        # is cosmetic — lookups match on the two attributes only.
+        result = _secret_tool(
+            "store",
+            f"--label={service}/{account}",
+            "service",
+            service,
+            "username",
+            account,
+            stdin=secret,
+        )
+        return result is not None and result.returncode == 0
+    if IS_WINDOWS:
+        return _wincred_write(_wincred_target(service, account), account, secret)
+    return False
+
+
+def go_keyring_delete(service: str, account: str) -> bool:
+    """Remove a go-keyring secret. False if unsupported, absent, or on failure."""
+    if IS_MACOS:
+        try:
+            result = subprocess.run(
+                ["security", "delete-generic-password", "-s", service, "-a", account],
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            return False
+        return result.returncode == 0
+    if IS_LINUX:
+        result = _secret_tool("clear", "service", service, "username", account)
+        return result is not None and result.returncode == 0
+    if IS_WINDOWS:
+        return _wincred_delete(_wincred_target(service, account))
+    return False
 
 
 # ── credential files ─────────────────────────────────────────────────────────

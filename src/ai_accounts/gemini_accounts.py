@@ -37,6 +37,10 @@ from ._utils import (
     atomic_write_json,
     email_local_part,
     ensure_tool,
+    go_keyring_available,
+    go_keyring_delete,
+    go_keyring_read,
+    go_keyring_write,
     have,
     log_red,
     log_yellow,
@@ -67,7 +71,9 @@ def _string(value: object) -> str | None:
 HELP = """agy-accounts — manage multiple Antigravity OAuth profiles
 
 PLATFORM
-  macOS only (official agy session is stored in macOS Keychain)
+  macOS / Windows / Linux — the official agy session lives in the OS credential
+  store (Keychain / Credential Manager / Secret Service). Linux additionally
+  needs `secret-tool` from libsecret.
 
 USAGE
   agy-accounts who                   Show the selected Antigravity account
@@ -89,7 +95,8 @@ USAGE
                                      switching needs "agy_blind_switch": true)
   agy-accounts login-switch <name>   Antigravity Google login + save as <name>
   agy-accounts config                Interactive config menu shared by every ai-accounts CLI
-                                     (works on every platform, not just macOS)
+                                     (works even where the credential store is
+                                     unreachable)
   agy-accounts config get [key]      Print the shared auto-switch config (or one key)
   agy-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
   agy-accounts -h | --help | help    Show this help
@@ -135,7 +142,6 @@ def _auth_file() -> Path:
 
 _KEYCHAIN_SERVICE = "gemini"
 _KEYCHAIN_ACCOUNT = "antigravity"
-_KEYRING_PREFIX = "go-keyring-base64:"
 
 # Upper bound on how long login-switch waits for a genuinely new credential.
 # A running Antigravity IDE re-writes the deleted keyring session instantly, so
@@ -145,33 +151,14 @@ _LOGIN_TIMEOUT_SECONDS = 180
 
 
 def _read_cli_keyring_secret() -> str | None:
-    try:
-        result = subprocess.run(
-            [
-                "security",
-                "find-generic-password",
-                "-s",
-                _KEYCHAIN_SERVICE,
-                "-a",
-                _KEYCHAIN_ACCOUNT,
-                "-w",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return None
-    value = result.stdout.strip()
-    return value if result.returncode == 0 and value else None
+    """The live `agy` session as plaintext JSON, or None if there isn't one."""
+    return go_keyring_read(_KEYCHAIN_SERVICE, _KEYCHAIN_ACCOUNT)
 
 
 def _auth_from_keyring_secret(secret: str) -> JsonDict | None:
-    if not secret.startswith(_KEYRING_PREFIX):
-        return None
     try:
-        payload = json.loads(base64.b64decode(secret.removeprefix(_KEYRING_PREFIX)))
-    except (ValueError, UnicodeDecodeError):
+        payload = json.loads(secret)
+    except ValueError:
         return None
     token = payload.get("token") if isinstance(payload, dict) else None
     if not isinstance(token, dict):
@@ -209,31 +196,11 @@ def _keyring_secret_from_auth(auth: JsonDict) -> str | None:
         "token": token,
         "auth_method": _string(auth.get("auth_method")) or "consumer",
     }
-    encoded = base64.b64encode(json.dumps(payload, separators=(",", ":")).encode())
-    return _KEYRING_PREFIX + encoded.decode("ascii")
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def _store_keychain_secret(secret: str) -> bool:
-    try:
-        result = subprocess.run(
-            [
-                "security",
-                "add-generic-password",
-                "-U",
-                "-s",
-                _KEYCHAIN_SERVICE,
-                "-a",
-                _KEYCHAIN_ACCOUNT,
-                "-w",
-                secret,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0
+    return go_keyring_write(_KEYCHAIN_SERVICE, _KEYCHAIN_ACCOUNT, secret)
 
 
 def _write_cli_auth_text(auth_text: str) -> bool:
@@ -254,23 +221,7 @@ def _write_cli_auth_text(auth_text: str) -> bool:
 
 
 def _delete_cli_auth() -> bool:
-    try:
-        result = subprocess.run(
-            [
-                "security",
-                "delete-generic-password",
-                "-s",
-                _KEYCHAIN_SERVICE,
-                "-a",
-                _KEYCHAIN_ACCOUNT,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0
+    return go_keyring_delete(_KEYCHAIN_SERVICE, _KEYCHAIN_ACCOUNT)
 
 
 def _restore_cli_auth(auth_text: str | None) -> None:
@@ -1594,14 +1545,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # `config` edits the shared ~/.ai-accounts/config.json, not anything
-    # Keychain-backed — handle it before the macOS gate so it works on every
-    # platform, same as every other ai-accounts CLI.
+    # credential-store backed — handle it before the keyring gate so it works on
+    # every platform, same as every other ai-accounts CLI.
     if argv[0] == "config":
         return cm.cmd_config(argv[1:], prog="agy-accounts")
 
-    if sys.platform != "darwin":
-        log_red("❌ agy-accounts currently requires macOS Keychain.")
-        log_yellow("   The other ai-accounts commands remain available on this platform.")
+    # Every other command has to reach the slot the live `agy` session lives in:
+    # macOS Keychain, Windows Credential Manager, or Linux Secret Service. Only
+    # the last one needs a binary we might not have.
+    reachable, reason = go_keyring_available()
+    if not reachable:
+        log_red("❌ agy-accounts needs access to the OS credential store.")
+        log_yellow(f"   {reason}")
         return 1
 
     command, *rest = argv
