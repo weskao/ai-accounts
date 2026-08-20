@@ -118,6 +118,41 @@ _FOOTER_HINT = "↑↓ select · ←→ change · ⏎ edit/toggle · s save · E
 _MIN_WIDTH = 40
 
 
+def _sync_timer(enabled: bool) -> None:
+    """Keep the OS scheduled check in step with the ``enabled`` setting.
+
+    ``enabled: true`` on its own only *permits* a switch — something still has
+    to run the quota check, or the user is back to typing `codex-accounts
+    autoswitch` by hand. Turning the setting on therefore registers the
+    periodic job; turning it off unregisters it.
+
+    The import is function-local on purpose: ``autoswitch_timer`` reaches
+    ``ai_accounts``, which imports this module, so a top-level import here
+    closes a cycle.
+    """
+    from . import autoswitch_timer
+
+    if enabled:
+        autoswitch_timer.install()
+    else:
+        autoswitch_timer.uninstall()
+
+
+def _save_config(updates: dict) -> None:
+    """``autoswitch.save_config``, plus the timer that makes ``enabled`` real.
+
+    The one write funnel for this module's three save sites (menu, numbered
+    fallback, ``config set``), so "turn it on" means the same thing in all
+    three. Raises ``ValueError`` from ``save_config`` — the scheduler is only
+    touched after the value actually reached the file. ``is True`` rather than
+    truthiness, matching ``autoswitch.config_flag``: anything but a real
+    boolean true fails closed.
+    """
+    autoswitch.save_config(updates)
+    if "enabled" in updates:
+        _sync_timer(updates["enabled"] is True)
+
+
 def _format_value(field: config_schema.Field, value: object) -> str:
     """*value* rendered for display, honouring the field's masked flag and
     turning an empty string into a visibly-dimmed ``(unset)`` rather than a
@@ -445,7 +480,7 @@ def _save(state: MenuState) -> MenuState:
     updates = {key: state.values[key] for key in state.touched if key in state.values}
     try:
         with Spinner("Saving config…"):
-            autoswitch.save_config(updates)
+            _save_config(updates)
     except ValueError as exc:
         # A pre-existing invalid value elsewhere in the stored config (e.g. a
         # hand-edited "notify") poisons the whole-dict rewrite. Surface it on
@@ -503,7 +538,7 @@ def fallback_menu(title: str, fields: Sequence[config_schema.Field] = config_sch
         log_red(f"❌ {exc}")
         return 1
     try:
-        autoswitch.save_config({field.key: value})
+        _save_config({field.key: value})
     except ValueError as exc:
         # A pre-existing invalid value elsewhere in the stored config (e.g. a
         # hand-edited "notify") poisons the whole-dict rewrite even when the
@@ -574,7 +609,7 @@ def cmd_config_set(key: str, raw_value: str) -> int:
         log_red(f"❌ {exc}")
         return 1
     try:
-        autoswitch.save_config({key: value})
+        _save_config({key: value})
     except ValueError as exc:
         # A pre-existing invalid value elsewhere in the stored config (e.g. a
         # hand-edited "notify") poisons the merged rewrite even when the user
