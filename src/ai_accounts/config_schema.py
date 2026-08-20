@@ -167,7 +167,7 @@ FIELDS: tuple[Field, ...] = (
         type=bool,
         default=False,
         label="Antigravity blind switch",
-        help="Switch antigravity accounts even without usage data.",
+        help="agy reports quota only for the live session: switch even though the candidate's own quota cannot be verified first.",
         group="Provider behavior",
     ),
     Field(
