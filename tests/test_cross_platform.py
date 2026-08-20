@@ -368,7 +368,13 @@ class PlatformLimitedCommandTests(unittest.TestCase):
         self.assertEqual(usage.error, "agy usage inspection requires macOS or Linux")
 
     def test_missing_macos_security_command_does_not_raise(self):
-        with mock.patch.object(ga.subprocess, "run", side_effect=FileNotFoundError):
+        # Pin the macOS go-keyring branch so every platform exercises the
+        # mocked `security` path (off macOS the real branch is ctypes /
+        # secret-tool and would touch the host credential store).
+        with (
+            mock.patch.object(u, "IS_MACOS", True),
+            mock.patch.object(ga.subprocess, "run", side_effect=FileNotFoundError),
+        ):
             self.assertIsNone(ga._read_cli_keyring_secret())
             self.assertFalse(ga._store_keychain_secret("secret"))
             self.assertFalse(ga._delete_cli_auth())

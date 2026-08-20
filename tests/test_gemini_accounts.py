@@ -12,6 +12,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from ai_accounts import _utils as u
 from ai_accounts import gemini_accounts as ga
 from ai_accounts import gemini_usage as gu
 from ai_accounts.usage_format import UsageWindow
@@ -874,9 +875,10 @@ class AgyBlindSwitchGateTests(_AutoswitchMixin):
         )
 
     def test_main_routes_the_autoswitch_subcommand(self) -> None:
-        # Given: a macOS run of `agy-accounts autoswitch`
+        # Given: `agy-accounts autoswitch` with the credential store reachable
+        # (main gates on go_keyring_available, absent on bare Linux CI)
         with (
-            mock.patch.object(ga.sys, "platform", "darwin"),
+            mock.patch.object(ga, "go_keyring_available", return_value=(True, "")),
             mock.patch.object(ga, "cmd_autoswitch", return_value=0) as command,
         ):
             rc = self.quiet(ga.main, ["autoswitch"])
@@ -1000,8 +1002,12 @@ class AgyAutoswitchKeychainSafetyTests(unittest.TestCase):
             fetches.append(timeout)
             return _quota(97)
 
-        # When: autoswitch runs with blind switching NOT opted into
+        # When: autoswitch runs with blind switching NOT opted into.
+        # IS_MACOS is pinned so every platform takes the `security` go-keyring
+        # branch this test captures (the ctypes/secret-tool branches would
+        # bypass the subprocess mock and read the host credential store).
         with (
+            mock.patch.object(u, "IS_MACOS", True),
             mock.patch.object(ga.subprocess, "run", side_effect=run),
             mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch),
             redirect_stdout(io.StringIO()),

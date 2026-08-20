@@ -425,11 +425,11 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
             [autoswitch_hooks.module(provider) for provider in autoswitch_hooks.providers()],
         )
 
-    def test_background_check_skips_macos_only_agy_off_macos(self) -> None:
+    def test_background_check_skips_agy_without_a_credential_store(self) -> None:
         result = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-        with mock.patch.object(u, "IS_MACOS", False), mock.patch.object(
-            at, "_run_provider", return_value=result
-        ) as run:
+        with mock.patch.object(
+            u, "go_keyring_available", return_value=(False, "no secret-tool")
+        ), mock.patch.object(at, "_run_provider", return_value=result) as run:
             at._run_autoswitch_everywhere()
 
         self.assertCountEqual(
