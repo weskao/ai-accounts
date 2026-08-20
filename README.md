@@ -958,10 +958,11 @@ on a live terminal).
 
 Every account tool can watch its own active account's quota and switch to a
 saved profile with more room — driven entirely by `~/.ai-accounts/config.json`,
-no flags. Run it by hand (`codex-accounts autoswitch`, `claude-accounts
-autoswitch`, `agy-accounts autoswitch`, `grok-accounts autoswitch`, or
-`ai-accounts autoswitch` to run all four at once), or let the OS run it for
-you on a timer (below).
+no flags. Turning `enabled` on through `config` registers an OS timer that
+runs the check for you (see [Timer](#timer)); running it by hand
+(`codex-accounts autoswitch`, `claude-accounts autoswitch`, `agy-accounts
+autoswitch`, `grok-accounts autoswitch`, or `ai-accounts autoswitch` to run
+all four at once) stays available for an immediate check.
 
 ### Config
 
@@ -981,33 +982,41 @@ against the one shared `~/.ai-accounts/config.json` (override with
 Running `config` with no arguments on a TTY opens an interactive menu:
 
 ```text
-┌─ ai-accounts config ───────────────────────┐
-│                                            │
-│  ❯ Auto-switch                false        │
-│    Switch threshold (% used)  90           │
-│    Notifications              desktop      │
-│    Telegram bot token         ********WXYZ │
-│    Telegram chat id           (unset)      │
-│    Antigravity blind switch   false        │
-│                                            │
-│  ↑↓ move · ⏎ edit · s save · q quit        │
-└────────────────────────────────────────────┘
+┌─ ai-accounts config ──────────────────────────────────────────────────────┐
+│                                                                           │
+│  Automatic switching                                                      │
+│  ❯ Enable automatic switching  false                                      │
+│    ↳ Switch at usage (%)       90                                         │
+│    ↳ Quota window              1week                                      │
+│  Notifications                                                            │
+│    Notifications               desktop                                    │
+│    Telegram bot token          ********WXYZ                               │
+│    Telegram chat id            (unset)                                    │
+│  Provider behavior                                                        │
+│    Antigravity blind switch    false                                      │
+│  When the active account reaches the limit below, switch to the …         │
+│                                                                           │
+│  ↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/…        │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
-The menu lists each setting by its human-readable label, not by the key name
-you would pass to `config get`/`config set`. The mapping is: `Auto-switch` =
-`enabled`, `Switch threshold (% used)` = `switch_when_used_pct`,
-`Notifications` = `notify`, `Telegram bot token` = `telegram_bot_token`,
-`Telegram chat id` = `telegram_chat_id`, `Antigravity blind switch` =
-`agy_blind_switch`. Masked fields render as `********` plus the last four
-characters (all stars when the stored value is 12 characters or shorter).
+Rows are grouped under a bold heading, and the highlighted row's help text
+prints under the list. The menu lists each setting by its human-readable
+label, not by the key name you would pass to `config get`/`config set`. The
+mapping is: `Enable automatic switching` = `enabled`, `↳ Switch at usage (%)`
+= `switch_when_used_pct`, `↳ Quota window` = `switch_window`, `Notifications`
+= `notify`, `Telegram bot token` = `telegram_bot_token`, `Telegram chat id` =
+`telegram_chat_id`, `Antigravity blind switch` = `agy_blind_switch`. Masked
+fields render as `********` plus the last four characters (all stars when the
+stored value is 12 characters or shorter).
 
 Keybindings: `↑`/`↓` move the cursor; `⏎` edits the highlighted field — for a
-boolean or an enum (`notify`) this **cycles** its allowed values instead of
-asking you to type one, `←`/`→` cycle the same way without entering edit mode
-first; `Esc` cancels an in-progress edit; `s` saves; `q` quits. Quitting with
-unsaved changes **discards** them and prints a yellow warning naming `s`. An
-invalid typed value shows the validation error inline and is not saved.
+boolean or an enum (`notify`, `switch_window`) this **cycles** its allowed
+values instead of asking you to type one, `←`/`→` cycle the same way without
+entering edit mode first; `Esc` cancels an in-progress edit; `s` saves; `q`
+quits. Quitting with unsaved changes **discards** them and prints a yellow
+warning naming `s`. An invalid typed value shows the validation error inline
+and is not saved.
 
 Piped or non-interactive input (scripts, CI, `| cat`) skips raw mode entirely:
 `config` prints the same numbered listing `get` would and exits `0` rather
@@ -1016,7 +1025,7 @@ than attempting to read arrow keys.
 `config get`/`config set` remain the scriptable form, unchanged. `set` rejects
 any key outside the table below with a message listing the valid ones, and
 validates the value before writing: `notify` must be one of the three
-channels, `switch_when_used_pct` must be an integer 1-100, and the two
+channels, `switch_window` one of the two windows, `switch_when_used_pct` must be an integer 1-100, and the two
 booleans are parsed strictly — a hand-typed `"false"` is stored as `False`,
 not Python's `bool("false") == True`. One behaviour changed from the legacy
 `ai-accounts`-only implementation: `config set telegram_bot_token <value>` now
@@ -1030,8 +1039,9 @@ value to be wrong — the same rule guards `agy_blind_switch`.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `enabled` | bool | `false` | Master switch — off means every provider's `autoswitch` and the timer are silent no-ops. Only a JSON `true` is on; any other value (including the string `"true"`) reads as off |
+| `enabled` | bool | `false` | Master switch — off means every provider's `autoswitch` and the timer are silent no-ops. Only a JSON `true` is on; any other value (including the string `"true"`) reads as off. Setting it through `config` also **registers the timer** (see below) |
 | `switch_when_used_pct` | int (1-100) | `90` | **USED**-percent trigger — see the worked example below |
+| `switch_window` | `1week` \| `5h` | `1week` | Which quota window the trigger reads. Defaults to the weekly one: the 5-hour figure is often unavailable (the usage table renders it `—`), and a trigger reading it would sit idle on an account 93% through its week. The choice is strict — when the chosen window has no data the run reports `Could not determine usage` rather than quietly reading the other one |
 | `notify` | `desktop` \| `telegram` \| `none` | `desktop` | Where a switch (or a dead end) is reported |
 | `telegram_bot_token` | string | `""` | Bot API token; stored in `~/.ai-accounts/config.json` (mode `0600`) and masked by `config get` |
 | `telegram_chat_id` | string | `""` | Bot API chat id to notify |
@@ -1052,6 +1062,14 @@ ai-accounts config set telegram_chat_id 000000000
 ```
 
 ### Timer
+
+Setting `enabled` through **any** `config` path — the menu, the numbered
+fallback, or `config set enabled true` — registers the scheduled check for
+you, and turning it off unregisters it. `enabled: true` on its own only
+*permits* a switch; something has to run the quota check, so turning the
+setting on and still having to type `codex-accounts autoswitch` by hand would
+be a switch that never happens. The commands below remain the way to choose a
+non-default interval, or to check/repair the job:
 
 ```sh
 ai-accounts install-timer                # schedule the check every 1800s (30 min, the default)
