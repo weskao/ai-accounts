@@ -54,6 +54,7 @@ class Field:
     minimum: int | None = None
     maximum: int | None = None
     masked: bool = False
+    group: str | None = None
 
     @property
     def parse(self) -> Callable[[str], object]:
@@ -109,8 +110,9 @@ FIELDS: tuple[Field, ...] = (
         key="enabled",
         type=bool,
         default=False,
-        label="Auto-switch",
-        help="Switch accounts automatically when the active one runs low.",
+        label="Enable automatic switching",
+        help="When the active account reaches the limit below, switch to the saved account with the most quota left.",
+        group="Automatic switching",
     ),
     Field(
         key="switch_when_used_pct",
@@ -118,8 +120,9 @@ FIELDS: tuple[Field, ...] = (
         default=90,
         minimum=1,
         maximum=100,
-        label="Switch threshold (% used)",
-        help="Switch once this much of the quota is USED (90 = 10% left).",
+        label="↳ Switch at usage (%)",
+        help="Start switching at this usage. 90% means the active account has 10% quota left.",
+        group="Automatic switching",
     ),
     Field(
         key="notify",
@@ -128,6 +131,7 @@ FIELDS: tuple[Field, ...] = (
         choices=NOTIFY_CHANNELS,
         label="Notifications",
         help="Where a switch is announced: desktop, telegram or none.",
+        group="Notifications",
     ),
     Field(
         key="telegram_bot_token",
@@ -136,6 +140,7 @@ FIELDS: tuple[Field, ...] = (
         masked=True,
         label="Telegram bot token",
         help="Bot API token used when notify is telegram (masked on display).",
+        group="Notifications",
     ),
     Field(
         key="telegram_chat_id",
@@ -143,6 +148,7 @@ FIELDS: tuple[Field, ...] = (
         default="",
         label="Telegram chat id",
         help="Bot API chat id that receives the notification.",
+        group="Notifications",
     ),
     Field(
         key="agy_blind_switch",
@@ -150,6 +156,7 @@ FIELDS: tuple[Field, ...] = (
         default=False,
         label="Antigravity blind switch",
         help="Switch antigravity accounts even without usage data.",
+        group="Provider behavior",
     ),
 )
 

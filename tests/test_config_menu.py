@@ -399,7 +399,7 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
         )
         self.assertEqual(rc, 0)
         self.assertIs(self.stored()["enabled"], True)
-        self.assertIn("Auto-switch", out)
+        self.assertIn("Enable automatic switching", out)
 
     def test_quitting_with_unsaved_changes_discards_and_warns(self) -> None:
         rc, _, err = self.run_menu(keys(KeyEvent(Key.ENTER), char("q")))
@@ -572,7 +572,7 @@ class FallbackTest(_ConfigFileMixin, unittest.TestCase):
         autoswitch.save_config({"telegram_bot_token": TOKEN})
         rc, out, _ = self.fallback([])  # input() raises StopIteration -> EOF path
         self.assertEqual(rc, 0)
-        self.assertIn("Auto-switch", out)
+        self.assertIn("Enable automatic switching", out)
         self.assertIn("1)", out)
         self.assertNotIn(TOKEN, out)
 

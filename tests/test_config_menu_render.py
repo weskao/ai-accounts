@@ -94,13 +94,16 @@ class CursorTests(unittest.TestCase):
                 self.assertEqual(len(marked), 1)
                 self.assertIn(cs.FIELDS[cursor].label, marked[0])
 
-    def test_non_cursor_rows_are_indented_to_align_with_marker(self) -> None:
+    def test_non_cursor_rows_reserve_cursor_marker_space(self) -> None:
         lines = _clean(config_menu.render("t", cs.FIELDS, _default_values(), cursor=0))
-        field_rows = [line for line in lines if any(f.label in line for f in cs.FIELDS)]
-        # every field row's label starts at the same column
-        first_label_col = field_rows[0].index(cs.FIELDS[0].label)
-        for row, field in zip(field_rows, cs.FIELDS):
-            self.assertEqual(row.index(field.label), first_label_col)
+        selected = next(line for line in lines if f"❯ {cs.FIELDS[0].label}" in line)
+        unselected = [
+            line
+            for line in lines
+            if line.startswith("│    ") and any(field.label in line for field in cs.FIELDS[1:])
+        ]
+        self.assertTrue(selected.startswith("│  ❯ "))
+        self.assertEqual(len(unselected), len(cs.FIELDS) - 1)
 
 
 class UnsetValueTests(unittest.TestCase):
@@ -189,8 +192,17 @@ class FooterTests(unittest.TestCase):
     def test_footer_lists_supported_keys(self) -> None:
         lines = _clean(config_menu.render("t", cs.FIELDS, _default_values(), cursor=0))
         joined = "\n".join(lines)
-        for hint in ("move", "edit", "save", "quit"):
+        for hint in ("select", "change", "edit/toggle", "save", "cancel", "quit"):
             self.assertIn(hint, joined)
+
+
+class GroupingTests(unittest.TestCase):
+    def test_switching_settings_are_grouped_and_explained(self) -> None:
+        lines = _clean(config_menu.render("t", cs.FIELDS, _default_values(), cursor=0))
+        joined = "\n".join(lines)
+        self.assertIn("Automatic switching", joined)
+        self.assertIn("↳ Switch at usage (%)", joined)
+        self.assertIn("switch to the saved account with the most quota left", joined)
 
 
 class TitleParamTests(unittest.TestCase):

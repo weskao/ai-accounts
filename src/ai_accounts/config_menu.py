@@ -114,7 +114,7 @@ from ._utils import log_red, log_yellow
 _CURSOR_MARK = "❯ "
 _NO_CURSOR_MARK = "  "
 _UNSET = "(unset)"
-_FOOTER_HINT = "↑↓ move · ⏎ edit · s save · q quit"
+_FOOTER_HINT = "↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/Ctrl-C quit"
 _MIN_WIDTH = 40
 
 
@@ -179,19 +179,26 @@ def render(
     displaying a ``config_schema.parse_value`` ``ValueError`` message.
     """
     label_width = max((visible_len(f.label) for f in fields), default=0)
-    field_rows = [
-        _field_row(
-            field,
-            values.get(field.key, field.default),
-            is_cursor=(index == cursor),
-            label_width=label_width,
-            editing=editing,
-            edit_buffer=edit_buffer,
+    field_rows: list[str] = []
+    previous_group: str | None = None
+    for index, field in enumerate(fields):
+        if field.group != previous_group and field.group is not None:
+            field_rows.append(f"{BOLD}{field.group}{RESET}")
+        field_rows.append(
+            _field_row(
+                field,
+                values.get(field.key, field.default),
+                is_cursor=(index == cursor),
+                label_width=label_width,
+                editing=editing,
+                edit_buffer=edit_buffer,
+            )
         )
-        for index, field in enumerate(fields)
-    ]
+        previous_group = field.group
 
     body = ["", *field_rows]
+    if fields:
+        body.append(f"{DIM}{fields[cursor].help}{RESET}")
     if error is not None:
         body.append(f"{RED}⚠ {error}{RESET}")
     body.append("")
