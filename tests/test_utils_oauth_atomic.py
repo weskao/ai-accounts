@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
 import unittest
 import urllib.error
@@ -25,7 +26,8 @@ class AtomicWriteJsonTests(unittest.TestCase):
             target = Path(tmp) / "creds.json"
             _utils.atomic_write_json(target, {"token": "placeholder"})
             self.assertEqual(target.read_text(encoding="utf-8"), '{\n  "token": "placeholder"\n}\n')
-            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            if os.name == "posix":
+                self.assertEqual(target.stat().st_mode & 0o777, 0o600)
             self.assertEqual([p.name for p in Path(tmp).iterdir()], ["creds.json"])
 
     def test_replaces_existing_file_wholesale(self) -> None:

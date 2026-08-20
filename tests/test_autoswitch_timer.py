@@ -45,7 +45,13 @@ class _HomeMixin:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name)
-        env = mock.patch.dict(os.environ, {"HOME": str(self.home)}, clear=False)
+        # Path.home() reads HOME on POSIX and USERPROFILE on Windows — set both,
+        # or the writes escape into the real profile and leak across tests.
+        env = mock.patch.dict(
+            os.environ,
+            {"HOME": str(self.home), "USERPROFILE": str(self.home)},
+            clear=False,
+        )
         env.start()
         self.addCleanup(env.stop)
 

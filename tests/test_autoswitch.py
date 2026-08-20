@@ -80,7 +80,8 @@ class ConfigWriteTests(_ConfigMixin):
         aw.save_config({"enabled": True})
         # Then: the file exists, owner-only, and holds the value
         self.assertTrue(self.config.exists())
-        self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
         self.assertIs(aw.load_config()["enabled"], True)
 
     def test_unknown_pre_existing_keys_survive_a_write(self) -> None:
@@ -451,7 +452,8 @@ class NotifyOnceTests(_ConfigMixin, _PlatformMixin):
         # Then: its state file sits beside the config, owner-only
         state = self.home / "autoswitch-state.json"
         self.assertTrue(state.exists())
-        self.assertEqual(state.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(state.stat().st_mode & 0o777, 0o600)
 
     def test_de_duplication_survives_a_fresh_process(self) -> None:
         # Given: a state reported and the in-memory world thrown away
