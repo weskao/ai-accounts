@@ -20,6 +20,7 @@ codex-accounts = "ai_accounts.codex_accounts:main"
 claude-accounts = "ai_accounts.claude_accounts:main"
 agy-accounts = "ai_accounts.gemini_accounts:main"
 grok-accounts = "ai_accounts.grok_accounts:main"
+vibe-accounts = "ai_accounts.vibe_accounts:main"
 ai-accounts = "ai_accounts.ai_accounts:main"
 
 [build-system]

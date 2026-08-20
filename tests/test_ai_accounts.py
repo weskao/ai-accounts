@@ -37,22 +37,22 @@ def _fake(
 class AiAccountsTest(unittest.TestCase):
     def test_list_prints_providers_in_completion_order(self) -> None:
         # Codex is released only after all other futures have been yielded, so a
-        # correct implementation must print claude/agy/grok before codex even
+        # correct implementation must print the other providers before codex even
         # though codex is declared first in _TOOLS.
         codex_may_finish = threading.Event()
         completed_yields = 0
 
-        class ReleaseCodexAfterThreeYields:
+        class ReleaseCodexAfterFourYields:
             def __init__(self, message: str) -> None:
                 pass
 
-            def __enter__(self) -> "ReleaseCodexAfterThreeYields":
+            def __enter__(self) -> "ReleaseCodexAfterFourYields":
                 return self
 
             def __exit__(self, *exc_info: object) -> None:
                 nonlocal completed_yields
                 completed_yields += 1
-                if completed_yields == 3:
+                if completed_yields == 4:
                     codex_may_finish.set()
 
         def run(module: str) -> subprocess.CompletedProcess[str]:
@@ -63,11 +63,12 @@ class AiAccountsTest(unittest.TestCase):
                 "ai_accounts.claude_accounts": "CLAUDE-TABLE",
                 "ai_accounts.gemini_accounts": "AGY-TABLE",
                 "ai_accounts.grok_accounts": "GROK-TABLE",
+                "ai_accounts.vibe_accounts": "VIBE-TABLE",
             }[module]
             return _fake(module, table)
 
         buf = io.StringIO()
-        with mock.patch.object(aa, "Spinner", ReleaseCodexAfterThreeYields):
+        with mock.patch.object(aa, "Spinner", ReleaseCodexAfterFourYields):
             with mock.patch.object(aa, "_run_list", side_effect=run):
                 with redirect_stdout(buf):
                     rc = aa.cmd_list()
@@ -76,11 +77,13 @@ class AiAccountsTest(unittest.TestCase):
         self.assertLess(text.index("CLAUDE-TABLE"), text.index("CODEX-TABLE"))
         self.assertLess(text.index("AGY-TABLE"), text.index("CODEX-TABLE"))
         self.assertLess(text.index("GROK-TABLE"), text.index("CODEX-TABLE"))
+        self.assertLess(text.index("VIBE-TABLE"), text.index("CODEX-TABLE"))
         for label in (
             "codex-accounts",
             "claude-accounts",
             "agy-accounts",
             "grok-accounts",
+            "vibe-accounts",
         ):
             self.assertIn(label, text)
 
@@ -104,6 +107,7 @@ class AiAccountsTest(unittest.TestCase):
             ),
             "ai_accounts.gemini_accounts": _fake("ai_accounts.gemini_accounts", "AGY-TABLE"),
             "ai_accounts.grok_accounts": _fake("ai_accounts.grok_accounts", "GROK-TABLE"),
+            "ai_accounts.vibe_accounts": _fake("ai_accounts.vibe_accounts", "VIBE-TABLE"),
         }
         with mock.patch.object(aa, "Spinner", RecordingSpinner):
             with mock.patch.object(aa, "_run_list", side_effect=lambda m: outputs[m]):
@@ -112,7 +116,8 @@ class AiAccountsTest(unittest.TestCase):
         self.assertEqual(
             messages,
             [
-                "Fetching accounts from 4 providers…",
+                "Fetching accounts from 5 providers…",
+                "Fetching remaining 4 providers…",
                 "Fetching remaining 3 providers…",
                 "Fetching remaining 2 providers…",
                 "Fetching remaining 1 provider…",
@@ -161,6 +166,7 @@ class AiAccountsTest(unittest.TestCase):
                 "ai_accounts.claude_accounts",
                 "ai_accounts.gemini_accounts",
                 "ai_accounts.grok_accounts",
+                "ai_accounts.vibe_accounts",
             ],
         )
         for c in calls:
