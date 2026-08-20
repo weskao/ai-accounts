@@ -503,6 +503,16 @@ def _ps_string(text: str) -> str:
 
 
 # Toast via WinRT, which every Windows 10+ box has — no module to install.
+#
+# The audio element is explicit rather than left to the template default: a
+# toast with no <audio> child inherits whatever the system theme decides, and
+# on some builds that is silence. `Notification.Default` is the short chime
+# that matches macOS's Glass, and `silent="true"` is how the caller mutes it.
+#
+# No `launch` attribute and no `<action>` children, deliberately: a toast
+# without them does nothing when clicked. Adding either would make the click
+# activate an AppUserModelID (and Windows would fall back to the Start menu,
+# since `ai-accounts` is not a registered app).
 _PS_TOAST = """
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null
 $t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(
@@ -510,33 +520,70 @@ $t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(
 $n = $t.GetElementsByTagName('text')
 $n.Item(0).AppendChild($t.CreateTextNode({title})) > $null
 $n.Item(1).AppendChild($t.CreateTextNode({message})) > $null
+$a = $t.CreateElement('audio')
+$a.SetAttribute('src', 'ms-winsoundevent:Notification.Default')
+$a.SetAttribute('silent', {silent})
+$t.DocumentElement.AppendChild($a) > $null
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('ai-accounts').Show(
     [Windows.UI.Notifications.ToastNotification]::new($t))
 """
 
+# macOS: the notification's sound, by system-sound NAME rather than by file
+# path — `display notification ... sound name "Glass"` plays
+# /System/Library/Sounds/Glass.aiff without this code knowing that path, and
+# without spawning a second process the way a separate `afplay` would.
+_MACOS_SOUND = "Glass"
 
-def desktop_notify(title: str, message: str) -> bool:
-    """Show an OS desktop notification (best-effort, cross-platform).
+# Linux: an XDG sound-theme event id, not a file. `canberra-gtk-play -i` maps
+# it to whatever the active theme ships, so no path is baked in here. Absent
+# canberra, the notification is silent — most desktops play their own sound
+# for notify-send anyway.
+_LINUX_SOUND_EVENT = "complete"
 
-    - macOS   → ``osascript`` display notification
-    - Linux   → ``notify-send``
-    - Windows → PowerShell toast
+
+def desktop_notify(title: str, message: str, *, sound: bool = True) -> bool:
+    """Show an OS desktop notification, with a sound (best-effort, all OSes).
+
+    - macOS   → ``osascript`` display notification, sound ``Glass``
+    - Linux   → ``notify-send``, plus ``canberra-gtk-play`` when present
+    - Windows → PowerShell toast with an explicit notification sound
+
+    **Clicking the notification does nothing, on every platform.** On macOS
+    that is why the notification is posted by ``System Events``: a bare
+    ``osascript`` notification belongs to Script Editor, so clicking it opens
+    Script Editor, while System Events is a faceless background process with
+    no window to raise. If talking to System Events fails (its Automation
+    permission was denied), this falls back to the plain form rather than
+    showing nothing.
 
     Returns True when the notification was handed to the OS. Never raises:
     a missing notifier or a failing command is just a False.
     """
     if IS_MACOS:
-        script = (
+        body = (
             f"display notification {_osa_string(message)} "
             f"with title {_osa_string(title)}"
         )
-        return _notify_run(["osascript", "-e", script])
+        if sound:
+            body += f" sound name {_osa_string(_MACOS_SOUND)}"
+        # Faceless sender first (nothing to open on click), plain form second.
+        if _notify_run(["osascript", "-e", f'tell application "System Events" to {body}']):
+            return True
+        return _notify_run(["osascript", "-e", body])
     if IS_LINUX:
         if not have("notify-send"):
             return False
-        return _notify_run(["notify-send", "--", title, message])
+        shown = _notify_run(["notify-send", "--", title, message])
+        if shown and sound and have("canberra-gtk-play"):
+            # Best-effort: a themeless box still gets the notification.
+            _notify_run(["canberra-gtk-play", "-i", _LINUX_SOUND_EVENT])
+        return shown
     if IS_WINDOWS:
-        script = _PS_TOAST.format(title=_ps_string(title), message=_ps_string(message))
+        script = _PS_TOAST.format(
+            title=_ps_string(title),
+            message=_ps_string(message),
+            silent=_ps_string("false" if sound else "true"),
+        )
         return _notify_run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
         )

@@ -191,6 +191,61 @@ class DesktopNotifyDispatchTests(_PlatformMixin, unittest.TestCase):
         self.assertIn("Now on Test profile", script)
         self.assertIn("Switched", script)
 
+    def test_macos_notification_plays_a_sound_by_name_not_by_file(self) -> None:
+        # Given: a macOS host
+        self.force_platform(macos=True)
+        calls = self.record_subprocess()
+        # When: a desktop notification is sent
+        u.desktop_notify("Switched", "Now on Test profile")
+        # Then: the sound rides along in the SAME osascript call, named rather
+        # than pathed — no second process, no dependency on a file location
+        script = calls[0][-1]
+        self.assertIn('sound name "Glass"', script)
+        self.assertNotIn("afplay", script)
+        self.assertNotIn("/System/Library", script)
+        self.assertEqual(len(calls), 1)
+
+    def test_macos_sound_can_be_turned_off(self) -> None:
+        self.force_platform(macos=True)
+        calls = self.record_subprocess()
+        u.desktop_notify("Switched", "quiet", sound=False)
+        self.assertNotIn("sound name", calls[0][-1])
+
+    def test_macos_posts_as_a_faceless_sender_so_a_click_opens_nothing(self) -> None:
+        # Given: a macOS host
+        self.force_platform(macos=True)
+        calls = self.record_subprocess()
+        # When: a desktop notification is sent
+        u.desktop_notify("Switched", "Now on Test profile")
+        # Then: System Events owns it — a bare osascript notification belongs
+        # to Script Editor, and clicking it would open Script Editor
+        self.assertIn('tell application "System Events"', calls[0][-1])
+
+    def test_macos_falls_back_to_the_plain_form_when_system_events_fails(self) -> None:
+        # Given: System Events refused (Automation permission denied)
+        self.force_platform(macos=True)
+        calls: list[list[str]] = []
+
+        class _Result:
+            def __init__(self, code):
+                self.returncode = code
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            # First call is the System Events form; fail it, allow the second.
+            return _Result(1 if "System Events" in cmd[-1] else 0)
+
+        run = mock.patch.object(u, "run", fake_run)
+        run.start()
+        self.addCleanup(run.stop)
+        # When: a notification is sent
+        ok = u.desktop_notify("Switched", "Now on Test profile")
+        # Then: the user still sees it, via the plain form
+        self.assertTrue(ok)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("System Events", calls[1][-1])
+        self.assertIn("display notification", calls[1][-1])
+
     def test_linux_notifies_through_notify_send(self) -> None:
         # Given: a Linux host with notify-send installed
         self.force_platform(linux=True)
@@ -200,12 +255,14 @@ class DesktopNotifyDispatchTests(_PlatformMixin, unittest.TestCase):
         calls = self.record_subprocess()
         # When: a desktop notification is sent
         ok = u.desktop_notify("Switched", "Now on Test profile")
-        # Then: exactly one notify-send call carrying both strings as argv
+        # Then: a notify-send call carrying both strings as argv, then the
+        # sound as its own best-effort call (notify-send has no sound flag)
         self.assertTrue(ok)
-        self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], "notify-send")
         self.assertIn("Switched", calls[0])
         self.assertIn("Now on Test profile", calls[0])
+        self.assertEqual(calls[1][0], "canberra-gtk-play")
+        self.assertNotIn("--action", " ".join(calls[0]))  # click does nothing
 
     def test_linux_without_notify_send_fails_quietly(self) -> None:
         # Given: a Linux host with no notifier installed
@@ -234,6 +291,27 @@ class DesktopNotifyDispatchTests(_PlatformMixin, unittest.TestCase):
         self.assertIn("Switched", script)
         self.assertIn("Now on Test profile", script)
         self.assertIn("Windows.UI.Notifications", script)
+
+    def test_the_windows_toast_declares_its_sound_and_no_click_action(self) -> None:
+        # Given: a Windows host
+        self.force_platform(windows=True)
+        calls = self.record_subprocess()
+        # When: a desktop notification is sent
+        u.desktop_notify("Switched", "Now on Test profile")
+        script = calls[0][-1]
+        # Then: the sound is explicit, not left to the template default...
+        self.assertIn("ms-winsoundevent:Notification.Default", script)
+        self.assertIn("'silent', 'false'", script)
+        # ...and nothing makes the toast clickable: a `launch` attribute or an
+        # <action> would send the click to an AppUserModelID we do not own
+        self.assertNotIn("launch", script)
+        self.assertNotIn("CreateElement('action')", script)
+
+    def test_the_windows_toast_can_be_silenced(self) -> None:
+        self.force_platform(windows=True)
+        calls = self.record_subprocess()
+        u.desktop_notify("Switched", "quiet", sound=False)
+        self.assertIn("'silent', 'true'", calls[0][-1])
 
     def test_an_unknown_platform_reports_failure_without_spawning_anything(self) -> None:
         # Given: none of the three OS flags set (e.g. a BSD)

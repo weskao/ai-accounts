@@ -1178,7 +1178,7 @@ value to be wrong — the same rule guards `agy_blind_switch`.
 | `enabled` | bool | `false` | Master switch — off means every provider's `autoswitch`, event hooks and timer are silent no-ops. Only a JSON `true` is on; any other value (including the string `"true"`) reads as off. It never installs or removes OS jobs by itself. |
 | `switch_when_used_pct` | int (1-100) | `90` | **USED**-percent trigger — see the worked example below |
 | `switch_window` | `1week` \| `5h` | `1week` | Which quota window the trigger reads. Defaults to the weekly one: the 5-hour figure is often unavailable (the usage table renders it `—`), and a trigger reading it would sit idle on an account 93% through its week. The choice is strict — when the chosen window has no data the run reports `Could not determine usage` rather than quietly reading the other one |
-| `notify` | `desktop` \| `telegram` \| `none` | `desktop` | Where a switch (or a dead end) is reported |
+| `notify` | `desktop` \| `telegram` \| `none` | `desktop` | Where a switch (or a dead end) is reported. `desktop` plays a notification sound and its notification does nothing when clicked |
 | `telegram_bot_token` | string | `""` | Bot API token; stored in `~/.ai-accounts/config.json` (mode `0600`) and masked by `config get` |
 | `telegram_chat_id` | string | `""` | Bot API chat id to notify |
 | `agy_blind_switch` | bool | `false` | Opt-in: let `agy-accounts autoswitch` switch without verifying the candidate's quota first (see the support matrix below) |
@@ -1229,6 +1229,23 @@ ai-accounts refresh --all → 再 <provider>-accounts login-switch <name>
 
 Provider names, profile names and commands stay untranslated — they are
 identifiers you type, not prose.
+
+**Desktop notifications play a sound and do nothing when clicked**, on all
+three platforms. The sound is named, never a bundled or hard-coded file:
+macOS passes `sound name "Glass"` inside the same `display notification`
+call (so no second process, unlike an `afplay`), Windows declares
+`ms-winsoundevent:Notification.Default` on the toast, and Linux asks
+`canberra-gtk-play -i complete` for whatever the active XDG sound theme
+ships — a box without canberra still gets the notification, silently.
+
+The click behaviour needed one platform fix. A bare `osascript` notification
+belongs to Script Editor, so clicking it **opens Script Editor**; ai-accounts
+posts through `System Events` instead, a faceless background process with no
+window to raise. If its Automation permission is denied the plain form is
+used as a fallback, so a notification is never lost to that. The Windows
+toast carries no `launch` attribute and no `<action>` children, and
+`notify-send` is called with no `--action`, which is what makes their clicks
+inert too.
 
 The switch message names the usage of **both** accounts, so it is obvious
 whether the switch bought an hour or a week, and its second line reports what
