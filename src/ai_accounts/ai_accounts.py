@@ -15,7 +15,6 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import autoswitch_timer
 from . import config_menu as cm
 from ._utils import BOLD, CYAN, RESET, Spinner, log_red
 
@@ -66,7 +65,7 @@ USAGE
                                       picker for each provider in turn
   ai-accounts login-switch <name>    Fresh login + save as <name>, every provider (interactive)
   ai-accounts autoswitch             Run the low-quota auto-switch check for every provider now
-                                      (takes no arguments — to schedule it, see install-timer)
+  ai-accounts autoswitch setup       One-time install of event hooks and timer fallback
   ai-accounts config                 Interactive config menu (arrow keys; numbered
                                       fallback when stdin isn't a TTY)
   ai-accounts config get [key]       Print the auto-switch config (or just one key); the
@@ -85,8 +84,8 @@ Each command is forwarded to codex-accounts, claude-accounts, agy-accounts, grok
 fetching in between; every other command runs them one provider at a time
 with live output, so interactive pickers and login flows work and color is
 preserved. Any argument after the command (e.g. a profile name or `--all`) is
-passed through to each provider — except after `autoswitch`, which takes none
-and rejects them rather than forwarding an argument every provider ignores.
+passed through to each provider — except after `autoswitch`, which accepts
+only the local `setup` action and otherwise rejects extra arguments.
 """
 
 
@@ -157,6 +156,8 @@ def cmd_forward(argv: list[str]) -> int:
 
 
 def cmd_install_timer(rest: list[str]) -> int:
+    from . import autoswitch_timer
+
     interval = autoswitch_timer.DEFAULT_INTERVAL_SEC
     if rest:
         if rest[0] == "--interval" and len(rest) == 2:
@@ -174,13 +175,25 @@ def cmd_install_timer(rest: list[str]) -> int:
 
 
 def cmd_uninstall_timer() -> int:
+    from . import autoswitch_timer
+
     autoswitch_timer.uninstall()
     print("Uninstalled the auto-switch timer.")
     return 0
 
 
 def cmd_timer_status() -> int:
+    from . import autoswitch_timer
+
     print(autoswitch_timer.status())
+    return 0
+
+
+def cmd_autoswitch_setup() -> int:
+    from . import autoswitch_setup
+
+    autoswitch_setup.install()
+    print("Installed auto-switch event hooks and timer fallback.")
     return 0
 
 
@@ -203,15 +216,16 @@ def main(argv: list[str] | None = None) -> int:
     if command == "timer-status":
         return cmd_timer_status()
 
-    # `autoswitch` is the one forwarded command that takes NO argument: every
-    # provider ignores a trailing arg, so `autoswitch install-timer` would run
+    # `autoswitch` accepts one local setup action; providers ignore every other
+    # trailing arg, so `autoswitch install-timer` would run
     # five quota checks and install nothing — silently, while the user believes
     # a scheduler was registered. Reject it and name the working spelling.
+    if command == "autoswitch" and argv[1:] == ["setup"]:
+        return cmd_autoswitch_setup()
     if command == "autoswitch" and len(argv) > 1:
         log_red(
-            f"❌ `ai-accounts autoswitch` takes no arguments (got: {' '.join(argv[1:])}). "
-            "To schedule it: `ai-accounts install-timer [--interval <seconds>]`; "
-            "also `ai-accounts uninstall-timer` and `ai-accounts timer-status`."
+            f"❌ `ai-accounts autoswitch` accepts only `setup` (got: {' '.join(argv[1:])}). "
+            "To install automatic switching: `ai-accounts autoswitch setup`."
         )
         return 1
 

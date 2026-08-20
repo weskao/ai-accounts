@@ -118,39 +118,9 @@ _FOOTER_HINT = "↑↓ select · ←→ change · ⏎ edit/toggle · s save · E
 _MIN_WIDTH = 40
 
 
-def _sync_timer(enabled: bool) -> None:
-    """Keep the OS scheduled check in step with the ``enabled`` setting.
-
-    ``enabled: true`` on its own only *permits* a switch — something still has
-    to run the quota check, or the user is back to typing `codex-accounts
-    autoswitch` by hand. Turning the setting on therefore registers the
-    periodic job; turning it off unregisters it.
-
-    The import is function-local on purpose: ``autoswitch_timer`` reaches
-    ``ai_accounts``, which imports this module, so a top-level import here
-    closes a cycle.
-    """
-    from . import autoswitch_timer
-
-    if enabled:
-        autoswitch_timer.install()
-    else:
-        autoswitch_timer.uninstall()
-
-
 def _save_config(updates: dict) -> None:
-    """``autoswitch.save_config``, plus the timer that makes ``enabled`` real.
-
-    The one write funnel for this module's three save sites (menu, numbered
-    fallback, ``config set``), so "turn it on" means the same thing in all
-    three. Raises ``ValueError`` from ``save_config`` — the scheduler is only
-    touched after the value actually reached the file. ``is True`` rather than
-    truthiness, matching ``autoswitch.config_flag``: anything but a real
-    boolean true fails closed.
-    """
+    """Save only config values; OS setup is an explicit, one-time action."""
     autoswitch.save_config(updates)
-    if "enabled" in updates:
-        _sync_timer(updates["enabled"] is True)
 
 
 def _format_value(field: config_schema.Field, value: object) -> str:
@@ -638,7 +608,18 @@ def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
     if not rest:
         title = f"{prog} config"
         if kr.is_interactive_tty():
-            return run_menu(title)
+            result = run_menu(title)
+            if result == 0 and autoswitch.config_flag("enabled"):
+                from . import autoswitch_setup
+
+                answer = (
+                    _ask("Auto-switch setup is not installed. Install it now? [y/N]: ")
+                    if not autoswitch_setup.is_installed()
+                    else None
+                )
+                if answer is not None and answer.lower() in {"y", "yes"}:
+                    autoswitch_setup.install()
+            return result
         return fallback_menu(title)
     if rest[0] == "get":
         return cmd_config_get(rest[1] if len(rest) > 1 else None)

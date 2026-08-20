@@ -19,6 +19,7 @@ from unittest import mock
 
 from ai_accounts import _utils as u
 from ai_accounts import autoswitch as aw
+from ai_accounts import autoswitch_hooks
 from ai_accounts import autoswitch_timer as at
 
 
@@ -109,6 +110,7 @@ class MacOSInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.T
         plist = plistlib.loads(plist_path.read_bytes())
         self.assertEqual(plist["Label"], at.LABEL)
         self.assertEqual(plist["StartInterval"], at.DEFAULT_INTERVAL_SEC)
+        self.assertIs(plist["RunAtLoad"], True)
 
         # And: launchctl was invoked to load it
         launchctl_calls = [c for c in calls if c["cmd"][0] == "launchctl"]
@@ -378,26 +380,47 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
         aw.save_config({"enabled": True})
 
         # When: the scheduled job's entry point fires with its default check
-        with mock.patch.object(at.ai_accounts, "cmd_forward", return_value=0) as forward:
+        with mock.patch.object(at, "_run_autoswitch_everywhere") as run:
             result = at.run_once()
 
-        # Then: it drives the real autoswitch across all five providers by
-        # reusing the umbrella's own fan-out — not a duplicated provider list
+        # Then: it reuses the umbrella's quota-provider fan-out, in parallel.
         self.assertEqual(result, 0)
-        forward.assert_called_once_with(["autoswitch"])
+        run.assert_called_once_with()
 
     def test_run_once_default_check_is_not_invoked_when_disabled(self) -> None:
         # Given: the master switch is off
         aw.save_config({"enabled": False})
 
         # When: the scheduled job's entry point fires with its default check
-        with mock.patch.object(at.ai_accounts, "cmd_forward") as forward:
+        with mock.patch.object(at, "_run_autoswitch_everywhere") as run:
             result = at.run_once()
 
         # Then: no fan-out at all — the existing disabled-noop test's guarantee
         # still holds even when nothing is explicitly passed for `check`
         self.assertEqual(result, 0)
-        forward.assert_not_called()
+        run.assert_not_called()
+
+    def test_background_check_runs_only_quota_providers(self) -> None:
+        result = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(at, "_run_provider", return_value=result) as run:
+            at._run_autoswitch_everywhere()
+
+        self.assertCountEqual(
+            [call.args[0] for call in run.call_args_list],
+            [autoswitch_hooks.module(provider) for provider in autoswitch_hooks.providers()],
+        )
+
+    def test_background_check_skips_macos_only_agy_off_macos(self) -> None:
+        result = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(u, "IS_MACOS", False), mock.patch.object(
+            at, "_run_provider", return_value=result
+        ) as run:
+            at._run_autoswitch_everywhere()
+
+        self.assertCountEqual(
+            [call.args[0] for call in run.call_args_list],
+            ["ai_accounts.codex_accounts", "ai_accounts.claude_accounts"],
+        )
 
 
 class MainDispatchTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, _ConfigMixin, unittest.TestCase):

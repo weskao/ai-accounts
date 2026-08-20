@@ -362,8 +362,7 @@ class TouchedKeysTest(unittest.TestCase):
             touched=frozenset({"enabled"}),
             dirty=True,
         )
-        with mock.patch.object(cm.autoswitch, "save_config") as saved, \
-                mock.patch.object(cm, "_sync_timer"):
+        with mock.patch.object(cm.autoswitch, "save_config") as saved:
             after = cm._save(state)
         saved.assert_called_once_with({"enabled": True})
         self.assertEqual(after.touched, frozenset())
@@ -381,12 +380,6 @@ class _ConfigFileMixin:
         )
         env.start()
         self.addCleanup(env.stop)
-        # Saving `enabled` registers a real launchd/systemd/schtasks job, so an
-        # unpatched test here would install one on the developer's machine.
-        # Stubbed for every config-file test; TimerSyncTest asserts on it.
-        sync = mock.patch.object(cm, "_sync_timer")
-        self.sync_timer = sync.start()
-        self.addCleanup(sync.stop)
 
     def stored(self) -> dict:
         return json.loads(self.config_path.read_text(encoding="utf-8"))
@@ -635,16 +628,8 @@ class FallbackTest(_ConfigFileMixin, unittest.TestCase):
         self.assertNotIn("Traceback", combined)
 
 
-class TimerSyncTest(_ConfigFileMixin, unittest.TestCase):
-    """`enabled` is both the master switch and the scheduler's on/off.
-
-    ``enabled: true`` alone only *permits* a switch — something still has to
-    run the quota check, or the user is back to typing `codex-accounts
-    autoswitch` by hand. Every write path in this module registers the
-    scheduled job when the setting goes on and unregisters it when it goes off,
-    so "turn it on" means the same thing in the menu, the numbered fallback and
-    `config set`.
-    """
+class ConfigSetupTimingTest(_ConfigFileMixin, unittest.TestCase):
+    """Editing config never churns OS jobs; setup is explicit or prompted once."""
 
     def call(self, argv):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -672,57 +657,50 @@ class TimerSyncTest(_ConfigFileMixin, unittest.TestCase):
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             return cm.cmd_config([], prog="ai-accounts")
 
-    def test_enabling_from_the_menu_registers_the_scheduled_check(self) -> None:
+    def test_enabling_from_the_menu_only_changes_the_master_switch(self) -> None:
         self.menu_save(True)
-        self.sync_timer.assert_called_once_with(True)
+        self.assertTrue(self.stored()["enabled"])
 
-    def test_disabling_from_the_menu_unregisters_it(self) -> None:
+    def test_disabling_from_the_menu_leaves_setup_untouched(self) -> None:
         self.menu_save(False)
-        self.sync_timer.assert_called_once_with(False)
+        self.assertFalse(self.stored()["enabled"])
 
-    def test_config_set_true_registers_it(self) -> None:
+    def test_config_set_true_does_not_install_again(self) -> None:
         self.assertEqual(self.call(["set", "enabled", "true"]), 0)
-        self.sync_timer.assert_called_once_with(True)
+        self.assertTrue(self.stored()["enabled"])
 
-    def test_config_set_off_unregisters_it(self) -> None:
+    def test_config_set_off_does_not_uninstall(self) -> None:
         self.assertEqual(self.call(["set", "enabled", "off"]), 0)
-        self.sync_timer.assert_called_once_with(False)
+        self.assertFalse(self.stored()["enabled"])
 
-    def test_the_numbered_fallback_registers_it_too(self) -> None:
+    def test_the_numbered_fallback_never_prompts_or_installs(self) -> None:
         self.assertEqual(self.fallback([str(index_of("enabled") + 1), "true"]), 0)
-        self.sync_timer.assert_called_once_with(True)
+        self.assertTrue(self.stored()["enabled"])
 
-    def test_saving_an_unrelated_key_leaves_the_scheduler_alone(self) -> None:
+    def test_saving_an_unrelated_key_needs_no_setup(self) -> None:
         self.assertEqual(self.call(["set", "switch_when_used_pct", "80"]), 0)
-        self.sync_timer.assert_not_called()
 
-    def test_a_rejected_save_never_touches_the_scheduler(self) -> None:
-        # A hand-edited `notify` on disk makes save_config raise; the timer must
-        # not be registered for a setting that never reached the file.
+    def test_a_rejected_save_never_reaches_setup(self) -> None:
         self.config_path.write_text(json.dumps({"notify": "bogus"}), encoding="utf-8")
         self.assertEqual(self.call(["set", "enabled", "true"]), 1)
-        self.sync_timer.assert_not_called()
+    def test_interactive_config_offers_one_time_setup_when_enabled(self) -> None:
+        autoswitch.save_config({"enabled": True})
+        with mock.patch.object(cm.kr, "is_interactive_tty", return_value=True), \
+                mock.patch.object(cm, "run_menu", return_value=0), \
+                mock.patch.object(cm, "_ask", return_value="y"), \
+                mock.patch("ai_accounts.autoswitch_setup.is_installed", return_value=False), \
+                mock.patch("ai_accounts.autoswitch_setup.install") as install:
+            self.assertEqual(cm.cmd_config([], prog="ai-accounts"), 0)
+        install.assert_called_once_with()
 
-
-class SyncTimerBodyTest(unittest.TestCase):
-    """The real body of the funnel every other test patches away.
-
-    Deliberately outside ``_ConfigFileMixin`` — that mixin stubs
-    ``_sync_timer`` so no test installs a real scheduled job, which would make
-    this assertion vacuous.
-    """
-
-    def test_sync_drives_the_os_scheduler_both_ways(self) -> None:
-        with mock.patch("ai_accounts.autoswitch_timer.install") as install, \
-                mock.patch("ai_accounts.autoswitch_timer.uninstall") as uninstall:
-            cm._sync_timer(True)
-            install.assert_called_once_with()
-            uninstall.assert_not_called()
-        with mock.patch("ai_accounts.autoswitch_timer.install") as install, \
-                mock.patch("ai_accounts.autoswitch_timer.uninstall") as uninstall:
-            cm._sync_timer(False)
-            uninstall.assert_called_once_with()
-            install.assert_not_called()
+    def test_interactive_config_does_not_prompt_when_setup_exists(self) -> None:
+        autoswitch.save_config({"enabled": True})
+        with mock.patch.object(cm.kr, "is_interactive_tty", return_value=True), \
+                mock.patch.object(cm, "run_menu", return_value=0), \
+                mock.patch.object(cm, "_ask") as ask, \
+                mock.patch("ai_accounts.autoswitch_setup.is_installed", return_value=True):
+            self.assertEqual(cm.cmd_config([], prog="ai-accounts"), 0)
+        ask.assert_not_called()
 
 
 class CmdConfigLegacyTest(_ConfigFileMixin, unittest.TestCase):

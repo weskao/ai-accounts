@@ -21,6 +21,7 @@ from unittest import mock
 
 from ai_accounts import ai_accounts as aa
 from ai_accounts import autoswitch
+from ai_accounts import autoswitch_timer
 
 
 def _fake(
@@ -214,19 +215,19 @@ class AiAccountsTest(unittest.TestCase):
         # When: `ai-accounts autoswitch install-timer` runs
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(aa.subprocess, "run", side_effect=run), \
-                mock.patch.object(aa.autoswitch_timer, "install") as install:
+                mock.patch("ai_accounts.autoswitch_timer.install") as install:
             with redirect_stdout(out), redirect_stderr(err):
                 rc = aa.main(["autoswitch", "install-timer"])
 
-        # Then: it fails loudly, names the working spelling, installs nothing
+        # Then: it fails loudly, names the one-time setup spelling, installs nothing
         # and never spawns a provider
         self.assertEqual(rc, 1)
         self.assertEqual(calls, [])
         install.assert_not_called()
-        self.assertIn("ai-accounts install-timer", out.getvalue() + err.getvalue())
+        self.assertIn("ai-accounts autoswitch setup", out.getvalue() + err.getvalue())
 
-    def test_autoswitch_rejects_any_trailing_argument(self) -> None:
-        # Given: `autoswitch` takes no arguments at all — a profile name or a
+    def test_autoswitch_rejects_unknown_trailing_argument(self) -> None:
+        # Given: `autoswitch` accepts only `setup` — a profile name or a
         # typo would be swallowed by all four providers just as silently.
         for argv in (["autoswitch", "--interval", "600"], ["autoswitch", "work"]):
             with self.subTest(argv=argv):
@@ -235,6 +236,18 @@ class AiAccountsTest(unittest.TestCase):
                         rc = aa.main(argv)
                 self.assertEqual(rc, 1)
                 run.assert_not_called()
+
+    def test_autoswitch_setup_is_local_and_runs_once_per_explicit_request(self) -> None:
+        with mock.patch.object(aa.subprocess, "run") as run, mock.patch(
+            "ai_accounts.autoswitch_setup.install"
+        ) as setup:
+            with redirect_stdout(io.StringIO()):
+                rc = aa.main(["autoswitch", "setup"])
+
+        self.assertEqual(rc, 0)
+        run.assert_not_called()
+        setup.assert_called_once_with()
+
 
 
 class _ConfigMixin:
@@ -341,16 +354,16 @@ class AiAccountsTimerTest(_ConfigMixin, unittest.TestCase):
     def test_install_timer_does_not_forward_and_installs_default_interval(self) -> None:
         buf = io.StringIO()
         with mock.patch.object(aa.subprocess, "run") as run:
-            with mock.patch.object(aa.autoswitch_timer, "install") as install:
+            with mock.patch("ai_accounts.autoswitch_timer.install") as install:
                 with redirect_stdout(buf):
                     rc = aa.main(["install-timer"])
         self.assertEqual(rc, 0)
         run.assert_not_called()
-        install.assert_called_once_with(aa.autoswitch_timer.DEFAULT_INTERVAL_SEC)
+        install.assert_called_once_with(autoswitch_timer.DEFAULT_INTERVAL_SEC)
 
     def test_install_timer_parses_interval_flag(self) -> None:
         with mock.patch.object(aa.subprocess, "run") as run:
-            with mock.patch.object(aa.autoswitch_timer, "install") as install:
+            with mock.patch("ai_accounts.autoswitch_timer.install") as install:
                 with redirect_stdout(io.StringIO()):
                     rc = aa.main(["install-timer", "--interval", "60"])
         self.assertEqual(rc, 0)
@@ -359,7 +372,7 @@ class AiAccountsTimerTest(_ConfigMixin, unittest.TestCase):
 
     def test_uninstall_timer_does_not_forward(self) -> None:
         with mock.patch.object(aa.subprocess, "run") as run:
-            with mock.patch.object(aa.autoswitch_timer, "uninstall") as uninstall:
+            with mock.patch("ai_accounts.autoswitch_timer.uninstall") as uninstall:
                 with redirect_stdout(io.StringIO()):
                     rc = aa.main(["uninstall-timer"])
         self.assertEqual(rc, 0)
@@ -369,8 +382,8 @@ class AiAccountsTimerTest(_ConfigMixin, unittest.TestCase):
     def test_timer_status_does_not_forward_and_prints_status(self) -> None:
         buf = io.StringIO()
         with mock.patch.object(aa.subprocess, "run") as run:
-            with mock.patch.object(
-                aa.autoswitch_timer, "status", return_value="installed"
+            with mock.patch(
+                "ai_accounts.autoswitch_timer.status", return_value="installed"
             ):
                 with redirect_stdout(buf):
                     rc = aa.main(["timer-status"])
@@ -383,6 +396,7 @@ class AiAccountsHelpTest(unittest.TestCase):
     def test_help_lists_the_new_commands(self) -> None:
         for snippet in (
             "autoswitch",
+            "autoswitch setup",
             "config get",
             "config set",
             "install-timer",

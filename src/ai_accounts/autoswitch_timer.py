@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import plistlib
 import shlex
+import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Sequence
 
 from . import _utils as u
-from . import ai_accounts
+from . import autoswitch_hooks
 from . import autoswitch as aw
 
 LABEL = "com.ai_accounts.autoswitch"
@@ -98,7 +100,7 @@ def _install_macos(interval_sec: int) -> None:
                     "run",
                 ],
                 "StartInterval": interval_sec,
-                "RunAtLoad": False,
+                "RunAtLoad": True,
             }
         )
     )
@@ -241,14 +243,21 @@ def status() -> str:
 # ── the scheduled job's entry point ─────────────────────────────────────────
 
 
-def _run_autoswitch_everywhere() -> None:
-    """Default *check*: the real quota-probe/switch, across all five providers.
+def _run_provider(module: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", module, "autoswitch"], capture_output=True, text=True
+    )
 
-    Reuses :mod:`ai_accounts.ai_accounts`'s own umbrella fan-out (the same path
-    ``ai-accounts autoswitch`` runs through) instead of duplicating the
-    provider list here.
+
+def _run_autoswitch_everywhere() -> None:
+    """Default *check*: quota probe/switch across eligible providers in parallel.
+
+    The provider registry lives with the hook installer, keeping timed and
+    event-triggered checks on the same cross-platform support matrix.
     """
-    ai_accounts.cmd_forward(["autoswitch"])
+    modules = [autoswitch_hooks.module(provider) for provider in autoswitch_hooks.providers()]
+    with ThreadPoolExecutor(max_workers=len(modules)) as pool:
+        _ = list(pool.map(_run_provider, modules))
 
 
 def run_once(check: Callable[[], None] | None = None) -> int:

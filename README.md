@@ -941,7 +941,7 @@ ai-accounts remove [<name>]        Remove profile in every provider; no name = i
                                     picker for each provider in turn
 ai-accounts login-switch <name>    Fresh login + save as <name>, every provider (interactive)
 ai-accounts autoswitch             Run the low-quota auto-switch check for every provider now
-                                    (takes no arguments — to schedule it, see install-timer)
+ai-accounts autoswitch setup       One-time install of event hooks and timer fallback
 ai-accounts config                 Interactive auto-switch config menu (numbered fallback
                                     when not run on a TTY) — see "Auto-switch on low
                                     quota" below
@@ -973,10 +973,10 @@ disappears for good. Every other command runs the providers **one at a time
 with live output**, so interactive flows (switch pickers, `login-switch`) and
 color work unchanged; any argument after the command (a profile name,
 `--all`, …) is passed through to each provider — except after `autoswitch`,
-which takes no arguments and rejects them (exit `1`) instead of forwarding an
-argument all five providers would ignore. `ai-accounts autoswitch install-timer`
-is therefore an error naming the working spelling, `ai-accounts install-timer`,
-rather than a silent no-op that installs nothing. Per-provider errors are
+which accepts only `setup` and rejects every other argument (exit `1`) instead
+of forwarding an argument all five providers would ignore. `ai-accounts
+autoswitch install-timer` is therefore an error naming `ai-accounts autoswitch
+setup`, rather than a silent no-op that installs nothing. Per-provider errors are
 printed inline without aborting the others, and the exit code is non-zero if
 any provider's command failed. `list`'s spinner only shows on a TTY (their
 own inner spinners stay off, since their output is captured rather than run
@@ -988,8 +988,9 @@ on a live terminal).
 
 Quota-backed account tools can watch their active account's quota and switch to a
 saved profile with more room — driven entirely by `~/.ai-accounts/config.json`,
-no flags. Turning `enabled` on through `config` registers an OS timer that
-runs the check for you (see [Timer](#timer)); running it by hand
+no flags. Enable it, then install its event hooks and low-frequency timer once
+with `ai-accounts autoswitch setup` (see [Event hooks](#event-hooks) and
+[Timer](#timer)); running it by hand
 (`codex-accounts autoswitch`, `claude-accounts autoswitch`, `agy-accounts
 autoswitch`, `grok-accounts autoswitch`, `vibe-accounts autoswitch`, or `ai-accounts autoswitch` to run
 all five at once) stays available for an immediate check.
@@ -1001,6 +1002,7 @@ ai-accounts config                  # interactive menu (numbered fallback off a 
 ai-accounts config get              # print the whole config (telegram token masked)
 ai-accounts config get notify       # print just one key
 ai-accounts config set enabled true # turn auto-switching on
+ai-accounts autoswitch setup        # install hooks + timer once
 ai-accounts config set notify telegram
 ```
 
@@ -1069,7 +1071,7 @@ value to be wrong — the same rule guards `agy_blind_switch`.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `enabled` | bool | `false` | Master switch — off means every provider's `autoswitch` and the timer are silent no-ops. Only a JSON `true` is on; any other value (including the string `"true"`) reads as off. Setting it through `config` also **registers the timer** (see below) |
+| `enabled` | bool | `false` | Master switch — off means every provider's `autoswitch`, event hooks and timer are silent no-ops. Only a JSON `true` is on; any other value (including the string `"true"`) reads as off. It never installs or removes OS jobs by itself. |
 | `switch_when_used_pct` | int (1-100) | `90` | **USED**-percent trigger — see the worked example below |
 | `switch_window` | `1week` \| `5h` | `1week` | Which quota window the trigger reads. Defaults to the weekly one: the 5-hour figure is often unavailable (the usage table renders it `—`), and a trigger reading it would sit idle on an account 93% through its week. The choice is strict — when the chosen window has no data the run reports `Could not determine usage` rather than quietly reading the other one |
 | `notify` | `desktop` \| `telegram` \| `none` | `desktop` | Where a switch (or a dead end) is reported |
@@ -1091,15 +1093,30 @@ ai-accounts config set telegram_bot_token 000000:REPLACE-WITH-YOUR-BOT-TOKEN
 ai-accounts config set telegram_chat_id 000000000
 ```
 
+### Event hooks
+
+Run `ai-accounts autoswitch setup` once after enabling the feature. It adds one
+`Stop` hook to Codex, Claude and (on macOS) agy. The hook runs the same existing
+provider `autoswitch` command when an agent turn completes, so usage is checked
+while the CLI is active rather than by a one-minute background poll. Grok and
+Vibe are excluded because they do not expose a quota API. Existing user hooks
+are preserved. Changing `enabled` merely enables or disables checks; it does
+not rewrite hooks or scheduler entries. Opening the interactive `config` menu
+detects a missing setup and offers to install it; `config set` remains fully
+non-interactive.
+
+Codex requires a one-time trust review for a newly installed user hook: start
+Codex and use `/hooks` to approve `ai-accounts-autoswitch`. A hook switches the
+saved credentials for the next session; a running CLI is not safely hot-swapped
+and must restart/resume after a switch (see [Restart after a switch](#restart-after-a-switch)).
+
 ### Timer
 
-Setting `enabled` through **any** `config` path — the menu, the numbered
-fallback, or `config set enabled true` — registers the scheduled check for
-you, and turning it off unregisters it. `enabled: true` on its own only
-*permits* a switch; something has to run the quota check, so turning the
-setting on and still having to type `codex-accounts autoswitch` by hand would
-be a switch that never happens. The commands below remain the way to choose a
-non-default interval, or to check/repair the job:
+`ai-accounts autoswitch setup` also registers the scheduled check as a
+low-frequency fallback for inactive or failed hooks. It is deliberately a
+separate one-time action: repeated `config set enabled true` does not wake the
+machine, rewrite hook files, or reinstall the timer. The commands below remain
+available to choose a non-default interval, or to check/repair the timer:
 
 ```sh
 ai-accounts install-timer                # schedule the check every 1800s (30 min, the default)
@@ -1109,8 +1126,9 @@ ai-accounts uninstall-timer              # remove the scheduled check
 ```
 
 The scheduled job runs `python -m ai_accounts.autoswitch_timer run`, which is a
-silent no-op unless `enabled` is `true`; when it is, it runs the same
-`autoswitch` check as `ai-accounts autoswitch`, across all five providers.
+silent no-op unless `enabled` is `true`; when it is, it checks Codex, Claude,
+and macOS agy concurrently. No `jq` dependency is required: hook configuration
+uses Python's standard JSON library.
 Installed per OS as:
 
 | OS | Mechanism |
@@ -1125,7 +1143,7 @@ Installed per OS as:
 | --- | --- | --- |
 | `codex-accounts` | Full | Each saved profile's quota is probed from its own file — no profile is activated just to check it |
 | `claude-accounts` | Full | Same approach: each profile's usage is fetched with its own token, without switching |
-| `agy-accounts` | Opt-in, blind | `agy` reports quota only for the *live* session — reading a candidate's quota would mean activating it, which hijacks the single shared Keychain slot a running `agy` process depends on. So candidates are never probed in advance; switching anyway is opt-in via `agy_blind_switch` (default off, reports and stops), and once switched the notification says the target's quota was **not pre-verified**. Blind mode's target is the alphabetically-first candidate (every candidate is treated as equally, unverifiably, empty) |
+| `agy-accounts` | macOS, opt-in, blind | `agy` reports quota only for the *live* session — reading a candidate's quota would mean activating it, which hijacks the single shared Keychain slot a running `agy` process depends on. So candidates are never probed in advance; switching anyway is opt-in via `agy_blind_switch` (default off, reports and stops), and once switched the notification says the target's quota was **not pre-verified**. Blind mode's target is the alphabetically-first candidate (every candidate is treated as equally, unverifiably, empty). On Linux and Windows its config remains available, but hooks and timed checks skip it. |
 | `grok-accounts` | Not supported | xAI ships no quota API for Grok Build. `autoswitch` prints `autoswitch unsupported for grok: no quota API` and exits `0`, so the `ai-accounts autoswitch` fan-out is never reported as a failure over this one provider |
 | `vibe-accounts` | Not supported | Vibe uses static API keys and exposes no quota API. `autoswitch` prints `autoswitch unsupported for vibe: no quota API` and exits `0` |
 
