@@ -63,7 +63,7 @@ Canonical here (behavioural half): :class:`MenuState` + :func:`step`, the
 **pure** ``(state, KeyEvent) -> state`` transition every behaviour test drives
 from a fake key iterator; :func:`run_menu`, the thin terminal shell around it
 (raw mode, in-place redraw, ``Spinner`` while saving); the non-TTY numbered
-fallback; and :func:`cmd_config`, the ONE entry point all five CLIs delegate
+fallback; and :func:`cmd_config`, the ONE entry point all six CLIs delegate
 to for both the menu and the scriptable ``config get`` / ``config set`` forms.
 
 Delegated elsewhere: key decoding, raw mode and the "is a menu even possible"
@@ -549,7 +549,7 @@ def fallback_menu(title: str, fields: Sequence[config_schema.Field] = config_sch
     return 0
 
 
-# ── cmd_config: the one entry point all five CLIs delegate to ───────────────
+# ── cmd_config: the one entry point all six CLIs delegate to ───────────────
 
 
 def _valid_keys() -> dict[str, object]:
@@ -624,7 +624,7 @@ def cmd_config_set(key: str, raw_value: str) -> int:
 
 
 def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
-    """``<prog> config [...]`` — the shared implementation for all five CLIs.
+    """``<prog> config [...]`` — the shared implementation for all six CLIs.
 
     No args → interactive menu, or the numbered fallback when a keyboard menu
     is impossible. ``get [key]`` / ``set <key> <value>`` keep the legacy

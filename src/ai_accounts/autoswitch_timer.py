@@ -242,7 +242,7 @@ def status() -> str:
 
 
 def _run_autoswitch_everywhere() -> None:
-    """Default *check*: the real quota-probe/switch, across all four providers.
+    """Default *check*: the real quota-probe/switch, across all five providers.
 
     Reuses :mod:`ai_accounts.ai_accounts`'s own umbrella fan-out (the same path
     ``ai-accounts autoswitch`` runs through) instead of duplicating the

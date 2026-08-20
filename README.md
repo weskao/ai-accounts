@@ -68,7 +68,8 @@ After install, the following commands are available on `PATH`:
 | `claude-accounts` | Manage multiple Claude Code login profiles, inspect usage, and configure auto-switch (config) |
 | `agy-accounts` | Manage multiple Antigravity OAuth profiles, inspect quota, and configure auto-switch (macOS, config) |
 | `grok-accounts` | Manage multiple Grok Build CLI OAuth profiles (save / list / switch / refresh / config) |
-| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `usage`, `who`, `refresh`, `sync`, `autoswitch`, …) to all four `*-accounts`, plus its own timer commands and the shared `config` for [auto-switch on low quota](#auto-switch-on-low-quota) |
+| `vibe-accounts` | Manage multiple Mistral Vibe API-key profiles (save / list / switch / config) |
+| `ai-accounts` | Drive every AI account tool at once — forwards any subcommand (`list`, `usage`, `who`, `refresh`, `sync`, `autoswitch`, …) to all five `*-accounts`, plus its own timer commands and the shared `config` for [auto-switch on low quota](#auto-switch-on-low-quota) |
 
 ## Update
 
@@ -347,7 +348,7 @@ vcadd 人工智慧 機器學習  # add multiple words at once
 
 ## Account profile storage
 
-All four account managers (`codex-accounts`, `claude-accounts`, `agy-accounts`, `grok-accounts`)
+All five account managers (`codex-accounts`, `claude-accounts`, `agy-accounts`, `grok-accounts`, `vibe-accounts`)
 keep their saved profiles in one central, hidden folder under your **home
 directory**:
 
@@ -357,7 +358,8 @@ $HOME/
     ├── claude/accounts/          # claude-accounts profiles + .current-profile
     ├── codex/accounts/           # codex-accounts profiles + .current-profile
     ├── antigravity/accounts/     # agy-accounts profiles + .current-profile
-    └── grok/accounts/            # grok-accounts profiles + .current-profile
+    ├── grok/accounts/            # grok-accounts profiles + .current-profile
+    └── vibe/accounts/            # vibe-accounts profiles + .current-profile
 ```
 
 The path is resolved from the running user's home directory at runtime
@@ -516,7 +518,7 @@ discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, C
 prints a numbered listing instead and exits `0`. `config get [key]` / `config set
 <key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
 saved value masked, not in cleartext. This is the same shared config menu as
-`ai-accounts`, `claude-accounts`, `agy-accounts`, and `grok-accounts` — all five
+`ai-accounts`, `claude-accounts`, `agy-accounts`, `grok-accounts`, and `vibe-accounts` — all six
 edit the one `~/.ai-accounts/config.json`. See [Auto-switch on low quota →
 Config](#config) for the full key reference.
 
@@ -612,7 +614,7 @@ discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, C
 prints a numbered listing instead and exits `0`. `config get [key]` / `config set
 <key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
 saved value masked, not in cleartext. This is the same shared config menu as
-`ai-accounts`, `codex-accounts`, `agy-accounts`, and `grok-accounts` — all five
+`ai-accounts`, `codex-accounts`, `agy-accounts`, `grok-accounts`, and `vibe-accounts` — all six
 edit the one `~/.ai-accounts/config.json`. See [Auto-switch on low quota →
 Config](#config) for the full key reference.
 
@@ -767,7 +769,7 @@ discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, C
 prints a numbered listing instead and exits `0`. `config get [key]` / `config set
 <key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
 saved value masked, not in cleartext. This is the same shared config menu as
-`ai-accounts`, `codex-accounts`, `claude-accounts`, and `grok-accounts` — all five
+`ai-accounts`, `codex-accounts`, `claude-accounts`, `grok-accounts`, and `vibe-accounts` — all six
 edit the one `~/.ai-accounts/config.json`, including `agy_blind_switch`, the setting
 this tool's own autoswitch reads. See [Auto-switch on low quota →
 Config](#config) for the full key reference.
@@ -869,7 +871,7 @@ discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, C
 prints a numbered listing instead and exits `0`. `config get [key]` / `config set
 <key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
 saved value masked, not in cleartext. This is the same shared config menu as
-`ai-accounts`, `codex-accounts`, `claude-accounts`, and `agy-accounts` — all five
+`ai-accounts`, `codex-accounts`, `claude-accounts`, `agy-accounts`, and `vibe-accounts` — all six
 edit the one `~/.ai-accounts/config.json`. See [Auto-switch on low quota →
 Config](#config) for the full key reference.
 
@@ -883,10 +885,38 @@ Config](#config) for the full key reference.
 
 ---
 
+## `vibe-accounts` — Mistral Vibe Account Manager
+
+Save, list, and switch between multiple [Mistral Vibe](https://mistral.ai/products/vibe/)
+profiles. Vibe uses a static API key from `~/.vibe/.env`; profiles are stored under
+`~/.ai-accounts/vibe/accounts/` and never print the raw key.
+
+```sh
+vibe-accounts save [<name>]       # save the active Vibe key
+vibe-accounts list                # list saved profiles
+vibe-accounts switch <name>       # activate a saved profile
+vibe-accounts who                 # show the active profile
+vibe-accounts sync                # update the active profile
+vibe-accounts login-switch <name> # run `vibe --setup`, then save it
+```
+
+`MISTRAL_API_KEY` is preferred; `OPENAI_API_KEY` is also recognized for
+OpenAI-compatible Vibe configurations. Vibe has no quota API, so `refresh`
+is a successful no-op and `autoswitch` reports that it is unsupported.
+
+### vibe-accounts Environment Overrides
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VIBE_HOME` | `~/.vibe` | Base Vibe configuration directory |
+| `VIBE_ACCOUNT_DIR` | `~/.ai-accounts/vibe/accounts` | Where saved profiles are stored |
+
+---
+
 ## `ai-accounts` — All-provider Account Front-end
 
-Forwards a subcommand to all four per-provider tools (`codex-accounts`,
-`claude-accounts`, `agy-accounts`, `grok-accounts`) at once, so one command drives every
+Forwards a subcommand to all five per-provider tools (`codex-accounts`,
+`claude-accounts`, `agy-accounts`, `grok-accounts`, `vibe-accounts`) at once, so one command drives every
 provider. It exposes the same command surface as the per-provider tools.
 All commands use the same provider headers and shared success, warning, error,
 panel, and table presentation as the individual account tools; provider-specific
@@ -934,7 +964,7 @@ the identical `config` command against the same shared `~/.ai-accounts/config.js
 See [Auto-switch on low quota](#auto-switch-on-low-quota) below for the full
 config reference, the support matrix, and the timer's per-OS mechanism.
 
-Bare `ai-accounts` (no arguments) prints this help. `list` runs the four
+Bare `ai-accounts` (no arguments) prints this help. `list` runs the five
 providers **concurrently** and prints each one's table as soon as it
 finishes — fastest provider first, not a fixed order — with a spinner in
 between tracking how many are still outstanding (`Fetching remaining 3
@@ -944,7 +974,7 @@ with live output**, so interactive flows (switch pickers, `login-switch`) and
 color work unchanged; any argument after the command (a profile name,
 `--all`, …) is passed through to each provider — except after `autoswitch`,
 which takes no arguments and rejects them (exit `1`) instead of forwarding an
-argument all four providers would ignore. `ai-accounts autoswitch install-timer`
+argument all five providers would ignore. `ai-accounts autoswitch install-timer`
 is therefore an error naming the working spelling, `ai-accounts install-timer`,
 rather than a silent no-op that installs nothing. Per-provider errors are
 printed inline without aborting the others, and the exit code is non-zero if
@@ -956,13 +986,13 @@ on a live terminal).
 
 ## Auto-switch on low quota
 
-Every account tool can watch its own active account's quota and switch to a
+Quota-backed account tools can watch their active account's quota and switch to a
 saved profile with more room — driven entirely by `~/.ai-accounts/config.json`,
 no flags. Turning `enabled` on through `config` registers an OS timer that
 runs the check for you (see [Timer](#timer)); running it by hand
 (`codex-accounts autoswitch`, `claude-accounts autoswitch`, `agy-accounts
-autoswitch`, `grok-accounts autoswitch`, or `ai-accounts autoswitch` to run
-all four at once) stays available for an immediate check.
+autoswitch`, `grok-accounts autoswitch`, `vibe-accounts autoswitch`, or `ai-accounts autoswitch` to run
+all five at once) stays available for an immediate check.
 
 ### Config
 
@@ -974,8 +1004,8 @@ ai-accounts config set enabled true # turn auto-switching on
 ai-accounts config set notify telegram
 ```
 
-All five tools — `ai-accounts`, `codex-accounts`, `claude-accounts`,
-`agy-accounts`, and `grok-accounts` — own an identical `config` command
+All six tools — `ai-accounts`, `codex-accounts`, `claude-accounts`,
+`agy-accounts`, `grok-accounts`, and `vibe-accounts` — own an identical `config` command
 against the one shared `~/.ai-accounts/config.json` (override with
 `$AI_ACCOUNTS_CONFIG_JSON`); none of them forward it to another provider.
 
@@ -1080,7 +1110,7 @@ ai-accounts uninstall-timer              # remove the scheduled check
 
 The scheduled job runs `python -m ai_accounts.autoswitch_timer run`, which is a
 silent no-op unless `enabled` is `true`; when it is, it runs the same
-`autoswitch` check as `ai-accounts autoswitch`, across all four providers.
+`autoswitch` check as `ai-accounts autoswitch`, across all five providers.
 Installed per OS as:
 
 | OS | Mechanism |
@@ -1097,6 +1127,7 @@ Installed per OS as:
 | `claude-accounts` | Full | Same approach: each profile's usage is fetched with its own token, without switching |
 | `agy-accounts` | Opt-in, blind | `agy` reports quota only for the *live* session — reading a candidate's quota would mean activating it, which hijacks the single shared Keychain slot a running `agy` process depends on. So candidates are never probed in advance; switching anyway is opt-in via `agy_blind_switch` (default off, reports and stops), and once switched the notification says the target's quota was **not pre-verified**. Blind mode's target is the alphabetically-first candidate (every candidate is treated as equally, unverifiably, empty) |
 | `grok-accounts` | Not supported | xAI ships no quota API for Grok Build. `autoswitch` prints `autoswitch unsupported for grok: no quota API` and exits `0`, so the `ai-accounts autoswitch` fan-out is never reported as a failure over this one provider |
+| `vibe-accounts` | Not supported | Vibe uses static API keys and exposes no quota API. `autoswitch` prints `autoswitch unsupported for vibe: no quota API` and exits `0` |
 
 ### Restart after a switch
 

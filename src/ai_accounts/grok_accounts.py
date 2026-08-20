@@ -581,7 +581,7 @@ def cmd_autoswitch() -> int:
     xAI ships no quota endpoint and the Grok Build CLI exposes none, so there
     is no usage figure to compare against a threshold — nothing to guess at,
     and nothing worth faking. Exits 0 so the `ai-accounts autoswitch` fan-out
-    over all four providers is not reported as a failure over this one.
+    over all five providers is not reported as a failure over this one.
     """
     print("autoswitch unsupported for grok: no quota API")
     return 0

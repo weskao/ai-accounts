@@ -159,6 +159,17 @@ class VibeAccountsTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue((self.account_dir / "test.json").is_file())
 
+    def test_openai_api_key_uses_same_identity_for_switch_and_sync(self) -> None:
+        payload = {"OPENAI_API_KEY": "sk-openai-compatible-key"}
+        self.assertTrue(va._write_json(self.account_dir / "personal.json", payload))
+        self.assertTrue(va._write_env(va._auth_file(), payload))
+        self.assertTrue(va._active_profile(), "the active profile should be detected")
+
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(va.cmd_sync(), 0)
+
+        self.assertEqual(va._read_json(self.account_dir / "personal.json"), payload)
+
 
 class VibeAutoswitchTests(unittest.TestCase):
     def test_autoswitch_reports_unsupported_and_exits_zero(self) -> None:

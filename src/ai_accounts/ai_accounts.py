@@ -1,7 +1,7 @@
 """ai-accounts — drive every AI account tool at once.
 
-Fans a subcommand out to all four per-provider tools (codex-accounts,
-claude-accounts, agy-accounts, grok-accounts) so one command covers every provider. ``list``
+Fans a subcommand out to all five per-provider tools (codex-accounts,
+claude-accounts, agy-accounts, grok-accounts, vibe-accounts) so one command covers every provider. ``list``
 runs the providers in parallel and prints each provider's table as soon as
 it finishes fetching (its output embeds ANSI unconditionally, so color
 survives the pipe); every other command runs the providers one at a time
@@ -192,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
 
     command = argv[0]
     # 🔴 Intercepted BEFORE the _COMMANDS gate below, and deliberately absent
-    # from _COMMANDS: falling through to cmd_forward would make all four
+    # from _COMMANDS: falling through to cmd_forward would make all five
     # provider subprocesses each print their own "Unknown command".
     if command == "config":
         return cm.cmd_config(argv[1:], prog="ai-accounts")
@@ -205,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # `autoswitch` is the one forwarded command that takes NO argument: every
     # provider ignores a trailing arg, so `autoswitch install-timer` would run
-    # four quota checks and install nothing — silently, while the user believes
+    # five quota checks and install nothing — silently, while the user believes
     # a scheduler was registered. Reject it and name the working spelling.
     if command == "autoswitch" and len(argv) > 1:
         log_red(

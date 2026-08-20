@@ -381,7 +381,7 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
         with mock.patch.object(at.ai_accounts, "cmd_forward", return_value=0) as forward:
             result = at.run_once()
 
-        # Then: it drives the real autoswitch across all four providers by
+        # Then: it drives the real autoswitch across all five providers by
         # reusing the umbrella's own fan-out — not a duplicated provider list
         self.assertEqual(result, 0)
         forward.assert_called_once_with(["autoswitch"])

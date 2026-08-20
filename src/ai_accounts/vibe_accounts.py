@@ -169,9 +169,13 @@ def _set_marker(profile: Path) -> None:
     marker.chmod(0o600)
 
 
-def _claims(payload: dict[str, str] | None) -> dict[str, str]:
+def _api_key(payload: dict[str, str] | None) -> str:
     payload = payload or {}
-    api_key = payload.get("MISTRAL_API_KEY") or payload.get("OPENAI_API_KEY") or ""
+    return payload.get("MISTRAL_API_KEY") or payload.get("OPENAI_API_KEY") or ""
+
+
+def _claims(payload: dict[str, str] | None) -> dict[str, str]:
+    api_key = _api_key(payload)
     masked_key = "—"
     if api_key:
         if len(api_key) > 12:
@@ -200,7 +204,7 @@ def _claims(payload: dict[str, str] | None) -> dict[str, str]:
 
 
 def _identity(payload: dict[str, str] | None) -> str:
-    return (payload or {}).get("MISTRAL_API_KEY", "")
+    return _api_key(payload)
 
 
 def _active_profile(active: dict[str, str] | None = None) -> Path | None:
