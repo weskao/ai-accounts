@@ -587,7 +587,7 @@ class _EngineMixin(_ConfigMixin, _PlatformMixin):
         super().setUp()
         self.force_platform(macos=True)
         self.spawned = self.record_subprocess()
-        aw.save_config({"enabled": True, "notify": "desktop"})
+        aw.save_config({"enabled": True, "notify": "desktop", "language": "en"})
         self.probed: list[str] = []
         self.switched: list[str] = []
 
@@ -737,7 +737,7 @@ class EngineNoCandidateTests(_EngineMixin):
         # Then: it does not tell the user an unchecked account is over quota —
         # that would point them at "wait for the reset" instead of "re-login"
         message = self.spawned[0][-1]
-        self.assertIn("could not be checked", message)
+        self.assertIn("unreadable", message)
 
 
 class EngineSwitchNotificationTests(_EngineMixin):
@@ -755,6 +755,62 @@ class EngineSwitchNotificationTests(_EngineMixin):
         self.assertIn("work", script)
         self.assertIn("spare", script)
         self.assertIn("codex", script)
+
+    def test_the_notification_names_both_accounts_usage_not_just_the_old_one(
+        self,
+    ) -> None:
+        # Given: the active profile out of quota and a candidate with headroom
+        probe = self.probe_from({"work": 93, "spare": 15})
+        # When: the engine switches
+        aw.run_autoswitch("codex", ["work", "spare"], "work", probe, self.record_switch)
+        # Then: the user can see how much room the NEW account has, which is
+        # what tells them whether this switch bought an hour or a week
+        message = self.spawned[0][-1]
+        self.assertIn("93%", message)
+        self.assertIn("15%", message)
+
+    def test_the_notification_says_restart_needed_when_nothing_restarted(self) -> None:
+        # Given: no restart hook — an unattended poll, or the manual-restart rung
+        probe = self.probe_from({"work": 95, "spare": 10})
+        # When: the engine switches
+        aw.run_autoswitch("codex", ["work", "spare"], "work", probe, self.record_switch)
+        # Then: the notification tells the user the switch is not live yet
+        self.assertIn("Restart", self.spawned[0][-1])
+
+    def test_the_notification_confirms_a_restart_that_actually_happened(self) -> None:
+        # Given: a restart hook that succeeds
+        probe = self.probe_from({"work": 95, "spare": 10})
+        # When: the engine switches and restarts
+        outcome = aw.run_autoswitch(
+            "codex",
+            ["work", "spare"],
+            "work",
+            probe,
+            self.record_switch,
+            restart=lambda: True,
+        )
+        # Then: it reports the new account as live, and does NOT ask for a
+        # restart that already happened
+        self.assertTrue(outcome.restarted)
+        message = self.spawned[0][-1]
+        self.assertIn("restarted", message.lower())
+        self.assertNotIn("Restart your session", message)
+
+    def test_a_restart_that_failed_still_asks_the_user_to_restart(self) -> None:
+        # Given: a restart hook that reports failure — the switch already
+        # happened, so the account IS changed but the session is stale
+        probe = self.probe_from({"work": 95, "spare": 10})
+        outcome = aw.run_autoswitch(
+            "codex",
+            ["work", "spare"],
+            "work",
+            probe,
+            self.record_switch,
+            restart=lambda: False,
+        )
+        # Then: the notification does not claim a restart it did not get
+        self.assertFalse(outcome.restarted)
+        self.assertIn("Restart", self.spawned[0][-1])
 
     def test_a_failing_switch_surfaces_the_error_and_claims_no_success(self) -> None:
         # Given: a switch that reports failure (unwritable auth file, locked keychain)

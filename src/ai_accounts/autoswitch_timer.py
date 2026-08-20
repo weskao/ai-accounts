@@ -32,6 +32,7 @@ from . import _utils as u
 from . import ai_accounts
 from . import autoswitch_hooks
 from . import autoswitch as aw
+from . import i18n
 
 LABEL = "com.ai_accounts.autoswitch"
 DEFAULT_INTERVAL_SEC = 30 * 60  # 30 minutes
@@ -354,11 +355,8 @@ def run_once(
         if any(marker in output for marker in _REVOKED_MARKERS):
             aw.notify_once(
                 "token-refresh:revoked",
-                "ai-accounts: an account needs a fresh login",
-                "A scheduled token refresh found a revoked refresh token for "
-                "at least one account. Run `ai-accounts refresh --all` to see "
-                "which provider/profile, then `<provider>-accounts "
-                "login-switch <name>`.",
+                i18n.t("notify.revoked.title"),
+                i18n.t("notify.revoked.body"),
             )
     return 0
 

@@ -206,3 +206,49 @@ def success_panel(
         print(f"{DIM}   {detail}{RESET}")
     print()
     panel(title, lines, accent=GREEN)
+
+
+# ── plain-text box for notifications ────────────────────────────────────────
+# Separate from `panel` above: that one prints ANSI-colored terminal output,
+# this one returns a plain string for a notification body. It also measures
+# differently — a notification renders in a monospace *proportional-emoji*
+# font (Telegram's <pre>), where an arrow or a variation-selector emoji
+# occupies two columns even though `visible_len` correctly counts one for a
+# terminal cell. Two audiences, two width rules, so no shared measurement.
+
+_VARIATION_SELECTOR = "️"
+
+
+def notify_width(s: str) -> int:
+    """Column width of *s* as a monospace notification font renders it.
+
+    Two columns for East-Asian Wide/Fullwidth glyphs, for anything on an
+    emoji plane, and for a symbol followed by U+FE0F (``⚠️`` is a narrow
+    codepoint that renders wide once the variation selector applies).
+    Ambiguous-width glyphs (``→``) stay one column — that is what a monospace
+    font gives them, unlike the CJK-proportional guess.
+    """
+    width = 0
+    chars = _ANSI_RE.sub("", s)
+    for index, char in enumerate(chars):
+        if unicodedata.combining(char) or char == _VARIATION_SELECTOR:
+            continue
+        emojified = chars[index + 1 : index + 2] == _VARIATION_SELECTOR
+        wide = unicodedata.east_asian_width(char) in "WF" or ord(char) >= 0x1F000
+        width += 2 if (wide or emojified) else 1
+    return width
+
+
+def plain_box(lines: Sequence[str], min_width: int = 0) -> str:
+    """*lines* inside a light box-drawing frame, padded to one common width.
+
+    Blank entries render as empty rows, so a caller can space groups apart.
+    Returns the block as a string (no printing) — the notification senders
+    post it, they do not render it to a terminal.
+    """
+    body = [line.rstrip() for line in lines]
+    inner = max([min_width, *(notify_width(line) for line in body)], default=0)
+    top = f"┌{'─' * (inner + 2)}┐"
+    bottom = f"└{'─' * (inner + 2)}┘"
+    middle = [f"│ {line}{' ' * (inner - notify_width(line))} │" for line in body]
+    return "\n".join([top, *middle, bottom])

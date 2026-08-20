@@ -105,7 +105,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from . import autoswitch, config_schema
+from . import autoswitch, config_schema, i18n
 from . import _keyreader as kr
 from ._present import visible_len
 from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, Spinner
@@ -114,7 +114,7 @@ from ._utils import log_red, log_yellow, package_version
 _CURSOR_MARK = "❯ "
 _NO_CURSOR_MARK = "  "
 _UNSET = "(unset)"
-_FOOTER_HINT = "↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/Ctrl-C quit"
+_FOOTER_HINT_EN = "↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/Ctrl-C quit"
 _MIN_WIDTH = 40
 
 
@@ -151,7 +151,7 @@ def _field_row(
     edit_buffer: str,
 ) -> str:
     marker = f"{CYAN}{_CURSOR_MARK}{RESET}" if is_cursor else _NO_CURSOR_MARK
-    label = field.label
+    label = field.display_label
     pad = " " * (label_width - visible_len(label))
     if is_cursor and editing:
         # Cleartext while typing — see module docstring "Deliberate decision".
@@ -183,12 +183,12 @@ def render(
     its stored value. ``error``, if given, is shown as its own line — for
     displaying a ``config_schema.parse_value`` ``ValueError`` message.
     """
-    label_width = max((visible_len(f.label) for f in fields), default=0)
+    label_width = max((visible_len(f.display_label) for f in fields), default=0)
     field_rows: list[str] = []
     previous_group: str | None = None
     for index, field in enumerate(fields):
         if field.group != previous_group and field.group is not None:
-            field_rows.append(f"{MAGENTA}{BOLD}{field.group}{RESET}")
+            field_rows.append(f"{MAGENTA}{BOLD}{field.display_group}{RESET}")
         field_rows.append(
             _field_row(
                 field,
@@ -203,11 +203,11 @@ def render(
 
     body = ["", *field_rows]
     if fields:
-        body.append(f"{DIM}{fields[cursor].help}{RESET}")
+        body.append(f"{DIM}{fields[cursor].display_help}{RESET}")
     if error is not None:
         body.append(f"{RED}⚠ {error}{RESET}")
     body.append("")
-    body.append(f"{DIM}{_FOOTER_HINT}{RESET}")
+    body.append(f'{DIM}{i18n.t("menu.keys", default=_FOOTER_HINT_EN)}{RESET}')
 
     # ``inner`` is the visible width of everything between the two vertical
     # borders (both the top/bottom dash rule and every content row) — kept
@@ -215,7 +215,7 @@ def render(
     # Reserve for every help message so moving the cursor never resizes the box.
     max_line = max(
         *(visible_len(line) for line in body),
-        *(visible_len(field.help) for field in fields),
+        *(visible_len(field.display_help) for field in fields),
         0,
     )
     inner = max(max_line + 3, visible_len(title) + 4, _MIN_WIDTH - 2)
@@ -487,7 +487,7 @@ def fallback_menu(title: str, fields: Sequence[config_schema.Field] = config_sch
     print(f"{BOLD}{title}{RESET}")
     for index, field in enumerate(fields, start=1):
         value = _format_value(field, cfg.get(field.key, field.default))
-        print(f"  {index}) {field.label}: {value}")
+        print(f"  {index}) {field.display_label}: {value}")
 
     selection = _ask("Select a setting to change (blank to exit): ")
     if selection is None or not selection:
@@ -500,7 +500,7 @@ def fallback_menu(title: str, fields: Sequence[config_schema.Field] = config_sch
     hint = f" ({'/'.join(field.choices)})" if field.choices else ""
     if field.masked:
         hint = " (blank keeps the current value)"
-    raw = _ask(f"New value for {field.label}{hint}: ")
+    raw = _ask(i18n.t("menu.prompt", default="New value for {label}{hint}: ", label=field.display_label, hint=hint))
     if raw is None:
         return 0
     if field.masked and not raw:

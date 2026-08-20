@@ -12,8 +12,9 @@ Delegated elsewhere: reading, writing and merging the config file
 (:mod:`ai_accounts.autoswitch` — ``load_config``/``save_config``/``config_flag``),
 and the CLI surface that prints these values (``ai_accounts``).
 
-Dependency direction (deliberate, do not invert): this module is a **leaf** —
-it imports nothing from the package. :mod:`ai_accounts.autoswitch` imports it,
+Dependency direction (deliberate, do not invert): this module imports only
+:mod:`ai_accounts.i18n` — itself a leaf, so the ``language`` field can offer the
+real language list instead of a hand-kept copy of it. :mod:`ai_accounts.autoswitch` imports it,
 derives ``DEFAULTS``/``NOTIFY_CHANNELS`` from it, and keeps its historical
 ``_mask`` name as an alias of :func:`mask_secret` for its own callers.
 Importing ``autoswitch`` from here would be a cycle.
@@ -27,6 +28,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+
+from ai_accounts import i18n
 
 NOTIFY_CHANNELS = ("desktop", "telegram", "none")
 
@@ -51,13 +54,30 @@ class Field:
     key: str
     type: type
     default: object
-    label: str
-    help: str
+    label: str  # English source text; translations live in i18n.MESSAGES
+    help: str  # English source text; translations live in i18n.MESSAGES
     choices: tuple[str, ...] | None = None
     minimum: int | None = None
     maximum: int | None = None
     masked: bool = False
     group: str | None = None
+
+    @property
+    def display_group(self) -> str | None:
+        """This field's group heading in the active language, if it has one."""
+        if self.group is None:
+            return None
+        return i18n.t(f"group.{self.group}", default=self.group)
+
+    @property
+    def display_label(self) -> str:
+        """This field's label in the active language, English if untranslated."""
+        return i18n.t(f"config.{self.key}.label", default=self.label)
+
+    @property
+    def display_help(self) -> str:
+        """This field's help text in the active language, English if untranslated."""
+        return i18n.t(f"config.{self.key}.help", default=self.help)
 
     @property
     def parse(self) -> Callable[[str], object]:
@@ -176,6 +196,14 @@ FIELDS: tuple[Field, ...] = (
         default=True,
         label="Automatic token refresh",
         help="Refresh OAuth tokens on the scheduled timer, independent of auto-switch.",
+    ),
+    Field(
+        key="language",
+        type=str,
+        default=i18n.AUTO,
+        choices=i18n.CHOICES,
+        label="Notification language",
+        help="Language of switch notifications: auto follows the OS locale, or pick one.",
     ),
 )
 

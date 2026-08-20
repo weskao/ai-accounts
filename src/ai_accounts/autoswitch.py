@@ -20,6 +20,7 @@ switch_when_used_pct = 90 means: switch once 90% of the quota is USED, i.e. when
 
 from __future__ import annotations
 
+import html
 import http.client
 import json
 import os
@@ -33,6 +34,8 @@ from pathlib import Path
 
 from . import _utils as u
 from . import config_schema
+from . import i18n
+from ._present import plain_box
 from .usage_format import UsageWindow
 
 CONFIG_ENV = "AI_ACCOUNTS_CONFIG_JSON"
@@ -112,6 +115,7 @@ def save_config(updates: dict) -> dict:
             + ", ".join(NOTIFY_CHANNELS)
         )
     _write_private(config_path(), json.dumps(stored, indent=2) + "\n")
+    i18n.refresh()  # `language` may have just changed — drop the cached answer
     return stored
 
 
@@ -137,6 +141,18 @@ def masked_config() -> dict:
 _TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
+def telegram_text(title: str, message: str) -> str:
+    """*title*/*message* as the HTML payload Telegram receives.
+
+    A ``<pre>`` block, because that is the only way the box frame lines up:
+    Telegram renders it monospace, where :func:`_present.notify_width`'s column
+    count is the truth. Contents are HTML-escaped — message bodies contain
+    literal ``<provider>`` placeholders that would otherwise be eaten as tags.
+    """
+    box = plain_box([line for line in (title, message) if line])
+    return f"<pre>{html.escape(box)}</pre>"
+
+
 def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
     """POST one sendMessage to the Bot API. False on any failure."""
     token = str(cfg.get("telegram_bot_token", ""))
@@ -145,7 +161,11 @@ def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
         u.log_red("Telegram notifications need telegram_bot_token and telegram_chat_id")
         return False
     data = urllib.parse.urlencode(
-        {"chat_id": chat_id, "text": f"{title}\n{message}"}
+        {
+            "chat_id": chat_id,
+            "text": telegram_text(title, message),
+            "parse_mode": "HTML",
+        }
     ).encode("utf-8")
     request = urllib.request.Request(
         _TELEGRAM_API.format(token=token), data=data, method="POST"
@@ -368,12 +388,16 @@ def run_autoswitch(
     if not qualified:
         notify_once(
             f"{provider}:no-candidate",
-            f"{provider}: no account to switch to",
-            f"{active} is at {used}% used, and no other {provider} account is "
-            f"below {threshold}% — or their usage could not be checked.",
+            i18n.t(
+                "notify.no_candidate.title",
+                provider=provider,
+                profile=active,
+                used=used,
+            ),
+            i18n.t("notify.no_candidate.body", threshold=threshold),
         )
         return outcome("no_candidate")
-    target = min(qualified)[1]  # (used%, name): least used, ties by name
+    target_used, target = min(qualified)  # least used, ties by name
     failure = f"{provider}: could not switch to {target}"
     try:
         error = None if switch(target) else failure
@@ -382,15 +406,26 @@ def run_autoswitch(
     if error is not None:
         u.log_red(error)
         return outcome("switch_failed", error=error)
+    # Restart first, notify second: the notification states whether the new
+    # account is already live or the user still has to restart, and it can
+    # only know that after the restart has been attempted.
+    restarted = None if restart is None else _restarted(restart)
     notify(
-        f"{provider}: switched account",
-        f"{active} was at {used}% used — switched from {active} to {target}.",
+        i18n.t(
+            "notify.switched.title",
+            provider=provider,
+            from_profile=active,
+            to_profile=target,
+            used=used,
+            to_used=target_used,
+        ),
+        i18n.t(
+            "notify.switched.restarted"
+            if restarted
+            else "notify.switched.restart_needed"
+        ),
     )
-    return outcome(
-        "switched",
-        to_profile=target,
-        restarted=None if restart is None else _restarted(restart),
-    )
+    return outcome("switched", to_profile=target, restarted=restarted)
 
 
 # ── post-switch restart ladder ───────────────────────────────────────────────
@@ -482,7 +517,9 @@ def build_restart(
 
 def manual_restart_message(provider: str, from_profile: str, to_profile: str) -> str:
     """The manual-restart rung's message — explicitly tells the user to restart."""
-    return (
-        f"{provider}: switched {from_profile} -> {to_profile}; restart your "
-        "session to use it."
+    return i18n.t(
+        "restart.manual",
+        provider=provider,
+        from_profile=from_profile,
+        to_profile=to_profile,
     )
