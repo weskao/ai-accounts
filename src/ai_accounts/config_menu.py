@@ -168,7 +168,7 @@ def _format_value(field: config_schema.Field, value: object) -> str:
         return f"{YELLOW}{rendered}{RESET}"
     if isinstance(value, bool):
         return f"{GREEN}{rendered}{RESET}" if value else f"{DIM}{rendered}{RESET}"
-    return rendered
+    return f"{CYAN}{rendered}{RESET}"
 
 
 def _field_row(
@@ -180,7 +180,7 @@ def _field_row(
     editing: bool,
     edit_buffer: str,
 ) -> str:
-    marker = _CURSOR_MARK if is_cursor else _NO_CURSOR_MARK
+    marker = f"{CYAN}{_CURSOR_MARK}{RESET}" if is_cursor else _NO_CURSOR_MARK
     label = field.label
     pad = " " * (label_width - visible_len(label))
     if is_cursor and editing:
@@ -188,7 +188,7 @@ def _field_row(
         value_text = f"{MAGENTA}{edit_buffer}{RESET}_"
     else:
         value_text = _format_value(field, value)
-    label_text = f"{BOLD}{label}{RESET}" if is_cursor else label
+    label_text = f"{CYAN}{BOLD}{label}{RESET}" if is_cursor else label
     return f"{marker}{label_text}{pad}  {value_text}"
 
 
@@ -218,7 +218,7 @@ def render(
     previous_group: str | None = None
     for index, field in enumerate(fields):
         if field.group != previous_group and field.group is not None:
-            field_rows.append(f"{BOLD}{field.group}{RESET}")
+            field_rows.append(f"{MAGENTA}{BOLD}{field.group}{RESET}")
         field_rows.append(
             _field_row(
                 field,
@@ -242,7 +242,12 @@ def render(
     # ``inner`` is the visible width of everything between the two vertical
     # borders (both the top/bottom dash rule and every content row) — kept
     # to a single number so every returned line has identical visible width.
-    max_line = max((visible_len(line) for line in body), default=0)
+    # Reserve for every help message so moving the cursor never resizes the box.
+    max_line = max(
+        *(visible_len(line) for line in body),
+        *(visible_len(field.help) for field in fields),
+        0,
+    )
     inner = max(max_line + 3, visible_len(title) + 4, _MIN_WIDTH - 2)
     if width is not None:
         inner = max(inner, width - 2)

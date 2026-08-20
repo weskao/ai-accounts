@@ -58,6 +58,13 @@ class BoxIntegrityTests(unittest.TestCase):
         widths = {visible_len(line) for line in lines}
         self.assertEqual(len(widths), 1, f"inconsistent widths under CJK: {widths}")
 
+    def test_selecting_another_field_does_not_resize_the_box(self) -> None:
+        widths = {
+            visible_len(config_menu.render("t", cs.FIELDS, _default_values(), cursor=i)[0])
+            for i in range(len(cs.FIELDS))
+        }
+        self.assertEqual(len(widths), 1, f"cursor-dependent widths: {widths}")
+
 
 class SchemaDrivenTests(unittest.TestCase):
     def test_every_field_gets_a_row(self) -> None:
@@ -206,6 +213,15 @@ class GroupingTests(unittest.TestCase):
         self.assertIn("Automatic switching", joined)
         self.assertIn("↳ Switch at usage (%)", joined)
         self.assertIn("switch to the saved account with the most quota left", joined)
+
+    def test_groups_selection_and_values_have_distinct_colors(self) -> None:
+        lines = config_menu.render("t", cs.FIELDS, _default_values(), cursor=0)
+        group = next(line for line in lines if "Automatic switching" in line)
+        selected = next(line for line in lines if cs.FIELDS[0].label in line)
+        value = next(line for line in lines if cs.FIELDS[1].label in line)
+        self.assertIn(config_menu.MAGENTA, group)
+        self.assertIn(config_menu.CYAN, selected)
+        self.assertIn(config_menu.CYAN, value)
 
 
 class TitleParamTests(unittest.TestCase):
