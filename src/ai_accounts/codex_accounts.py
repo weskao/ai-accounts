@@ -47,6 +47,8 @@ from ._utils import (
     ensure_tool,
     fetch_parallel,
     have,
+    keychain_read,
+    keychain_write,
     log_red,
     log_yellow,
     oauth_token_refresh,
@@ -176,46 +178,13 @@ def _keychain_account() -> str | None:
 def _read_keychain_auth() -> str | None:
     """Return the keychain-stored auth JSON string, or None if absent/off-macOS."""
     account = _keychain_account()
-    if account is None:
-        return None
-    try:
-        result = subprocess.run(
-            ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-a", account, "-w"],
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return None
-    if result.returncode != 0:
-        return None
-    secret = (result.stdout or "").strip()
-    if not secret:
-        return None
-    # `security -w` hex-encodes the secret when it contains bytes it deems
-    # "non-clean" (e.g. newlines). Decode that back to the original JSON text.
-    if re.fullmatch(r"(?:[0-9a-fA-F]{2})+", secret):
-        try:
-            secret = bytes.fromhex(secret).decode("utf-8")
-        except (ValueError, UnicodeDecodeError):
-            pass
-    return secret
+    return None if account is None else keychain_read(_KEYCHAIN_SERVICE, account)
 
 
 def _write_keychain_auth(content: str) -> bool:
     """Update the keychain item's secret in place. Returns True on success."""
     account = _keychain_account()
-    if account is None:
-        return False
-    try:
-        result = subprocess.run(
-            ["security", "add-generic-password", "-U",
-             "-s", _KEYCHAIN_SERVICE, "-a", account, "-w", content],
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0
+    return False if account is None else keychain_write(_KEYCHAIN_SERVICE, account, content)
 
 
 def _is_default_auth(auth_path: Path) -> bool:

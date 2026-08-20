@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -547,6 +548,55 @@ def run(cmd: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
     """Thin wrapper around subprocess.run that uses text=True by default."""
     kwargs.setdefault("text", True)
     return subprocess.run(cmd, **kwargs)
+
+
+# ── macOS keychain ───────────────────────────────────────────────────────────
+# Several CLIs keep their live credential in the login keychain rather than (or
+# in addition to) a dotfile, so a switch that only rewrites the file is silently
+# ignored. codex-, claude- and vibe-accounts all need the same two primitives;
+# only the service/account naming differs, so it lives here once.
+
+def keychain_read(service: str, account: str) -> str | None:
+    """Read a generic-password secret. None off macOS or if absent/unreadable."""
+    if not IS_MACOS:
+        return None
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    secret = (result.stdout or "").strip()
+    if not secret:
+        return None
+    # `security -w` hex-encodes secrets containing bytes it deems "non-clean"
+    # (e.g. newlines). Decode that back to the original text.
+    if re.fullmatch(r"(?:[0-9a-fA-F]{2})+", secret):
+        try:
+            secret = bytes.fromhex(secret).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            pass
+    return secret
+
+
+def keychain_write(service: str, account: str, secret: str) -> bool:
+    """Create-or-update a generic-password item. False off macOS or on failure."""
+    if not IS_MACOS:
+        return False
+    try:
+        result = subprocess.run(
+            ["security", "add-generic-password", "-U",
+             "-s", service, "-a", account, "-w", secret],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
 
 
 # ── credential files ─────────────────────────────────────────────────────────

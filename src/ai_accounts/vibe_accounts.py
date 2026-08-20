@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -20,11 +21,13 @@ from ._utils import (
     RED,
     RESET,
     YELLOW,
-    email_local_part,
+    keychain_read,
+    keychain_write,
     log_red,
     log_yellow,
     resolve_account_dir,
 )
+from .config_schema import mask_secret
 from .usage_format import print_no_active_account
 
 JsonDict = dict[str, Any]
@@ -34,7 +37,7 @@ HELP = """vibe-accounts — manage multiple Mistral Vibe CLI login profiles
 USAGE
   vibe-accounts who                   Show the current logged-in Vibe account
   vibe-accounts current               Alias for `who`
-  vibe-accounts save [<name>]         Save the current login; no name = derive from email
+  vibe-accounts save [<name>]         Save the current login; no name = derive from the key
   vibe-accounts list                  List saved profiles
   vibe-accounts usage                 Show only the active account
   vibe-accounts switch [<name>]       Switch by name; no name = interactive picker
@@ -60,6 +63,10 @@ EXAMPLES
 Profiles live under ~/.ai-accounts/vibe/accounts/<name>.json (override with
 $VIBE_ACCOUNT_DIR). Treat that directory as secrets — profiles contain API
 keys.
+
+Vibe keeps its live key in the OS keyring (macOS: login keychain, service
+"ai.mistral.vibe"), falling back to $VIBE_HOME/.env; these commands read and
+write whichever store vibe itself would use.
 """
 
 
@@ -169,38 +176,97 @@ def _set_marker(profile: Path) -> None:
     marker.chmod(0o600)
 
 
+# ── the live credential ─────────────────────────────────────────────────────
+# Vibe stores its API key in the OS keyring — on macOS the login keychain under
+# service "ai.mistral.vibe", account = the provider's env-var name — and DELETES
+# the plaintext $VIBE_HOME/.env copy once that write lands (see
+# vibe/setup/auth/api_key_persistence.persist_api_key). A store that reads only
+# .env therefore sees "not logged in" after any successful `vibe --setup`, which
+# is why save/who/list/login-switch all came up empty.
+#
+# Read order below mirrors vibe's own resolution (vibe/setup/auth/auth_state.py):
+# .env is loaded into the process env at startup and outranks the keyring.
+
+_KEYCHAIN_SERVICE = "ai.mistral.vibe"
+_LEGACY_KEYCHAIN_SERVICES = ("vibe",)
+# Provider env-var names vibe may key on: mistral's own, plus the var used for
+# OpenAI-compatible provider configs.
+_KEY_ENV_VARS = ("MISTRAL_API_KEY", "OPENAI_API_KEY")
+
+
 def _api_key(payload: dict[str, str] | None) -> str:
     payload = payload or {}
     return payload.get("MISTRAL_API_KEY") or payload.get("OPENAI_API_KEY") or ""
 
 
+def _credential(payload: dict[str, str] | None) -> dict[str, str]:
+    """Just the API-key entries of a payload — never unrelated .env vars, so a
+    switch can't clobber a proxy setting captured at save time."""
+    payload = payload or {}
+    return {var: payload[var] for var in _KEY_ENV_VARS if payload.get(var)}
+
+
+def _read_keychain_credential() -> dict[str, str]:
+    for var in _KEY_ENV_VARS:
+        for service in (_KEYCHAIN_SERVICE, *_LEGACY_KEYCHAIN_SERVICES):
+            secret = keychain_read(service, var)
+            if secret:
+                return {var: secret}
+    return {}
+
+
+def _read_active() -> dict[str, str]:
+    """The credential vibe will actually use: .env if it has one, else keyring."""
+    return _credential(_read_env(_auth_file())) or _read_keychain_credential()
+
+
+def _active_source() -> str:
+    """Where the live key comes from — the one fact that explains a stale switch."""
+    if _credential(_read_env(_auth_file())):
+        return f"{_auth_file()}"
+    return "OS keyring" if _read_keychain_credential() else "—"
+
+
+def _write_active(payload: dict[str, str] | None) -> bool:
+    """Install a saved profile's key as the live vibe credential.
+
+    Mirrors vibe's own persist order: keyring first, .env only as the fallback
+    (non-macOS, or a keychain we can't write). On keyring success any plaintext
+    .env copy is dropped — it would outrank the keyring and shadow the switch.
+    """
+    credential = _credential(payload)
+    if not credential:
+        log_red("❌ No Mistral/OpenAI API key in that profile")
+        return False
+    env_var, api_key = next(iter(credential.items()))
+    env = _read_env(_auth_file())
+    if keychain_write(_KEYCHAIN_SERVICE, env_var, api_key):
+        # Pop every key var, not just the one we wrote: a leftover
+        # OPENAI_API_KEY line would keep winning over the keyring.
+        dropped = [var for var in _KEY_ENV_VARS if env.pop(var, None) is not None]
+        return _write_env(_auth_file(), env) if dropped else True
+    return _write_env(_auth_file(), {**env, env_var: api_key})
+
+
 def _claims(payload: dict[str, str] | None) -> dict[str, str]:
     api_key = _api_key(payload)
-    masked_key = "—"
-    if api_key:
-        if len(api_key) > 12:
-            masked_key = f"{api_key[:8]}...{api_key[-4:]}"
-        else:
-            masked_key = "..."
-
-    email = "—"
-    try:
-        result = subprocess.run(
-            ["git", "config", "user.email"],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        if result.returncode == 0:
-            email = result.stdout.strip()
-    except Exception:
-        pass
-
+    if not api_key:
+        return {"env_var": "—", "api_key": "—", "key_exists": "no"}
+    credential = _credential(payload)
     return {
-        "email": email,
-        "api_key": masked_key,
-        "key_exists": "yes" if api_key else "no"
+        "env_var": next(iter(credential), "—"),
+        "api_key": mask_secret(api_key),
+        "key_exists": "yes",
     }
+
+
+def _derived_name(payload: dict[str, str] | None) -> str:
+    """Profile name for a keyless `save`. Vibe's account API (/api/vibe/whoami)
+    reports only a plan, never an email, so there is no address to name a
+    profile after — fall back to a stable digest of the key itself, which at
+    least stays unique per account instead of colliding on one shared label."""
+    digest = hashlib.sha256(_api_key(payload).encode("utf-8")).hexdigest()
+    return f"vibe-{digest[:8]}"
 
 
 def _identity(payload: dict[str, str] | None) -> str:
@@ -208,7 +274,7 @@ def _identity(payload: dict[str, str] | None) -> str:
 
 
 def _active_profile(active: dict[str, str] | None = None) -> Path | None:
-    active = active if active is not None else _read_env(_auth_file())
+    active = active if active is not None else _read_active()
     if not active:
         return None
     marker = _marker_file()
@@ -231,27 +297,27 @@ def _active_profile(active: dict[str, str] | None = None) -> Path | None:
 
 def _claims_lines(claims: dict[str, str], profile: Path | None) -> list[str]:
     if not claims or claims.get("key_exists") == "no":
-        return [f"{YELLOW}No readable API key found in Vibe .env.{RESET}"]
+        return [f"{YELLOW}No Vibe API key found — run: vibe --setup{RESET}"]
     return [
-        f"{BOLD}Account (git email){RESET}: {claims['email']}",
-        f"{DIM}API Key{RESET}           : {claims['api_key']}",
-        f"{DIM}Profile{RESET}           : {profile.stem if profile else 'untracked'}",
+        f"{BOLD}API key{RESET}: {claims['api_key']}  {DIM}({claims['env_var']}){RESET}",
+        f"{DIM}Profile{RESET}: {profile.stem if profile else 'untracked'}",
     ]
 
 
 def cmd_who() -> int:
-    payload = _read_env(_auth_file())
+    payload = _read_active()
     claims = _claims(payload) if payload else {}
     profile = _active_profile(payload) if payload else None
 
     if claims and claims.get("key_exists") == "yes":
         status_lines = [
             f"{GREEN}Logged in through Mistral Vibe{RESET}",
-            f"{DIM}Active account (git email){RESET}: {claims.get('email') or '—'}",
+            f"{DIM}Credential store{RESET}: {_active_source()}",
         ]
     else:
         status_lines = [
-            f"{RED}Not logged in{RESET}  {DIM}(no API key in Vibe .env){RESET}"
+            f"{RED}Not logged in{RESET}  "
+            f"{DIM}(no API key in the Vibe keyring or {_auth_file()}){RESET}"
         ]
     panel("Vibe Login Status", status_lines)
 
@@ -261,19 +327,18 @@ def cmd_who() -> int:
 
 
 def cmd_save(name: str | None = None) -> int:
-    payload = _read_env(_auth_file())
+    payload = _read_active()
     claims = _claims(payload)
-    if name is None:
-        email = claims.get("email")
-        if not email or email == "—":
-            email = "mistral-default"
-        name = email_local_part(str(email))
-    profile = _profile_file(name)
-    if profile is None or not payload or claims.get("key_exists") == "no":
+    if claims.get("key_exists") == "no":
         log_red("❌ No valid Mistral API key found. Run: vibe --setup")
         return 1
-    if not _write_json(profile, payload):
+    profile = _profile_file(_derived_name(payload) if name is None else name)
+    if profile is None:
         return 1
+    # Store only the credential: profiles are secrets, not .env snapshots.
+    if not _write_json(profile, _credential(payload)):
+        return 1
+    _account_dir().chmod(0o700)  # the store holds raw API keys
     _set_marker(profile)
     success_panel(
         "Saved Vibe profile",
@@ -287,7 +352,7 @@ def cmd_save(name: str | None = None) -> int:
 
 _TABLE_COLUMNS = [
     ("PROFILE", "profile"),
-    ("ACCOUNT (GIT)", "account"),
+    ("ENV VAR", "env_var"),
     ("API KEY", "api_key"),
     ("STATE", "state"),
 ]
@@ -311,12 +376,11 @@ def cmd_list(*, only_active: bool = False) -> int:
     rows = []
     for path in profiles:
         claims = _claims(_read_json(path))
-        account = claims.get("email", "—")
         is_active = path == active
         rows.append(
             {
                 "profile": f"{GREEN}{BOLD}{path.stem}{RESET}" if is_active else path.stem,
-                "account": account,
+                "env_var": claims.get("env_var", "—"),
                 "api_key": claims.get("api_key", "—"),
                 "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
             }
@@ -331,7 +395,7 @@ def cmd_list(*, only_active: bool = False) -> int:
 
 
 def _backup_active() -> bool:
-    active = _read_env(_auth_file())
+    active = _read_active()
     if not active:
         return True
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -346,7 +410,7 @@ def cmd_switch(name: str) -> int:
         return 1
     if not _backup_active():
         return 1
-    if not _write_env(_auth_file(), payload):
+    if not _write_active(payload):
         return 1
     _set_marker(profile)
     ok("Switched Vibe profile to", profile.stem)
@@ -355,18 +419,21 @@ def cmd_switch(name: str) -> int:
     return cmd_who()
 
 
+def _picker_items(profiles: list[Path]) -> list[tuple[str, str | None]]:
+    """(name, masked-key) pairs so the picker can tell two profiles apart."""
+    items = []
+    for path in profiles:
+        masked = _claims(_read_json(path)).get("api_key")
+        items.append((path.stem, None if masked == "—" else masked))
+    return items
+
+
 def cmd_switch_interactive() -> int:
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
         log_yellow("⚠️  No saved Vibe profiles.")
         return 1
-    items = []
-    for p in profiles:
-        claims = _claims(_read_json(p))
-        sublabel = claims.get("email")
-        if sublabel == "—":
-            sublabel = None
-        items.append((p.stem, sublabel))
+    items = _picker_items(profiles)
     chosen = choose_profile("a Vibe", items)
     if chosen is None:
         return 1
@@ -394,18 +461,12 @@ def cmd_remove_interactive() -> int:
     if not profiles:
         log_yellow("⚠️  No saved Vibe profiles.")
         return 1
-    items = []
-    for p in profiles:
-        claims = _claims(_read_json(p))
-        sublabel = claims.get("email")
-        if sublabel == "—":
-            sublabel = None
-        items.append((p.stem, sublabel))
+    items = _picker_items(profiles)
     return choose_and_run("a Vibe", items, cmd_remove, cancel_message="Remove cancelled.")
 
 
 def cmd_sync() -> int:
-    payload = _read_env(_auth_file())
+    payload = _read_active()
     profile = _active_profile(payload)
     if not payload or profile is None:
         log_yellow("⚠️  No unambiguous current profile — run: vibe-accounts switch <name>")
@@ -461,7 +522,10 @@ def main(argv: list[str] | None = None) -> int:
     if command == "autoswitch":
         print("autoswitch unsupported for vibe: no quota API")
         return 0
-    if command == "login-switch" and rest:
+    if command == "login-switch":
+        if not rest:
+            log_red("Usage: vibe-accounts login-switch <profile_name>")
+            return 1
         return cmd_login_switch(rest[0])
     log_red(f"❌ Unknown or incomplete command: {command}")
     print(HELP)

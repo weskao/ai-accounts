@@ -42,6 +42,77 @@ class VibeAccountsTests(unittest.TestCase):
         )
         environment.start()
         self.addCleanup(environment.stop)
+        self._install_fake_keychain()
+
+    def _install_fake_keychain(self, *, writable: bool = True) -> None:
+        """Stand in for the login keychain. Without this the suite would write
+        test keys into the developer's real `ai.mistral.vibe` item and log them
+        out of Vibe. ``writable=False`` models a host with no keychain at all
+        (Linux/Windows), where .env is the only store."""
+        self.keychain: dict[tuple[str, str], str] = {}
+
+        def fake_read(service: str, account: str) -> str | None:
+            return self.keychain.get((service, account))
+
+        def fake_write(service: str, account: str, secret: str) -> bool:
+            if not writable:
+                return False
+            self.keychain[(service, account)] = secret
+            return True
+
+        for name, fake in (("keychain_read", fake_read), ("keychain_write", fake_write)):
+            patcher = mock.patch.object(va, name, fake)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _set_keychain_key(self, key: str = "sk-fake-1234567890abcdef") -> None:
+        self.keychain[(va._KEYCHAIN_SERVICE, "MISTRAL_API_KEY")] = key
+
+    def test_save_reads_the_key_vibe_left_in_the_keychain(self) -> None:
+        # `vibe --setup` stores the key in the keyring and deletes the plaintext
+        # .env copy, so there is no .env at all — the state save/who/list used
+        # to report as "not logged in".
+        self._set_keychain_key()
+        self.assertFalse(va._auth_file().exists())
+
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(va.cmd_save("personal"), 0)
+            self.assertEqual(va.cmd_who(), 0)
+
+        self.assertEqual(
+            va._read_json(self.account_dir / "personal.json"),
+            {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"},
+        )
+
+    def test_switch_updates_the_keychain_and_drops_the_stale_env_copy(self) -> None:
+        self._set_keychain_key("sk-old-key")
+        # A leftover plaintext key outranks the keyring in vibe's own lookup, so
+        # a switch that ignored it would be silently undone.
+        self.assertTrue(va._write_env(va._auth_file(), _auth("sk-old-key")))
+        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(va.cmd_switch("personal"), 0)
+
+        self.assertEqual(
+            self.keychain[(va._KEYCHAIN_SERVICE, "MISTRAL_API_KEY")],
+            "sk-fake-1234567890abcdef",
+        )
+        env = va._read_env(va._auth_file())
+        self.assertNotIn("MISTRAL_API_KEY", env)
+        self.assertEqual(env["SOME_OTHER_VAR"], "value")  # unrelated vars survive
+        self.assertEqual(va._read_active(), {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"})
+
+    def test_switch_falls_back_to_env_file_without_a_keychain(self) -> None:
+        self._install_fake_keychain(writable=False)
+        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(va.cmd_switch("personal"), 0)
+
+        self.assertEqual(
+            va._read_env(va._auth_file())["MISTRAL_API_KEY"], "sk-fake-1234567890abcdef"
+        )
 
     def test_save_switch_and_sync_manage_real_auth_shape(self) -> None:
         # Create active .env
@@ -52,7 +123,7 @@ class VibeAccountsTests(unittest.TestCase):
             self.assertEqual(va.cmd_save("personal"), 0)
         self.assertTrue((self.account_dir / "personal.json").is_file())
 
-        # Change active .env
+        # Change the active credential
         self.assertTrue(
             va._write_env(va._auth_file(), _auth("sk-fake-different-key"))
         )
@@ -63,8 +134,9 @@ class VibeAccountsTests(unittest.TestCase):
             self.assertEqual(va.cmd_sync(), 0)
 
         # Check that the switched/synced key matches the personal profile
-        active_env = va._read_env(va._auth_file())
-        self.assertEqual(active_env["MISTRAL_API_KEY"], "sk-fake-1234567890abcdef")
+        self.assertEqual(
+            va._read_active(), {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"}
+        )
         self.assertEqual(
             (self.account_dir / ".current-profile").read_text(), "personal"
         )
@@ -113,8 +185,10 @@ class VibeAccountsTests(unittest.TestCase):
             self.assertEqual(va.cmd_list(), 0)
         listing = output.getvalue()
         self.assertIn("personal", listing)
-        self.assertIn("sk-fake-...", listing)
+        self.assertIn("MISTRAL_API_KEY", listing)
+        self.assertIn("cdef", listing)  # masked tail only
         self.assertNotIn("1234567890abcdef", listing)
+        self.assertNotIn("sk-fake", listing)
 
     def test_remove_no_args_opens_interactive_picker_and_removes(self) -> None:
         self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
@@ -144,20 +218,33 @@ class VibeAccountsTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         interactive.assert_called_once_with()
 
-    def test_save_no_args_derives_name_from_email_or_fallback(self) -> None:
+    def test_save_no_args_derives_a_per_key_name(self) -> None:
+        # Vibe exposes no account email, so a keyless save names the profile
+        # after a digest of the key — two accounts must not collide on one name.
         self.assertTrue(va._write_env(va._auth_file(), _auth()))
-        with mock.patch("subprocess.run") as run_mock:
-            # Mock git user.email returning "test@example.com"
-            proc = mock.MagicMock()
-            proc.returncode = 0
-            proc.stdout = "test@example.com\n"
-            run_mock.return_value = proc
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(va.main(["save"]), 0)
+        first = va._derived_name(_auth())
+        self.assertTrue((self.account_dir / f"{first}.json").is_file())
 
-            with redirect_stdout(io.StringIO()):
-                rc = va.main(["save"])
+        self.assertTrue(va._write_env(va._auth_file(), _auth("sk-fake-second-account")))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(va.main(["save"]), 0)
+        second = va._derived_name(_auth("sk-fake-second-account"))
+        self.assertNotEqual(first, second)
+        self.assertTrue((self.account_dir / f"{second}.json").is_file())
 
-        self.assertEqual(rc, 0)
-        self.assertTrue((self.account_dir / "test.json").is_file())
+    def test_save_reports_when_signed_out(self) -> None:
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            self.assertEqual(va.main(["save"]), 1)
+        self.assertIn("No valid Mistral API key", _ANSI_RE.sub("", err.getvalue()))
+
+    def test_login_switch_without_a_name_prints_usage(self) -> None:
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            self.assertEqual(va.main(["login-switch"]), 1)
+        self.assertIn("login-switch <profile_name>", _ANSI_RE.sub("", err.getvalue()))
 
     def test_openai_api_key_uses_same_identity_for_switch_and_sync(self) -> None:
         payload = {"OPENAI_API_KEY": "sk-openai-compatible-key"}

@@ -19,6 +19,7 @@ Before writing any new helper, **first check [`src/ai-accounts/_utils.py`](src/a
 - **Clipboard**: `copy_to_clipboard(text)`, `output_and_copy(text)` (macOS / Windows / Linux).
 - **Subprocess**: `run(cmd, **kwargs)` — `subprocess.run` wrapper defaulting to `text=True`.
 - **Account stores**: `resolve_account_dir(env_var, default_dir, legacy_dir)` — env override → central `~/.ai-accounts/` default, auto-migrating a legacy in-dotdir store.
+- **macOS keychain**: `keychain_read(service, account)`, `keychain_write(service, account, secret)` — `security` generic-password access (no-op off macOS, hex-decoding `security`'s encoded reads). Used by `codex_accounts`, `claude_accounts` and `vibe_accounts`; per-tool service/account derivation stays in the tool.
 - **Git**: `is_git_repo(path)`, `git_sync(repo_dir, file_path, commit_msg)` (add → commit → pull --rebase → push, with union-conflict auto-resolution).
 
 ### Rules

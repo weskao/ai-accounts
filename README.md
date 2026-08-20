@@ -937,20 +937,34 @@ one affects the other.
 ## `vibe-accounts` — Mistral Vibe Account Manager
 
 Save, list, and switch between multiple [Mistral Vibe](https://mistral.ai/products/vibe/)
-profiles. Vibe uses a static API key from `~/.vibe/.env`; profiles are stored under
+profiles. Vibe uses a static API key; profiles are stored under
 `~/.ai-accounts/vibe/accounts/` and never print the raw key.
 
 ```sh
-vibe-accounts save [<name>]       # save the active Vibe key
+vibe-accounts save [<name>]       # save the active Vibe key; no name = derive from the key
 vibe-accounts list                # list saved profiles
 vibe-accounts switch <name>       # activate a saved profile
-vibe-accounts who                 # show the active profile
+vibe-accounts who                 # show the active profile and which store holds it
 vibe-accounts sync                # update the active profile
 vibe-accounts login-switch <name> # run `vibe --setup`, then save it
 ```
 
+**Where the live key lives.** Vibe stores it in the OS keyring — on macOS the
+login keychain, service `ai.mistral.vibe`, account = the provider's env-var
+name — and *deletes* the plaintext `$VIBE_HOME/.env` copy once that write
+succeeds. It only falls back to `.env` when no keyring is available. These
+commands read and write whichever store Vibe itself would use, in Vibe's own
+precedence order (`.env` outranks the keyring, because Vibe loads `.env` into
+the process environment at startup). A `switch` that lands in the keyring also
+clears any stale `.env` key, which would otherwise silently shadow it.
+
+`who` prints the store it found the key in, which is the quickest way to tell a
+keyring-backed login from an `.env` one.
+
 `MISTRAL_API_KEY` is preferred; `OPENAI_API_KEY` is also recognized for
-OpenAI-compatible Vibe configurations. Vibe has no quota API, so `refresh`
+OpenAI-compatible Vibe configurations. Vibe's account API reports only a plan,
+never an email, so `save` with no name derives one from a digest of the key
+(`vibe-<8 hex>`) rather than an address. Vibe has no quota API, so `refresh`
 is a successful no-op and `autoswitch` reports that it is unsupported.
 
 ### vibe-accounts Environment Overrides
@@ -1245,6 +1259,7 @@ package-manager command.
 | `codex-accounts` | macOS / Windows / Linux | `codex` CLI for `who` and `login-switch` |
 | `agy-accounts` | macOS only | Official `agy` CLI and macOS Keychain |
 | `grok-accounts` | macOS / Windows / Linux | Official `grok` CLI for refresh and login |
+| `vibe-accounts` | macOS / Windows / Linux | Official `vibe` CLI for `login-switch`. On macOS the live key is read from / written to the login keychain (service `ai.mistral.vibe`); elsewhere `$VIBE_HOME/.env` is the store |
 
 ---
 
