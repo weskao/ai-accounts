@@ -158,6 +158,10 @@ class _PlatformMixin:
             mock.patch.object(u, "IS_MACOS", macos),
             mock.patch.object(u, "IS_WINDOWS", windows),
             mock.patch.object(u, "IS_LINUX", linux),
+            # Whether the real dev/CI box happens to have terminal-notifier
+            # installed must not change what these tests exercise — tests
+            # that want that path patch `have` again afterward, on top.
+            mock.patch.object(u, "have", return_value=False),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -211,40 +215,96 @@ class DesktopNotifyDispatchTests(_PlatformMixin, unittest.TestCase):
         u.desktop_notify("Switched", "quiet", sound=False)
         self.assertNotIn("sound name", calls[0][-1])
 
-    def test_macos_posts_as_a_faceless_sender_so_a_click_opens_nothing(self) -> None:
-        # Given: a macOS host
+    def _terminal_notifier_delivers(self, calls) -> None:
+        """A `run()` double: records argv, `-list` always answers delivered."""
+
+        def fake(cmd, **kwargs):
+            calls.append(list(cmd))
+            if "-list" in cmd:
+                group = cmd[cmd.index("-list") + 1]
+                stdout = f"GroupID\tTitle\n{group}\trow\n"
+            else:
+                stdout = ""
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout)
+
+        patch = mock.patch.object(u, "run", side_effect=fake)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_terminal_notifier_is_preferred_when_installed_and_delivered(self) -> None:
+        # Given: a macOS host that has terminal-notifier, and it delivers
+        self.force_platform(macos=True)
+        mock.patch.object(u, "have", return_value=True).start()
+        self.addCleanup(mock.patch.stopall)
+        calls: list[list[str]] = []
+        self._terminal_notifier_delivers(calls)
+        # When: a desktop notification is sent
+        ok = u.desktop_notify("Switched", "Now on Test profile")
+        # Then: terminal-notifier carried it — no osascript fallback needed
+        self.assertTrue(ok)
+        send = calls[0]
+        self.assertEqual(send[0], "terminal-notifier")
+        self.assertIn("Switched", send)
+        self.assertIn("Now on Test profile", send)
+        self.assertIn("Glass", send)
+        self.assertNotIn("osascript", [c[0] for c in calls])
+        # And: no click action of any kind is wired up
+        joined = " ".join(send)
+        for flag in ("-open", "-execute", "-activate"):
+            self.assertNotIn(flag, joined)
+
+    def test_terminal_notifier_silences_on_request(self) -> None:
+        self.force_platform(macos=True)
+        mock.patch.object(u, "have", return_value=True).start()
+        self.addCleanup(mock.patch.stopall)
+        calls: list[list[str]] = []
+        self._terminal_notifier_delivers(calls)
+        u.desktop_notify("Switched", "quiet", sound=False)
+        self.assertNotIn("-sound", calls[0])
+
+    def test_not_delivered_falls_back_to_osascript_and_warns_once(self) -> None:
+        # Given: terminal-notifier installed but its System Settings toggle
+        # is off — the send exits 0, but `-list` never shows a delivered row
+        self.force_platform(macos=True)
+        mock.patch.object(u, "have", return_value=True).start()
+        mock.patch.object(u.time, "sleep", return_value=None).start()  # no real wait
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        mock.patch.object(u.Path, "home", return_value=Path(tmp.name)).start()
+        self.addCleanup(mock.patch.stopall)
+        calls: list[list[str]] = []
+
+        def never_delivered(cmd, **kwargs):
+            calls.append(list(cmd))
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="header only\n")
+
+        mock.patch.object(u, "run", side_effect=never_delivered).start()
+        # When: a notification is sent
+        ok = u.desktop_notify("Switched", "Now on Test profile")
+        # Then: the user still sees it — osascript picked up where
+        # terminal-notifier's unshown notification left off
+        self.assertTrue(ok)
+        self.assertIn("osascript", [c[0] for c in calls])
+        # And: the one-time hint marker was written
+        marker = Path(tmp.name) / ".ai-accounts" / "notify-hint-shown"
+        self.assertTrue(marker.exists())
+        # And: a second dead notification does not crash or re-derive anything
+        calls.clear()
+        ok2 = u.desktop_notify("Switched", "again")
+        self.assertTrue(ok2)
+
+    def test_macos_plain_osascript_is_the_last_resort_fallback(self) -> None:
+        # Given: a macOS host with no terminal-notifier (`have` is False by
+        # default via force_platform — see its docstring)
         self.force_platform(macos=True)
         calls = self.record_subprocess()
         # When: a desktop notification is sent
         u.desktop_notify("Switched", "Now on Test profile")
-        # Then: System Events owns it — a bare osascript notification belongs
-        # to Script Editor, and clicking it would open Script Editor
-        self.assertIn('tell application "System Events"', calls[0][-1])
-
-    def test_macos_falls_back_to_the_plain_form_when_system_events_fails(self) -> None:
-        # Given: System Events refused (Automation permission denied)
-        self.force_platform(macos=True)
-        calls: list[list[str]] = []
-
-        class _Result:
-            def __init__(self, code):
-                self.returncode = code
-
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            # First call is the System Events form; fail it, allow the second.
-            return _Result(1 if "System Events" in cmd[-1] else 0)
-
-        run = mock.patch.object(u, "run", fake_run)
-        run.start()
-        self.addCleanup(run.stop)
-        # When: a notification is sent
-        ok = u.desktop_notify("Switched", "Now on Test profile")
-        # Then: the user still sees it, via the plain form
-        self.assertTrue(ok)
-        self.assertEqual(len(calls), 2)
-        self.assertNotIn("System Events", calls[1][-1])
-        self.assertIn("display notification", calls[1][-1])
+        # Then: a single plain osascript call — no terminal-notifier attempt,
+        # and no "System Events" wrapper (verified not to change clickability)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "osascript")
+        self.assertNotIn("System Events", calls[0][-1])
 
     def test_linux_notifies_through_notify_send(self) -> None:
         # Given: a Linux host with notify-send installed

@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import re
+import time
 from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
@@ -541,35 +542,127 @@ _MACOS_SOUND = "Glass"
 _LINUX_SOUND_EVENT = "complete"
 
 
+def _osascript_notify(title: str, message: str, sound: bool) -> bool:
+    """The pure-AppleScript path: no extra dependency, but NOT click-inert.
+
+    ``display notification`` (with or without a ``tell application "System
+    Events"`` wrapper — verified empirically, the wrapper does not change
+    it) is attributed to Script Editor's identity in Notification Center
+    regardless of which app the AppleScript is sent to, since the command is
+    a Standard Additions scripting addition that runs in ``osascript``'s own
+    process. Clicking the banner therefore opens Script Editor. This is a
+    long-standing AppleScript limitation with no scripting-level fix — see
+    :func:`_terminal_notifier_notify` for the one that actually is inert.
+    """
+    body = (
+        f"display notification {_osa_string(message)} "
+        f"with title {_osa_string(title)}"
+    )
+    if sound:
+        body += f" sound name {_osa_string(_MACOS_SOUND)}"
+    return _notify_run(["osascript", "-e", body])
+
+
+def _terminal_notifier_group() -> str:
+    """A group id unique enough that ``-list`` never confuses two calls."""
+    return f"ai-accounts-{os.getpid()}-{time.perf_counter_ns()}"
+
+
+def _terminal_notifier_delivered(group: str) -> bool:
+    """Whether Notification Center actually recorded *group* as delivered.
+
+    ``terminal-notifier -list <group>`` prints a header row always, plus one
+    data row per delivered notification in that group — so more than one
+    line means delivery happened. This reads the OS's own notification
+    database (a public, documented feature of the tool), unlike guessing at
+    the meaning of the private, undocumented ``com.apple.ncprefs.plist``
+    bit flags, which is not something this reaches for.
+    """
+    result = _run_notifier(["terminal-notifier", "-list", group])
+    if result is None:
+        return False
+    return len((result.stdout or "").splitlines()) > 1
+
+
+def _run_notifier(cmd: Sequence[str]) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return run(cmd, capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _terminal_notifier_notify(title: str, message: str, sound: bool) -> bool:
+    """Send through ``terminal-notifier`` and confirm the OS actually showed it.
+
+    Unlike plain ``osascript``, a terminal-notifier banner with no ``-open``/
+    ``-execute``/``-activate`` genuinely does nothing when clicked — it is a
+    real app bundle with its own identity, not an anonymous scripting
+    addition borrowing Script Editor's. Delivery is verified with
+    :func:`_terminal_notifier_delivered` because a System Settings toggle can
+    silently swallow the notification while the process itself still exits 0;
+    the polling window is short (three tries, 150ms apart) since a delivered
+    notification showed up with no wait at all in practice, so the cost only
+    shows up on the disabled path, which then falls back anyway.
+    """
+    group = _terminal_notifier_group()
+    cmd = ["terminal-notifier", "-title", title, "-message", message, "-group", group]
+    if sound:
+        cmd += ["-sound", _MACOS_SOUND]
+    if _run_notifier(cmd) is None:
+        return False
+    for _ in range(3):
+        if _terminal_notifier_delivered(group):
+            _run_notifier(["terminal-notifier", "-remove", group])
+            return True
+        time.sleep(0.15)
+    _warn_terminal_notifier_disabled_once()
+    return False
+
+
+def _notify_hint_marker() -> Path:
+    return Path.home() / ".ai-accounts" / "notify-hint-shown"
+
+
+def _warn_terminal_notifier_disabled_once() -> None:
+    """Tell the user once, ever, that terminal-notifier needs enabling.
+
+    Not every call: the toggle lives in System Settings and does not flap
+    from one notification to the next, so repeating this on every dead
+    notification would just be noise.
+    """
+    marker = _notify_hint_marker()
+    if marker.exists():
+        return
+    from . import i18n
+
+    log_yellow(i18n.t("notify.terminal_notifier_hint"))
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    except OSError:
+        pass  # worst case the hint repeats; never worth failing a notification over
+
+
 def desktop_notify(title: str, message: str, *, sound: bool = True) -> bool:
     """Show an OS desktop notification, with a sound (best-effort, all OSes).
 
-    - macOS   → ``osascript`` display notification, sound ``Glass``
+    - macOS   → ``terminal-notifier`` when installed (genuinely click-inert,
+      verified delivered), else plain ``osascript`` (click opens Script
+      Editor — an AppleScript limitation, not something this can fix; see
+      :func:`_osascript_notify`)
     - Linux   → ``notify-send``, plus ``canberra-gtk-play`` when present
     - Windows → PowerShell toast with an explicit notification sound
 
-    **Clicking the notification does nothing, on every platform.** On macOS
-    that is why the notification is posted by ``System Events``: a bare
-    ``osascript`` notification belongs to Script Editor, so clicking it opens
-    Script Editor, while System Events is a faceless background process with
-    no window to raise. If talking to System Events fails (its Automation
-    permission was denied), this falls back to the plain form rather than
-    showing nothing.
+    Clicking the notification does nothing on Linux and Windows always, and
+    on macOS whenever ``terminal-notifier`` is the one that delivered it.
 
     Returns True when the notification was handed to the OS. Never raises:
     a missing notifier or a failing command is just a False.
     """
     if IS_MACOS:
-        body = (
-            f"display notification {_osa_string(message)} "
-            f"with title {_osa_string(title)}"
-        )
-        if sound:
-            body += f" sound name {_osa_string(_MACOS_SOUND)}"
-        # Faceless sender first (nothing to open on click), plain form second.
-        if _notify_run(["osascript", "-e", f'tell application "System Events" to {body}']):
+        if have("terminal-notifier") and _terminal_notifier_notify(title, message, sound):
             return True
-        return _notify_run(["osascript", "-e", body])
+        return _osascript_notify(title, message, sound)
     if IS_LINUX:
         if not have("notify-send"):
             return False

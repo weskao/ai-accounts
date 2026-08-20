@@ -195,6 +195,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "🔑 ai-accounts: a token expired, re-login needed",
         "zh-TW": "🔑 ai-accounts：token 已失效，需重新登入",
     },
+    "notify.terminal_notifier_hint": {
+        "en": (
+            "terminal-notifier is installed but did not deliver — enable it "
+            "in System Settings -> Notifications -> terminal-notifier "
+            "(falling back to a plain notification for now)."
+        ),
+        "zh-TW": (
+            "terminal-notifier 已安裝但通知沒有送達 — 請到"
+            "「系統設定 → 通知」開啟 terminal-notifier"
+            "（目前先改用一般通知）。"
+        ),
+    },
     "notify.revoked.body": {
         "en": "ai-accounts refresh --all → <provider>-accounts login-switch <name>",
         "zh-TW": "ai-accounts refresh --all → 再 <provider>-accounts login-switch <name>",
