@@ -1,3 +1,30 @@
+## [3.0.0] - 2026-08-20
+
+### 🚀 Features
+
+- **autoswitch:** Switch AI accounts automatically on low quota
+- **config:** Add stdlib raw-mode key reader
+- **config:** Add interactive config menu
+- **config:** [**breaking**] Open interactive menu on all five clis
+
+### 🐛 Bug Fixes
+
+- **autoswitch-timer:** Harden install against real-world paths
+
+### 🚜 Refactor
+
+- **config:** Derive defaults from a field schema
+
+### 📚 Documentation
+
+- Record the credential hot-reload spike findings
+- **config:** Document the interactive config menu
+- Record how to add a config setting
+- **config:** Correct the config menu mockup
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 3.0.0
 ## [2.4.0] - 2026-08-07
 
 ### 🚀 Features
@@ -11,6 +38,10 @@
 ### 📚 Documentation
 
 - Require placeholder data in test fixtures
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 2.4.0
 ## [2.3.0] - 2026-07-24
 
 ### 🚀 Features
