@@ -113,7 +113,7 @@ from ._utils import log_red, log_yellow, package_version
 
 _CURSOR_MARK = "❯ "
 _NO_CURSOR_MARK = "  "
-_UNSET = "(unset)"
+_UNSET_EN = "(unset)"
 _FOOTER_HINT_EN = "↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/Ctrl-C quit"
 _MIN_WIDTH = 40
 
@@ -123,17 +123,19 @@ def _save_config(updates: dict) -> None:
     autoswitch.save_config(updates)
 
 
-def _format_value(field: config_schema.Field, value: object) -> str:
+def _format_value(
+    field: config_schema.Field, value: object, lang: str | None = None
+) -> str:
     """*value* rendered for display, honouring the field's masked flag and
     turning an empty string into a visibly-dimmed ``(unset)`` rather than a
     blank cell that reads as a rendering bug."""
     if value == "":
-        return f"{DIM}{_UNSET}{RESET}"
+        return f'{DIM}{i18n.t("menu.unset", lang=lang, default=_UNSET_EN)}{RESET}'
     # ``field.format`` directly (not ``config_schema.format_value(key, ...)``)
     # since *field* may not be registered in the global FIELDS tuple — the
     # renderer is schema-driven off whatever tuple it's handed, not a lookup
     # keyed on the canonical registry.
-    rendered = field.format(value)
+    rendered = field.display_value(value, lang)
     if field.masked:
         return f"{YELLOW}{rendered}{RESET}"
     if isinstance(value, bool):
@@ -149,15 +151,16 @@ def _field_row(
     label_width: int,
     editing: bool,
     edit_buffer: str,
+    lang: str | None = None,
 ) -> str:
     marker = f"{CYAN}{_CURSOR_MARK}{RESET}" if is_cursor else _NO_CURSOR_MARK
-    label = field.display_label
+    label = field.display_label(lang)
     pad = " " * (label_width - visible_len(label))
     if is_cursor and editing:
         # Cleartext while typing — see module docstring "Deliberate decision".
         value_text = f"{MAGENTA}{edit_buffer}{RESET}_"
     else:
-        value_text = _format_value(field, value)
+        value_text = _format_value(field, value, lang=lang)
     label_text = f"{CYAN}{BOLD}{label}{RESET}" if is_cursor else label
     return f"{marker}{label_text}{pad}  {value_text}"
 
@@ -183,12 +186,16 @@ def render(
     its stored value. ``error``, if given, is shown as its own line — for
     displaying a ``config_schema.parse_value`` ``ValueError`` message.
     """
-    label_width = max((visible_len(f.display_label) for f in fields), default=0)
+    # Read the language off the values being EDITED, not off disk: cycling the
+    # language row has to repaint the menu in that language right away, before
+    # the user commits it with `s`.
+    lang = i18n.resolve_language(values.get("language", i18n.AUTO))
+    label_width = max((visible_len(f.display_label(lang)) for f in fields), default=0)
     field_rows: list[str] = []
     previous_group: str | None = None
     for index, field in enumerate(fields):
         if field.group != previous_group and field.group is not None:
-            field_rows.append(f"{MAGENTA}{BOLD}{field.display_group}{RESET}")
+            field_rows.append(f"{MAGENTA}{BOLD}{field.display_group(lang)}{RESET}")
         field_rows.append(
             _field_row(
                 field,
@@ -197,17 +204,18 @@ def render(
                 label_width=label_width,
                 editing=editing,
                 edit_buffer=edit_buffer,
+                lang=lang,
             )
         )
         previous_group = field.group
 
     body = ["", *field_rows]
     if fields:
-        body.append(f"{DIM}{fields[cursor].display_help}{RESET}")
+        body.append(f"{DIM}{fields[cursor].display_help(lang)}{RESET}")
     if error is not None:
         body.append(f"{RED}⚠ {error}{RESET}")
     body.append("")
-    body.append(f'{DIM}{i18n.t("menu.keys", default=_FOOTER_HINT_EN)}{RESET}')
+    body.append(f'{DIM}{i18n.t("menu.keys", lang=lang, default=_FOOTER_HINT_EN)}{RESET}')
 
     # ``inner`` is the visible width of everything between the two vertical
     # borders (both the top/bottom dash rule and every content row) — kept
@@ -215,7 +223,7 @@ def render(
     # Reserve for every help message so moving the cursor never resizes the box.
     max_line = max(
         *(visible_len(line) for line in body),
-        *(visible_len(field.display_help) for field in fields),
+        *(visible_len(field.display_help(lang)) for field in fields),
         0,
     )
     inner = max(max_line + 3, visible_len(title) + 4, _MIN_WIDTH - 2)
@@ -443,7 +451,7 @@ def run_menu(
             # rather than as a decodable byte — same exit as pressing `q`.
             state = replace(state, quitting=True)
     if state.dirty:
-        log_yellow("Discarded unsaved changes (press s to save next time).")
+        log_yellow(i18n.t("menu.discarded", default="Discarded unsaved changes (press s to save next time)."))
     return 0
 
 
@@ -487,20 +495,27 @@ def fallback_menu(title: str, fields: Sequence[config_schema.Field] = config_sch
     print(f"{BOLD}{title}{RESET}")
     for index, field in enumerate(fields, start=1):
         value = _format_value(field, cfg.get(field.key, field.default))
-        print(f"  {index}) {field.display_label}: {value}")
+        print(f"  {index}) {field.display_label()}: {value}")
 
-    selection = _ask("Select a setting to change (blank to exit): ")
+    selection = _ask(i18n.t("menu.select", default="Select a setting to change (blank to exit): "))
     if selection is None or not selection:
         return 0
     if not selection.isdecimal() or not 1 <= int(selection) <= len(fields):
-        log_red("❌ Enter one of the setting numbers shown above.")
+        log_red(f'❌ {i18n.t("menu.bad_number", default="Enter one of the setting numbers shown above.")}')
         return 1
     field = fields[int(selection) - 1]
 
     hint = f" ({'/'.join(field.choices)})" if field.choices else ""
     if field.masked:
-        hint = " (blank keeps the current value)"
-    raw = _ask(i18n.t("menu.prompt", default="New value for {label}{hint}: ", label=field.display_label, hint=hint))
+        hint = " " + i18n.t("menu.masked_hint", default="(blank keeps the current value)")
+    raw = _ask(
+        i18n.t(
+            "menu.prompt",
+            default="New value for {label}{hint}: ",
+            label=field.display_label(),
+            hint=hint,
+        )
+    )
     if raw is None:
         return 0
     if field.masked and not raw:
@@ -613,7 +628,12 @@ def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
                 from . import autoswitch_setup
 
                 answer = (
-                    _ask("Auto-switch setup is not installed. Install it now? [y/N]: ")
+                    _ask(
+                        i18n.t(
+                            "menu.install_prompt",
+                            default="Auto-switch setup is not installed. Install it now? [y/N]: ",
+                        )
+                    )
                     if not autoswitch_setup.is_installed()
                     else None
                 )
@@ -625,5 +645,12 @@ def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
         return cmd_config_get(rest[1] if len(rest) > 1 else None)
     if rest[0] == "set" and len(rest) == 3:
         return cmd_config_set(rest[1], rest[2])
-    log_red(f"❌ Usage: {prog} config get [key] | config set <key> <value>")
+    log_red(
+        "❌ "
+        + i18n.t(
+            "menu.usage",
+            default="Usage: {prog} config get [key] | config set <key> <value>",
+            prog=prog,
+        )
+    )
     return 1

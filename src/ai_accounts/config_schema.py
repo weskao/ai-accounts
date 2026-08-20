@@ -61,23 +61,28 @@ class Field:
     maximum: int | None = None
     masked: bool = False
     group: str | None = None
+    # Optional display names for `choices`, as a callable so a label can depend
+    # on the active language (or on what "auto" currently resolves to). The
+    # STORED value is always the choice itself — this only affects rendering.
+    choice_labels: Callable[[str | None], dict[str, str]] | None = None
 
-    @property
-    def display_group(self) -> str | None:
-        """This field's group heading in the active language, if it has one."""
+    def display_group(self, lang: str | None = None) -> str | None:
+        """This field's group heading in *lang*, if it has one.
+
+        *lang* is passed by the menu so an unsaved language change previews
+        immediately; omitted, it uses the stored setting.
+        """
         if self.group is None:
             return None
-        return i18n.t(f"group.{self.group}", default=self.group)
+        return i18n.t(f"group.{self.group}", lang=lang, default=self.group)
 
-    @property
-    def display_label(self) -> str:
-        """This field's label in the active language, English if untranslated."""
-        return i18n.t(f"config.{self.key}.label", default=self.label)
+    def display_label(self, lang: str | None = None) -> str:
+        """This field's label in *lang*, English if untranslated."""
+        return i18n.t(f"config.{self.key}.label", lang=lang, default=self.label)
 
-    @property
-    def display_help(self) -> str:
-        """This field's help text in the active language, English if untranslated."""
-        return i18n.t(f"config.{self.key}.help", default=self.help)
+    def display_help(self, lang: str | None = None) -> str:
+        """This field's help text in *lang*, English if untranslated."""
+        return i18n.t(f"config.{self.key}.help", lang=lang, default=self.help)
 
     @property
     def parse(self) -> Callable[[str], object]:
@@ -92,33 +97,68 @@ class Field:
                 return True
             if lowered in _FALSE:
                 return False
-            raise ValueError(f"expected a boolean (true/false), got {raw!r}")
+            raise ValueError(
+                i18n.t(
+                    "error.bool",
+                    default="expected a boolean (true/false), got {raw}",
+                    raw=repr(raw),
+                )
+            )
         if self.type is int:
             try:
                 value = int(raw)
             except ValueError:
-                raise ValueError(f"{self._range_error} {raw!r}") from None
+                raise ValueError(self._range_error(repr(raw))) from None
             if not self._in_range(value):
-                raise ValueError(f"{self._range_error} {value}")
+                raise ValueError(self._range_error(str(value)))
             return value
         if self.choices is not None and raw not in self.choices:
             raise ValueError(
-                f"{self.key} must be one of {', '.join(self.choices)}, got {raw!r}"
+                i18n.t(
+                    "error.choice",
+                    default="{key} must be one of {choices}, got {raw}",
+                    key=self.key,
+                    choices=", ".join(self.choices),
+                    raw=repr(raw),
+                )
             )
         return raw
 
     def format(self, value: object) -> str:
-        """*value* rendered for display — masked when this field holds a secret."""
+        """*value* as the CLI prints it — masked when this field holds a secret.
+
+        Round-trippable on purpose: whatever this returns for a non-masked
+        field must parse back, because ``config get`` output is what a script
+        feeds to ``config set``. Human-readable choice names belong to
+        :meth:`display_value`, which is the interactive menu's form.
+        """
         if self.masked:
             return mask_secret(str(value))
         if isinstance(value, bool):
             return "true" if value else "false"
         return str(value)
 
-    @property
-    def _range_error(self) -> str:
+    def display_value(self, value: object, lang: str | None = None) -> str:
+        """*value* as the interactive menu shows it — names, not raw codes.
+
+        Differs from :meth:`format` only where a field declares
+        ``choice_labels``: there the stored code (``zh-TW``) renders as its
+        name (``繁體中文``). Not round-trippable, and not used by ``config
+        get``/``set`` for that reason.
+        """
+        if self.masked or self.choice_labels is None:
+            return self.format(value)
+        return self.choice_labels(lang).get(str(value), self.format(value))
+
+    def _range_error(self, raw: str) -> str:
         bounds = f" {self.minimum}-{self.maximum}" if self.minimum is not None else ""
-        return f"{self.key} must be an integer{bounds}, got"
+        return i18n.t(
+            "error.int",
+            default="{key} must be an integer{bounds}, got {raw}",
+            key=self.key,
+            bounds=bounds,
+            raw=raw,
+        )
 
     def _in_range(self, value: int) -> bool:
         return (self.minimum is None or value >= self.minimum) and (
@@ -202,8 +242,10 @@ FIELDS: tuple[Field, ...] = (
         type=str,
         default=i18n.AUTO,
         choices=i18n.CHOICES,
-        label="Notification language",
-        help="Language of switch notifications: auto follows the OS locale, or pick one.",
+        choice_labels=i18n.language_labels,
+        label="Language",
+        help="Language of notifications and of this menu. Follows the OS locale until you pick one.",
+        group="General",
     ),
 )
 

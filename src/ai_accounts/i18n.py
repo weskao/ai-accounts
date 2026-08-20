@@ -104,6 +104,20 @@ def system_language() -> str:
     return FALLBACK
 
 
+def language_labels(lang: str | None = None) -> dict[str, str]:
+    """Config value -> the name to SHOW for it, e.g. ``{"en": "English"}``.
+
+    Every language names itself in its own script (``English``, ``繁體中文``),
+    which is the convention language pickers use and means these names need no
+    translating. ``auto`` shows the language it currently resolves to, so the
+    row reads as an answer ("繁體中文（系統）") rather than as a mode.
+    """
+    resolved = system_language()
+    names = {lang.code: lang.label for lang in LANGUAGES}
+    system_name = names.get(resolved, resolved)
+    return {AUTO: t("language.auto", lang=lang, name=system_name), **names}
+
+
 def resolve_language(configured: object) -> str:
     """The language *configured* selects — ``auto``/junk/None means the OS's.
 
@@ -222,21 +236,40 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.token_refresh.help": {
         "zh-TW": "依排程更新 OAuth token，與自動切換各自獨立。"
     },
-    "config.language.label": {"zh-TW": "通知語言"},
+    "config.language.label": {"zh-TW": "語言"},
     "config.language.help": {
-        "zh-TW": "通知訊息的語言：auto 跟隨系統語系，或直接指定一種。"
+        "zh-TW": "通知訊息與本選單的語言。未指定前跟隨系統語系。"
     },
+    # How a language names itself needs no translating; "auto" reports what it
+    # currently resolves to, so the row reads as an answer, not as a mode.
+    "language.auto": {
+        "en": "{name} (system)",
+        "zh-TW": "{name}（系統）",
+    },
+    # Booleans keep their JSON spelling on purpose: `true`/`false` are what
+    # `config set` accepts, so showing 開/關 would name a value nobody can type.
     # Group headings, keyed by the English heading itself — Field.group holds
     # that string, so no slug mapping is needed in between.
     "group.Automatic switching": {"zh-TW": "自動切換"},
     "group.Notifications": {"zh-TW": "通知"},
     "group.Provider behavior": {"zh-TW": "各家 CLI 行為"},
-    # ── config menu chrome ──────────────────────────────────────────────────
-    "menu.title": {"zh-TW": "ai-accounts 設定"},
-    "menu.keys": {"zh-TW": "↑↓ 移動 · ←→ 切換 · Enter 編輯 · s 儲存 · q 離開"},
-    "menu.saved": {"zh-TW": "已儲存"},
+    "group.General": {"zh-TW": "一般"},
+    # ── config menu chrome (English lives at each call site as the default) ──
+    "menu.keys": {"zh-TW": "↑↓ 移動 · ←→ 切換 · Enter 編輯/切換 · s 儲存 · Esc 取消 · q/Ctrl-C 離開"},
+    "menu.unset": {"zh-TW": "（未設定）"},
+    "menu.discarded": {"zh-TW": "已放棄未儲存的變更（下次請按 s 儲存）。"},
     "menu.prompt": {"zh-TW": "{label} 的新值{hint}："},
-    "menu.invalid": {"zh-TW": "無效的值：{error}"},
+    "menu.masked_hint": {"zh-TW": "（留空保持原值）"},
+    "menu.select": {"zh-TW": "選擇要修改的項目（留空離開）："},
+    "menu.bad_number": {"zh-TW": "請輸入上面列出的項目編號。"},
+    "menu.install_prompt": {"zh-TW": "尚未安裝自動切換設定，要現在安裝嗎？[y/N]："},
+    "menu.usage": {"zh-TW": "用法：{prog} config get [key] | config set <key> <value>"},
+    "menu.unknown_key": {"zh-TW": "未知的設定 {key}。可用的設定："},
+    # ── validation errors (shown inline in the menu and by `config set`) ─────
+    "error.bool": {"zh-TW": "需要布林值（true/false），得到 {raw}"},
+    "error.int": {"zh-TW": "{key} 必須是整數{bounds}，得到 {raw}"},
+    "error.choice": {"zh-TW": "{key} 必須是 {choices} 之一，得到 {raw}"},
+    "error.notify_channel": {"zh-TW": "無效的通知方式 {channel}：必須是 {channels} 之一"},
 }
 
 

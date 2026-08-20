@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import urllib.parse
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -11,7 +12,6 @@ from unittest import mock
 from ai_accounts import autoswitch as aw
 from ai_accounts import config_schema as cs
 from ai_accounts import i18n
-from ai_accounts._present import notify_width, plain_box
 
 
 class _ConfigMixin(unittest.TestCase):
@@ -104,7 +104,7 @@ class CatalogueTests(unittest.TestCase):
     def test_every_message_has_the_fallback_language(self) -> None:
         # Given: the catalogue. Then: nothing can fall through to a bare msgid
         for msgid, table in i18n.MESSAGES.items():
-            if msgid.split(".", 1)[0] in ("config", "group", "menu"):
+            if msgid.split(".", 1)[0] in ("config", "group", "menu", "error", "value"):
                 continue  # English for these lives in config_schema.FIELDS
             with self.subTest(msgid=msgid):
                 self.assertIn(i18n.FALLBACK, table)
@@ -179,9 +179,9 @@ class ConfigLabelTests(_ConfigMixin):
         field = cs._require("enabled")
         aw.save_config({"language": "zh-TW"})
         # Then: the display forms are translated, the schema literals are not
-        self.assertEqual(field.display_label, "啟用自動切換")
-        self.assertNotEqual(field.display_label, field.label)
-        self.assertIn("配額", field.display_help)
+        self.assertEqual(field.display_label(), "啟用自動切換")
+        self.assertNotEqual(field.display_label(), field.label)
+        self.assertIn("配額", field.display_help())
 
     def test_english_falls_back_to_the_schema_text(self) -> None:
         # Given: English, which the catalogue deliberately does not duplicate
@@ -189,8 +189,8 @@ class ConfigLabelTests(_ConfigMixin):
         for field in cs.FIELDS:
             with self.subTest(key=field.key):
                 # Then: the schema's own literal is what shows
-                self.assertEqual(field.display_label, field.label)
-                self.assertEqual(field.display_help, field.help)
+                self.assertEqual(field.display_label(), field.label)
+                self.assertEqual(field.display_help(), field.help)
 
     def test_every_field_is_translated_in_every_declared_language(self) -> None:
         # Given: each language other than the English source
@@ -222,59 +222,92 @@ class ConfigLabelTests(_ConfigMixin):
             field.parse("klingon")
 
 
-class NotifyWidthTests(unittest.TestCase):
-    def test_wide_glyphs_and_emoji_count_two_columns(self) -> None:
-        self.assertEqual(notify_width("ab"), 2)
-        self.assertEqual(notify_width("中文"), 4)
-        self.assertEqual(notify_width("🔄"), 2)
-        # ⚠️ is a narrow codepoint that renders wide with its variation selector
-        self.assertEqual(notify_width("⚠️"), 2)
-        # → is Ambiguous: one column in the monospace font a notification uses
-        self.assertEqual(notify_width("→"), 1)
+class LanguageChoiceDisplayTests(_ConfigMixin):
+    """The row shows a language's own name, never its code."""
+
+    def test_each_language_is_named_in_its_own_script(self) -> None:
+        labels = i18n.language_labels()
+        self.assertEqual(labels["en"], "English")
+        self.assertEqual(labels["zh-TW"], "繁體中文")
+
+    def test_auto_reports_the_language_it_resolves_to(self) -> None:
+        # Given: the OS asking for Traditional Chinese
+        with mock.patch.object(i18n, "system_language", return_value="zh-TW"):
+            # Then: the row answers with a language, marked as coming from the OS
+            self.assertIn("繁體中文", i18n.language_labels(lang="zh-TW")[i18n.AUTO])
+            self.assertIn("系統", i18n.language_labels(lang="zh-TW")[i18n.AUTO])
+            self.assertIn("system", i18n.language_labels(lang="en")[i18n.AUTO])
+
+    def test_the_menu_shows_the_name_and_config_get_shows_the_code(self) -> None:
+        # Given: the language field
+        field = cs._require("language")
+        # Then: the menu form is a name...
+        self.assertEqual(field.display_value("zh-TW"), "繁體中文")
+        # ...while the CLI form stays the code, so `config get` output can be
+        # fed straight back to `config set`
+        self.assertEqual(field.format("zh-TW"), "zh-TW")
+        self.assertEqual(field.parse(field.format("zh-TW")), "zh-TW")
+
+    def test_display_value_is_the_plain_value_for_a_field_without_labels(self) -> None:
+        field = cs._require("switch_when_used_pct")
+        self.assertEqual(field.display_value(90), "90")
+
+    def test_a_masked_field_is_never_expanded_into_a_label(self) -> None:
+        field = cs._require("telegram_bot_token")
+        shown = field.display_value("0000000000:secret-tail")
+        self.assertNotIn("secret", shown)
+        self.assertTrue(shown.startswith("*"))
+
+    def test_language_stands_alone_in_its_own_group(self) -> None:
+        # Given: the schema. Then: `language` is not filed under a feature group
+        field = cs._require("language")
+        self.assertEqual(field.group, "General")
+        self.assertEqual([f.key for f in cs.FIELDS if f.group == "General"], ["language"])
 
 
-class PlainBoxTests(unittest.TestCase):
-    def test_every_row_is_padded_to_one_common_width(self) -> None:
-        # Given: lines mixing CJK, emoji and ASCII — the alignment hard case
-        lines = ["🔄 codex: work (93%) → personal (15%)", "⚠️ 需重啟 session"]
-        box = plain_box(lines)
-        rendered = box.splitlines()
-        # Then: the frame and every content row measure the same
-        widths = {notify_width(line) for line in rendered}
-        self.assertEqual(len(widths), 1, rendered)
-        # And: the frame closes
-        self.assertTrue(rendered[0].startswith("┌"))
-        self.assertTrue(rendered[-1].startswith("└"))
-        self.assertEqual(len(rendered), len(lines) + 2)
+class MenuPreviewTests(_ConfigMixin):
+    """Cycling the language repaints the menu before anything is saved."""
 
-    def test_content_survives_framing_verbatim(self) -> None:
-        box = plain_box(["🚫 agy：work 已用 96%，無帳號可切"])
-        self.assertIn("無帳號可切", box)
+    def _labels(self, values: dict) -> str:
+        from ai_accounts import config_menu as cm
+
+        return "\n".join(cm.render("t", cs.FIELDS, values, cursor=0))
+
+    def test_an_unsaved_language_change_is_previewed_immediately(self) -> None:
+        # Given: English on disk
+        aw.save_config({"language": "en"})
+        # When: the menu holds an unsaved zh-TW in its edit buffer
+        frame = self._labels({"language": "zh-TW"})
+        # Then: labels, help and the key hints are already Traditional Chinese
+        self.assertIn("啟用自動切換", frame)
+        self.assertIn("語言", frame)
+        self.assertIn("移動", frame)  # footer hint
+        # And: the stored setting is untouched until `s` is pressed
+        self.assertEqual(aw.load_config()["language"], "en")
+
+    def test_english_renders_the_schema_text(self) -> None:
+        frame = self._labels({"language": "en"})
+        self.assertIn("Enable automatic switching", frame)
+        self.assertIn("select", frame)
+
+    def test_rows_stay_aligned_when_labels_change_width(self) -> None:
+        # Given: CJK labels, which are twice as wide per character
+        from ai_accounts._present import visible_len
+
+        for lang in ("en", "zh-TW"):
+            with self.subTest(lang=lang):
+                lines = __import__(
+                    "ai_accounts.config_menu", fromlist=["render"]
+                ).render("t", cs.FIELDS, {"language": lang}, cursor=0)
+                widths = {visible_len(line) for line in lines}
+                # Then: every rendered line still measures the same
+                self.assertEqual(len(widths), 1, sorted(widths))
 
 
 class TelegramPayloadTests(_ConfigMixin):
-    def test_the_message_is_posted_as_a_monospace_block(self) -> None:
-        # Given: a title and a body
-        text = aw.telegram_text("🔄 codex: work → personal", "⚠️ restart needed")
-        # Then: <pre>, so Telegram renders the frame monospace and it lines up
-        self.assertTrue(text.startswith("<pre>"))
-        self.assertTrue(text.endswith("</pre>"))
-        self.assertIn("┌", text)
-        self.assertIn("└", text)
+    """The Bot API payload — plain text, no frame, no parse mode."""
 
-    def test_angle_brackets_in_a_message_are_not_eaten_as_html(self) -> None:
-        # Given: a body containing a literal <provider> placeholder
-        text = aw.telegram_text("title", "<provider>-accounts login-switch <name>")
-        # Then: it is escaped, so Telegram shows it instead of dropping a "tag"
-        self.assertIn("&lt;provider&gt;", text)
-        self.assertNotIn("<provider>", text)
-
-    def test_an_empty_body_does_not_leave_a_blank_row(self) -> None:
-        text = aw.telegram_text("only a title", "")
-        self.assertEqual(len(text.splitlines()), 3)  # top, content, bottom
-
-    def test_the_api_call_declares_html_parse_mode(self) -> None:
-        # Given: telegram configured
+    def _capture(self) -> list[object]:
         aw.save_config(
             {"notify": "telegram", "telegram_bot_token": "t", "telegram_chat_id": "1"}
         )
@@ -294,12 +327,34 @@ class TelegramPayloadTests(_ConfigMixin):
             opened.append(request)
             return _Response()
 
+        self.urlopen = mock.patch.object(aw.urllib.request, "urlopen", fake_urlopen)
+        self.urlopen.start()
+        self.addCleanup(self.urlopen.stop)
+        return opened
+
+    def test_the_message_is_posted_as_plain_text(self) -> None:
+        # Given: telegram configured
+        opened = self._capture()
         # When: a notification goes out
-        with mock.patch.object(aw.urllib.request, "urlopen", fake_urlopen):
-            self.assertTrue(aw.notify("t", "m"))
-        # Then: parse_mode travels with it — without it the <pre> is literal
+        self.assertTrue(aw.notify("🔄 codex: work → personal", "⚠️ restart needed"))
+        # Then: title and body, one newline between, and nothing else — no box
+        # frame and no parse_mode, so Telegram shows the text as written
         body = opened[0].data.decode("utf-8")
-        self.assertIn("parse_mode=HTML", body)
+        self.assertNotIn("parse_mode", body)
+        self.assertNotIn("%E2%94%8C", body)  # ┌ — the old frame
+        self.assertIn("codex", urllib.parse.unquote_plus(body))
+        self.assertIn(
+            "🔄 codex: work → personal\n⚠️ restart needed",
+            urllib.parse.unquote_plus(body),
+        )
+
+    def test_an_empty_body_sends_the_title_alone(self) -> None:
+        # Given: a title with no follow-up line
+        opened = self._capture()
+        self.assertTrue(aw.notify("only a title", ""))
+        # Then: no trailing newline left dangling
+        text = urllib.parse.parse_qs(opened[0].data.decode("utf-8"))["text"][0]
+        self.assertEqual(text, "only a title")
 
 
 if __name__ == "__main__":

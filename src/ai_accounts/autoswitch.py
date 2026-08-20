@@ -20,7 +20,6 @@ switch_when_used_pct = 90 means: switch once 90% of the quota is USED, i.e. when
 
 from __future__ import annotations
 
-import html
 import http.client
 import json
 import os
@@ -35,7 +34,6 @@ from pathlib import Path
 from . import _utils as u
 from . import config_schema
 from . import i18n
-from ._present import plain_box
 from .usage_format import UsageWindow
 
 CONFIG_ENV = "AI_ACCOUNTS_CONFIG_JSON"
@@ -111,8 +109,12 @@ def save_config(updates: dict) -> dict:
     channel = stored.get("notify", DEFAULTS["notify"])
     if channel not in NOTIFY_CHANNELS:
         raise ValueError(
-            f"invalid notify channel {channel!r}: expected one of "
-            + ", ".join(NOTIFY_CHANNELS)
+            i18n.t(
+                "error.notify_channel",
+                default="invalid notify channel {channel}: expected one of {channels}",
+                channel=repr(channel),
+                channels=", ".join(NOTIFY_CHANNELS),
+            )
         )
     _write_private(config_path(), json.dumps(stored, indent=2) + "\n")
     i18n.refresh()  # `language` may have just changed — drop the cached answer
@@ -141,18 +143,6 @@ def masked_config() -> dict:
 _TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
-def telegram_text(title: str, message: str) -> str:
-    """*title*/*message* as the HTML payload Telegram receives.
-
-    A ``<pre>`` block, because that is the only way the box frame lines up:
-    Telegram renders it monospace, where :func:`_present.notify_width`'s column
-    count is the truth. Contents are HTML-escaped — message bodies contain
-    literal ``<provider>`` placeholders that would otherwise be eaten as tags.
-    """
-    box = plain_box([line for line in (title, message) if line])
-    return f"<pre>{html.escape(box)}</pre>"
-
-
 def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
     """POST one sendMessage to the Bot API. False on any failure."""
     token = str(cfg.get("telegram_bot_token", ""))
@@ -161,11 +151,7 @@ def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
         u.log_red("Telegram notifications need telegram_bot_token and telegram_chat_id")
         return False
     data = urllib.parse.urlencode(
-        {
-            "chat_id": chat_id,
-            "text": telegram_text(title, message),
-            "parse_mode": "HTML",
-        }
+        {"chat_id": chat_id, "text": "\n".join(part for part in (title, message) if part)}
     ).encode("utf-8")
     request = urllib.request.Request(
         _TELEGRAM_API.format(token=token), data=data, method="POST"
