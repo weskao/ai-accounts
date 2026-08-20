@@ -1232,20 +1232,32 @@ identifiers you type, not prose.
 
 **Desktop notifications play a sound and do nothing when clicked**, on all
 three platforms. The sound is named, never a bundled or hard-coded file:
-macOS passes `sound name "Glass"` inside the same `display notification`
-call (so no second process, unlike an `afplay`), Windows declares
-`ms-winsoundevent:Notification.Default` on the toast, and Linux asks
-`canberra-gtk-play -i complete` for whatever the active XDG sound theme
-ships — a box without canberra still gets the notification, silently.
+macOS plays `Glass`, Windows declares `ms-winsoundevent:Notification.Default`
+on the toast, and Linux asks `canberra-gtk-play -i complete` for whatever the
+active XDG sound theme ships — a box without canberra still gets the
+notification, silently. The Windows toast carries no `launch` attribute and
+no `<action>` children, and `notify-send` is called with no `--action`,
+which is what makes their clicks inert.
 
-The click behaviour needed one platform fix. A bare `osascript` notification
-belongs to Script Editor, so clicking it **opens Script Editor**; ai-accounts
-posts through `System Events` instead, a faceless background process with no
-window to raise. If its Automation permission is denied the plain form is
-used as a fallback, so a notification is never lost to that. The Windows
-toast carries no `launch` attribute and no `<action>` children, and
-`notify-send` is called with no `--action`, which is what makes their clicks
-inert too.
+macOS needed more than that. AppleScript's `display notification` — even
+wrapped as `tell application "System Events" to display notification ...`,
+which is the commonly cited fix — is attributed to Script Editor's identity
+in Notification Center regardless of which app the script is sent to,
+because the command is a Standard Additions scripting addition that runs in
+`osascript`'s own process; clicking the banner opens Script Editor. There is
+no scripting-level fix for that. So when
+[`terminal-notifier`](https://github.com/julienXX/terminal-notifier) is
+already on `PATH` (e.g. installed for Fastlane), ai-accounts prefers it: a real
+app bundle with its own identity, so a banner with no `-open`/`-execute`/
+`-activate` genuinely does nothing when clicked. Delivery is verified with
+`terminal-notifier -list <group>` — a documented feature of the tool, not a
+guess at the private `com.apple.ncprefs.plist` bit layout — because a System
+Settings toggle can silently swallow the notification while the process
+itself still exits `0`. If it wasn't actually delivered, or terminal-notifier
+isn't installed at all, ai-accounts falls back to plain `osascript` (not
+click-inert, but always shown) and — the first time only, via a marker at
+`~/.ai-accounts/notify-hint-shown` — prints a one-line hint to turn
+terminal-notifier on in System Settings → Notifications.
 
 The switch message names the usage of **both** accounts, so it is obvious
 whether the switch bought an hour or a week, and its second line reports what
