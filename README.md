@@ -1107,13 +1107,15 @@ label, not by the key name you would pass to `config get`/`config set`. The
 mapping is: `Enable automatic switching` = `enabled`, `↳ Switch at usage (%)`
 = `switch_when_used_pct`, `↳ Quota window` = `switch_window`, `Notifications`
 = `notify`, `Telegram bot token` = `telegram_bot_token`, `Telegram chat id` =
-`telegram_chat_id`, `Antigravity blind switch` = `agy_blind_switch`, and
-`Automatic token refresh` = `token_refresh`. Masked fields render as
+`telegram_chat_id`, `Antigravity blind switch` = `agy_blind_switch`,
+`Automatic token refresh` = `token_refresh`, and `Notification language` =
+`language`. Labels and help text are themselves translated — set `language`
+to `zh-TW` and the menu renders in Traditional Chinese. Masked fields render as
 `********` plus the last four characters (all stars when the stored value is
 12 characters or shorter).
 
 Keybindings: `↑`/`↓` move the cursor; `⏎` edits the highlighted field — for a
-boolean or an enum (`notify`, `switch_window`) this **cycles** its allowed
+boolean or an enum (`notify`, `switch_window`, `language`) this **cycles** its allowed
 values instead of asking you to type one, `←`/`→` cycle the same way without
 entering edit mode first; `Esc` cancels an in-progress edit; `s` saves; `q`
 quits. Quitting with unsaved changes **discards** them and prints a yellow
@@ -1127,7 +1129,8 @@ than attempting to read arrow keys.
 `config get`/`config set` remain the scriptable form, unchanged. `set` rejects
 any key outside the table below with a message listing the valid ones, and
 validates the value before writing: `notify` must be one of the three
-channels, `switch_window` one of the two windows, `switch_when_used_pct` must be an integer 1-100, and the three
+channels, `switch_window` one of the two windows, `language` one of `auto`,
+`en` or `zh-TW`, `switch_when_used_pct` must be an integer 1-100, and the three
 booleans are parsed strictly — a hand-typed `"false"` is stored as `False`,
 not Python's `bool("false") == True`. One behaviour changed from the legacy
 `ai-accounts`-only implementation: `config set telegram_bot_token <value>` now
@@ -1149,12 +1152,50 @@ value to be wrong — the same rule guards `agy_blind_switch`.
 | `telegram_chat_id` | string | `""` | Bot API chat id to notify |
 | `agy_blind_switch` | bool | `false` | Opt-in: let `agy-accounts autoswitch` switch without verifying the candidate's quota first (see the support matrix below) |
 | `token_refresh` | bool | `true` | Independent of `enabled` — lets the scheduled timer renew OAuth tokens across all four providers even when auto-switching itself is off. Only a JSON `true` is on |
+| `language` | `auto` \| `en` \| `zh-TW` | `auto` | Language of notifications and of the `config` menu's own labels. `auto` follows the OS locale on every platform — `LC_ALL`/`LC_MESSAGES`/`LANG` on macOS and Linux, the user default locale on Windows — and falls back to English for any locale with no translation. An unrecognised value behaves as `auto` rather than failing a notification |
 
 🔴 **`switch_when_used_pct` is how much quota is USED, not how much remains**,
 and the trigger fires at `used >= switch_when_used_pct`. The default, 90,
 means: **switch once 90% of the quota is USED, i.e. when 10% remains.** This
 inverts the natural reading of "switch when quota drops below N%" — read it
 as a used-percent ceiling, not a remaining-percent floor.
+
+### Notification messages
+
+Each situation sends one message. Telegram receives it as a monospace `<pre>`
+block framed in box-drawing characters, so the rows line up regardless of how
+much CJK text or how many emoji they hold; a desktop notification gets the
+same two lines as its title and body, unframed.
+
+```
+┌───────────────────────────────────────┐
+│ 🔄 codex: work (93%) → personal (15%) │
+│ ⚠️ Restart your session to use it     │
+└───────────────────────────────────────┘
+
+┌────────────────────────────────────────────┐
+│ 🚫 agy: work at 96%, nothing to switch to  │
+│ 💡 Others are 90%+ or unreadable — wait    │
+└────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ 🔑 ai-accounts: a token expired, re-login needed               │
+│ ai-accounts refresh --all → <provider>-accounts login-switch│
+└─────────────────────────────────────────────────────────────┘
+```
+
+The switch message names the usage of **both** accounts, so it is obvious
+whether the switch bought an hour or a week, and its second line reports what
+actually happened: `✅ Session restarted` when the post-switch restart ran,
+`⚠️ Restart your session to use it` when it did not (an unattended timer poll
+never restarts anything — see the restart ladder below). The dead-end and
+revoked-token messages are sent at most once an hour each.
+
+All wording lives in one table, `MESSAGES` in
+[`src/ai-accounts/i18n.py`](src/ai-accounts/i18n.py), keyed message-id first and
+language second, so every translation of a string sits on adjacent lines.
+Adding a language means appending one `Language` entry plus its rows; a row a
+language is missing falls back to English rather than failing.
 
 Switch to Telegram notifications in one command each:
 
