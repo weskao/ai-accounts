@@ -515,8 +515,8 @@ Saved Codex profiles  (2)
 
 `codex-accounts config` with no arguments opens an interactive arrow-key menu on a
 TTY (↑↓ move, ⏎ edit — boolean/enum fields cycle their allowed values instead of
-typing, Esc cancels an edit, `s` saves, `q` quits; quitting with unsaved changes
-discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, CI)
+typing, Esc cancels an edit, `r` resets every setting after a `y` confirmation,
+`q` quits; every change saves itself, so there is no save key). Piped/non-TTY input (scripts, CI)
 prints a numbered listing instead and exits `0`. `config get [key]` / `config set
 <key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
 saved value masked, not in cleartext. This is the same shared config menu as
@@ -614,8 +614,8 @@ Saved Claude profiles  (2)
 
 `claude-accounts config` with no arguments opens an interactive arrow-key menu on a
 TTY (↑↓ move, ⏎ edit — boolean/enum fields cycle their allowed values instead of
-typing, Esc cancels an edit, `s` saves, `q` quits; quitting with unsaved changes
-discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, CI)
+typing, Esc cancels an edit, `r` resets every setting after a `y` confirmation,
+`q` quits; every change saves itself, so there is no save key). Piped/non-TTY input (scripts, CI)
 prints a numbered listing instead and exits `0`. `config get [key]` / `config set
 <key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
 saved value masked, not in cleartext. This is the same shared config menu as
@@ -793,8 +793,8 @@ Session types:
 
 `agy-accounts config` with no arguments opens an interactive arrow-key menu on a
 TTY (↑↓ move, ⏎ edit — boolean/enum fields cycle their allowed values instead of
-typing, Esc cancels an edit, `s` saves, `q` quits; quitting with unsaved changes
-discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, CI)
+typing, Esc cancels an edit, `r` resets every setting after a `y` confirmation,
+`q` quits; every change saves itself, so there is no save key). Piped/non-TTY input (scripts, CI)
 prints a numbered listing instead and exits `0`. `config get [key]` / `config set
 <key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
 saved value masked, not in cleartext. This is the same shared config menu as
@@ -913,8 +913,8 @@ Saved Grok profiles  (2)
 
 `grok-accounts config` with no arguments opens an interactive arrow-key menu on a
 TTY (↑↓ move, ⏎ edit — boolean/enum fields cycle their allowed values instead of
-typing, Esc cancels an edit, `s` saves, `q` quits; quitting with unsaved changes
-discards them with a yellow warning naming `s`). Piped/non-TTY input (scripts, CI)
+typing, Esc cancels an edit, `r` resets every setting after a `y` confirmation,
+`q` quits; every change saves itself, so there is no save key). Piped/non-TTY input (scripts, CI)
 prints a numbered listing instead and exits `0`. `config get [key]` / `config set
 <key> <value>` remain the scriptable form; `set telegram_bot_token` echoes the
 saved value masked, not in cleartext. This is the same shared config menu as
@@ -1116,32 +1116,32 @@ Running `config` with no arguments on a TTY opens an interactive menu:
 │    Language                    English                                                                               │
 │  When the active account reaches the limit below, switch to the saved account with the most quota left.              │
 │                                                                                                                      │
-│  ↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/Ctrl-C quit                                         │
+│  ↑↓ select · ←→ change · ⏎ edit/toggle · r reset · Esc cancel · q/Ctrl-C quit · saves as you go                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Cycle the `Language` row and the same menu repaints before you save:
+Cycle the `Language` row and the same menu repaints on the spot:
 
 ```text
-┌─ ai-accounts config (v3.0.0) ────────────────────────────────────────────┐
-│                                                                          │
-│  自動切換                                                                │
-│    啟用自動切換        false                                             │
-│    ↳ 切換門檻（%）     90                                                │
-│    ↳ 配額視窗          1week                                             │
-│  通知                                                                    │
-│    通知方式            desktop                                           │
-│    Telegram bot token  ********WXYZ                                      │
-│    Telegram chat id    （未設定）                                        │
-│  各家 CLI 行為                                                           │
-│    Antigravity 盲切    false                                             │
-│    自動更新 token      true                                              │
-│  一般                                                                    │
-│  ❯ 語言                繁體中文                                          │
-│  通知訊息與本選單的語言。未指定前跟隨系統語系。                          │
-│                                                                          │
-│  ↑↓ 移動 · ←→ 切換 · Enter 編輯/切換 · s 儲存 · Esc 取消 · q/Ctrl-C 離開 │
-└──────────────────────────────────────────────────────────────────────────┘
+┌─ ai-accounts config (v3.0.0) ───────────────────────────────────────────────────────┐
+│                                                                                     │
+│  自動切換                                                                           │
+│    啟用自動切換        false                                                        │
+│    ↳ 切換門檻（%）     90                                                           │
+│    ↳ 配額視窗          1week                                                        │
+│  通知                                                                               │
+│    通知方式            desktop                                                      │
+│    Telegram bot token  ********WXYZ                                                 │
+│    Telegram chat id    （未設定）                                                   │
+│  各家 CLI 行為                                                                      │
+│    Antigravity 盲切    false                                                        │
+│    自動更新 token      true                                                         │
+│  一般                                                                               │
+│  ❯ 語言                繁體中文                                                     │
+│  通知訊息與本選單的語言。未指定前跟隨系統語系。                                     │
+│                                                                                     │
+│  ↑↓ 移動 · ←→ 切換 · Enter 編輯/切換 · r 重設 · Esc 取消 · q/Ctrl-C 離開 · 自動儲存 │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Rows are grouped under a bold heading, and the highlighted row's help text
@@ -1154,7 +1154,7 @@ mapping is: `Enable automatic switching` = `enabled`, `↳ Switch at usage (%)`
 `Automatic token refresh` = `token_refresh`, and `Language` = `language`.
 Labels, help text, group headings, key hints and validation errors are all
 translated: cycle the `Language` row and the whole menu repaints in that
-language **before** you save, so you can see what you are choosing. Only the
+language as you cycle it, so you can see what you are choosing. Only the
 two supported languages are offered — the row cycles between `English` and
 `繁體中文`, shown by name, not by code. Left unset, the row still shows a
 plain name (whichever the OS resolves to, no extra "system" option or
@@ -1167,10 +1167,27 @@ prints that code (`en`/`zh-TW`) so its output can be fed straight back to
 Keybindings: `↑`/`↓` move the cursor; `⏎` edits the highlighted field — for a
 boolean or an enum (`notify`, `switch_window`, `language`) this **cycles** its allowed
 values instead of asking you to type one, `←`/`→` cycle the same way without
-entering edit mode first; `Esc` cancels an in-progress edit; `s` saves; `q`
-quits. Quitting with unsaved changes **discards** them and prints a yellow
-warning naming `s`. An invalid typed value shows the validation error inline
+entering edit mode first; `Esc` cancels an in-progress edit; `r` resets every
+setting; `q` quits. An invalid typed value shows the validation error inline
 and is not saved.
+
+**There is no save key: every change is saved the moment you make it.** A
+toggle, a cycled enum or a committed typed value is written straight to
+`~/.ai-accounts/config.json`, so quitting can no longer discard anything — the
+old `s` key is gone, and so is the yellow "discarded unsaved changes" warning.
+The write happens on a background thread and is flushed before the menu
+returns, so a keypress never waits on the disk; if a write fails (a
+hand-edited invalid value elsewhere in the file, an unwritable `$HOME`) the
+reason is shown on the menu's error line, or printed as `❌ …` on exit when
+you quit before it lands.
+
+`r` resets **all** settings to their defaults, but only after a confirmation:
+the row list stays untouched and a `⚠ Reset ALL settings to their defaults?
+[y/N]` line appears; `y` performs the reset (and saves it immediately), and
+**any** other key cancels — including `Esc`, `n` and an arrow key, since a
+reset blanks `telegram_bot_token` and must never ride on one stray keypress.
+Keys this version does not know about (a newer ai-accounts's settings) are left
+in the file untouched, exactly as a normal save leaves them.
 
 Piped or non-interactive input (scripts, CI, `| cat`) skips raw mode entirely:
 `config` prints the same numbered listing `get` would and exits `0` rather
