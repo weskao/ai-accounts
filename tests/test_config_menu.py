@@ -98,7 +98,7 @@ class StateMachineEditTest(unittest.TestCase):
         self.assertFalse(after.editing)
         self.assertEqual(after.values["switch_when_used_pct"], 75)
         self.assertIs(type(after.values["switch_when_used_pct"]), int)
-        self.assertTrue(after.dirty)
+        self.assertTrue(after.pending_save)
         self.assertIsNone(after.error)
 
     def test_invalid_input_surfaces_the_schema_message_and_keeps_editing(self) -> None:
@@ -109,7 +109,7 @@ class StateMachineEditTest(unittest.TestCase):
             after.error, "switch_when_used_pct must be an integer 1-100, got 150"
         )
         self.assertEqual(after.values["switch_when_used_pct"], 90)
-        self.assertFalse(after.dirty)
+        self.assertFalse(after.pending_save)
 
     def test_escape_cancels_the_edit_and_restores_the_prior_value(self) -> None:
         state = state_at("switch_when_used_pct", editing=True, edit_buffer="7")
@@ -117,7 +117,7 @@ class StateMachineEditTest(unittest.TestCase):
         self.assertFalse(after.editing)
         self.assertEqual(after.edit_buffer, "")
         self.assertEqual(after.values["switch_when_used_pct"], 90)
-        self.assertFalse(after.dirty)
+        self.assertFalse(after.pending_save)
 
     def test_moving_the_cursor_clears_a_stale_error(self) -> None:
         start = cm.MenuState(values={}, error="boom")
@@ -130,7 +130,7 @@ class StateMachineToggleTest(unittest.TestCase):
         after = cm.step(state, KeyEvent(Key.ENTER))
         self.assertFalse(after.editing)
         self.assertIs(after.values["enabled"], True)
-        self.assertTrue(after.dirty)
+        self.assertTrue(after.pending_save)
         self.assertIs(cm.step(after, KeyEvent(Key.ENTER)).values["enabled"], False)
 
     def test_enter_cycles_an_enum_through_its_choices_and_wraps(self) -> None:
@@ -227,7 +227,7 @@ class MaskedFieldEditTest(unittest.TestCase):
         closed = cm.step(opened, KeyEvent(Key.ENTER))
         self.assertEqual(closed.values["telegram_bot_token"], TOKEN)
         self.assertFalse(closed.editing)
-        self.assertFalse(closed.dirty)
+        self.assertFalse(closed.pending_save)
 
     def test_escape_mid_edit_leaves_the_stored_secret_intact(self) -> None:
         state = cm.step(self.state(), KeyEvent(Key.ENTER))
@@ -243,7 +243,7 @@ class MaskedFieldEditTest(unittest.TestCase):
             state = cm.step(state, char(c))
         state = cm.step(state, KeyEvent(Key.ENTER))
         self.assertEqual(state.values["telegram_bot_token"], "9:NEW")
-        self.assertTrue(state.dirty)
+        self.assertTrue(state.pending_save)
 
     def test_backspacing_to_empty_then_enter_still_cancels(self) -> None:
         state = cm.step(self.state(), KeyEvent(Key.ENTER))
@@ -273,10 +273,68 @@ class EmptyFieldsTest(unittest.TestCase):
             with self.subTest(event=event):
                 self.assertEqual(cm.step(state, event, ()), state)
 
-    def test_save_and_quit_still_work_with_no_fields(self) -> None:
-        state = cm.MenuState(values={})
-        self.assertTrue(cm.step(state, char("s"), ()).pending_save)
-        self.assertTrue(cm.step(state, char("q"), ()).quitting)
+    def test_quit_still_works_with_no_fields(self) -> None:
+        self.assertTrue(cm.step(cm.MenuState(values={}), char("q"), ()).quitting)
+
+    def test_a_confirmed_reset_with_no_fields_saves_nothing(self) -> None:
+        state = cm.step(cm.MenuState(values={}), char("r"), ())
+        self.assertTrue(state.confirm_reset)
+        after = cm.step(state, char("y"), ())
+        self.assertFalse(after.pending_save)
+        self.assertEqual(after.touched, frozenset())
+
+
+class ResetIntentTest(unittest.TestCase):
+    """``r`` asks; only ``y`` acts. Everything else leaves the config alone —
+    a reset blanks a stored token, so it must never ride on one stray key."""
+
+    def state(self) -> cm.MenuState:
+        values = {
+            **config_schema.defaults(),
+            "enabled": True,
+            "switch_when_used_pct": 42,
+            "telegram_bot_token": TOKEN,
+        }
+        return cm.MenuState(values=values)
+
+    def test_r_only_asks_and_changes_nothing_yet(self) -> None:
+        after = cm.step(self.state(), char("r"))
+        self.assertTrue(after.confirm_reset)
+        self.assertFalse(after.pending_save)
+        self.assertEqual(after.touched, frozenset())
+        self.assertIs(after.values["enabled"], True)
+
+    def test_y_restores_every_declared_default_and_saves(self) -> None:
+        after = cm.step(cm.step(self.state(), char("r")), char("y"))
+        self.assertFalse(after.confirm_reset)
+        self.assertTrue(after.pending_save)
+        self.assertEqual(after.values, config_schema.defaults())
+        self.assertEqual(after.touched, frozenset(config_schema.defaults()))
+
+    def test_any_other_key_cancels_the_reset(self) -> None:
+        asked = cm.step(self.state(), char("r"))
+        for event in (char("n"), char("x"), KeyEvent(Key.ESCAPE), KeyEvent(Key.DOWN)):
+            with self.subTest(event=event):
+                after = cm.step(asked, event)
+                self.assertFalse(after.confirm_reset)
+                self.assertFalse(after.pending_save)
+                self.assertEqual(after.values, asked.values)
+
+    def test_ctrl_c_while_confirming_quits_without_resetting(self) -> None:
+        after = cm.step(cm.step(self.state(), char("r")), KeyEvent(Key.CTRL_C))
+        self.assertTrue(after.quitting)
+        self.assertFalse(after.confirm_reset)
+        self.assertEqual(after.values["switch_when_used_pct"], 42)
+
+    def test_the_prompt_is_rendered_while_confirming(self) -> None:
+        lines = cm.render("t", config_schema.FIELDS, {}, 0, confirm_reset=True)
+        self.assertTrue(any("[y/N]" in line for line in lines))
+
+    def test_r_is_literal_text_while_editing(self) -> None:
+        state = state_at("telegram_chat_id", editing=True, edit_buffer="")
+        after = cm.step(state, char("r"))
+        self.assertEqual(after.edit_buffer, "r")
+        self.assertFalse(after.confirm_reset)
 
 
 class QuitAndSaveIntentTest(unittest.TestCase):
@@ -289,8 +347,9 @@ class QuitAndSaveIntentTest(unittest.TestCase):
         self.assertTrue(after.quitting)
         self.assertFalse(after.editing)
 
-    def test_s_requests_a_save(self) -> None:
-        self.assertTrue(cm.step(cm.MenuState(values={}), char("s")).pending_save)
+    def test_s_is_no_longer_a_key_because_changes_save_themselves(self) -> None:
+        state = cm.MenuState(values={})
+        self.assertEqual(cm.step(state, char("s")), state)
 
     def test_q_and_s_are_literal_text_while_editing(self) -> None:
         state = state_at("telegram_chat_id", editing=True, edit_buffer="")
@@ -341,7 +400,7 @@ class TouchedKeysTest(unittest.TestCase):
         self.assertEqual(state.edit_buffer, "90")
         after = cm.step(state, KeyEvent(Key.ENTER))
         self.assertEqual(after.touched, frozenset())
-        self.assertFalse(after.dirty)
+        self.assertFalse(after.pending_save)
         self.assertFalse(after.editing)
 
     def test_accepting_a_masked_row_unchanged_touches_nothing(self) -> None:
@@ -360,13 +419,15 @@ class TouchedKeysTest(unittest.TestCase):
         state = cm.MenuState(
             values={**config_schema.defaults(), "enabled": True},
             touched=frozenset({"enabled"}),
-            dirty=True,
+            pending_save=True,
         )
-        with mock.patch.object(cm.autoswitch, "save_config") as saved:
-            after = cm._save(state)
-        saved.assert_called_once_with({"enabled": True})
+        writes: list[dict] = []
+        saver = cm._Saver(save=writes.append)
+        after = cm._save(state, saver)
+        self.assertIsNone(saver.close())
+        self.assertEqual(writes, [{"enabled": True}])
         self.assertEqual(after.touched, frozenset())
-        self.assertFalse(after.dirty)
+        self.assertFalse(after.pending_save)
 
 
 class _ConfigFileMixin:
@@ -393,19 +454,46 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
             rc = cm.run_menu("test config", read=read, out=out, **kwargs)
         return rc, out.getvalue(), err.getvalue()
 
-    def test_toggle_then_save_then_quit_persists(self) -> None:
-        rc, out, _ = self.run_menu(
-            keys(KeyEvent(Key.ENTER), char("s"), char("q"))
-        )
+    def test_a_toggle_persists_without_a_save_key(self) -> None:
+        rc, out, _ = self.run_menu(keys(KeyEvent(Key.ENTER), char("q")))
         self.assertEqual(rc, 0)
         self.assertIs(self.stored()["enabled"], True)
         self.assertIn("Enable automatic switching", out)
 
-    def test_quitting_with_unsaved_changes_discards_and_warns(self) -> None:
-        rc, _, err = self.run_menu(keys(KeyEvent(Key.ENTER), char("q")))
+    def test_quitting_without_changing_anything_writes_nothing(self) -> None:
+        rc, _, err = self.run_menu(keys(KeyEvent(Key.DOWN), KeyEvent(Key.UP), char("q")))
         self.assertEqual(rc, 0)
         self.assertFalse(self.config_path.exists())
-        self.assertIn("Discarded", err)
+        self.assertEqual(err, "")
+
+    def test_a_confirmed_reset_restores_the_defaults_on_disk(self) -> None:
+        autoswitch.save_config(
+            {"enabled": True, "switch_when_used_pct": 42, "telegram_bot_token": TOKEN}
+        )
+        rc, _, _ = self.run_menu(keys(char("r"), char("y"), char("q")))
+        self.assertEqual(rc, 0)
+        stored = self.stored()
+        self.assertIs(stored["enabled"], False)
+        self.assertEqual(stored["switch_when_used_pct"], 90)
+        self.assertEqual(stored["telegram_bot_token"], "")
+
+    def test_a_cancelled_reset_leaves_the_file_byte_identical(self) -> None:
+        autoswitch.save_config({"switch_when_used_pct": 42})
+        before = self.config_path.read_text(encoding="utf-8")
+        rc, out, _ = self.run_menu(keys(char("r"), char("n"), char("q")))
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.config_path.read_text(encoding="utf-8"), before)
+        self.assertIn("[y/N]", out)
+
+    def test_a_reset_keeps_a_key_this_version_does_not_declare(self) -> None:
+        self.config_path.write_text(
+            json.dumps({"enabled": True, "from_a_newer_ai-accounts": "keep me"}),
+            encoding="utf-8",
+        )
+        rc, _, _ = self.run_menu(keys(char("r"), char("y"), char("q")))
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.stored()["from_a_newer_ai-accounts"], "keep me")
+        self.assertIs(self.stored()["enabled"], False)
 
     def test_a_rejected_edit_never_reaches_disk(self) -> None:
         autoswitch.save_config({"switch_when_used_pct": 42})
@@ -420,14 +508,13 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
                 char("9"),
                 KeyEvent(Key.ENTER),  # rejected: out of range
                 KeyEvent(Key.ESCAPE),
-                char("s"),  # save anyway
                 char("q"),
             )
         )
         self.assertEqual(rc, 0)
         self.assertIn("must be an integer 1-100", out)
-        # A save DID run (the whole in-memory config is rewritten), but the
-        # rejected 999 never entered `values`, so it cannot reach disk.
+        # The rejected 999 never entered `values`, so no autosave could carry
+        # it to disk — the stored 42 stands.
         self.assertEqual(self.stored()["switch_when_used_pct"], 42)
         self.assertNotIn("999", self.config_path.read_text(encoding="utf-8"))
 
@@ -493,28 +580,23 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
         # `save_config` rewrites the whole dict, so the pre-existing bad
         # "notify" poisons every save until it is fixed.
         self.config_path.write_text(json.dumps({"notify": "bogus"}), encoding="utf-8")
-        rc, out, err = self.run_menu(keys(KeyEvent(Key.ENTER), char("s"), char("q")))
+        rc, out, err = self.run_menu(keys(KeyEvent(Key.ENTER), char("q")))
         self.assertEqual(rc, 0)
         combined = out + err
         self.assertIn("invalid notify channel", combined)
         self.assertIn("bogus", combined)
         self.assertNotIn("Traceback", combined)
-        # The save did not actually happen: the "enabled" toggle stays unsaved.
-        self.assertIn("Discarded", err)
+        # The write never happened: the "enabled" toggle did not reach disk.
+        self.assertEqual(self.stored(), {"notify": "bogus"})
 
-    def test_save_failure_leaves_dirty_true_and_the_menu_still_usable(self) -> None:
-        state = cm.MenuState(
-            values={**config_schema.defaults(), "notify": "bogus"}, dirty=True
-        )
-        with mock.patch.object(
-            cm.autoswitch,
-            "save_config",
-            side_effect=ValueError("invalid notify channel 'bogus': expected one of x"),
-        ):
-            after = cm._save(state)
-        self.assertTrue(after.dirty)
-        self.assertFalse(after.pending_save)
-        self.assertIn("invalid notify channel 'bogus'", after.error)
+    def test_a_failed_write_is_reported_and_the_menu_still_exits_clean(self) -> None:
+        saver = cm._Saver(save=mock.Mock(side_effect=ValueError("disk said no")))
+        rc, out, err = self.run_menu(keys(KeyEvent(Key.ENTER), char("q")), saver=saver)
+        self.assertEqual(rc, 0)
+        # Reported on the next frame if the worker was that quick, at exit
+        # otherwise — either way the user is told, and never by a traceback.
+        self.assertIn("disk said no", out + err)
+        self.assertNotIn("Traceback", out + err)
 
     def test_a_concurrent_write_survives_a_menu_save(self) -> None:
         # Terminal A opens the menu; terminal B then writes a new token. Saving
@@ -524,13 +606,17 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
         self.config_path.write_text(
             json.dumps({"telegram_bot_token": TOKEN}), encoding="utf-8"
         )
-        events = iter([KeyEvent(Key.ENTER), char("s"), char("q")])
+        events = iter([KeyEvent(Key.ENTER), char("q")])
+        wrote_from_b = False
 
         def read() -> KeyEvent:
-            event = next(events, KeyEvent(Key.CTRL_C))
-            if event.char == "s":
+            # Terminal B writes BEFORE A's first change, i.e. after A's snapshot
+            # was taken — the ordering that used to lose B's key.
+            nonlocal wrote_from_b
+            if not wrote_from_b:
                 autoswitch.save_config({"telegram_bot_token": other})  # terminal B
-            return event
+                wrote_from_b = True
+            return next(events, KeyEvent(Key.CTRL_C))
 
         rc, _, _ = self.run_menu(read)
         self.assertEqual(rc, 0)
@@ -538,9 +624,54 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
         self.assertIs(self.stored()["enabled"], True)
 
     def test_an_untouched_key_is_never_written_to_the_file(self) -> None:
-        rc, _, _ = self.run_menu(keys(KeyEvent(Key.ENTER), char("s"), char("q")))
+        rc, _, _ = self.run_menu(keys(KeyEvent(Key.ENTER), char("q")))
         self.assertEqual(rc, 0)
         self.assertEqual(self.stored(), {"enabled": True})
+
+
+class SaverTest(_ConfigFileMixin, unittest.TestCase):
+    """Autosave writes off the key loop, so the write side needs its own tests:
+    it must land, never block, never lose the newest value, and never raise."""
+
+    def test_a_submitted_update_is_on_disk_once_close_returns(self) -> None:
+        saver = cm._Saver()
+        saver.submit({"enabled": True})
+        self.assertIsNone(saver.close())
+        self.assertEqual(self.stored(), {"enabled": True})
+
+    def test_an_empty_update_never_touches_the_file(self) -> None:
+        saver = cm._Saver()
+        saver.submit({})
+        self.assertIsNone(saver.close())
+        self.assertFalse(self.config_path.exists())
+
+    def test_the_newest_of_several_rapid_writes_is_the_one_on_disk(self) -> None:
+        # Whether the worker coalesces them or writes each in turn, a later
+        # value must never be overwritten by an earlier one.
+        saver = cm._Saver()
+        for value in (True, False, True):
+            saver.submit({"enabled": value})
+        self.assertIsNone(saver.close())
+        self.assertIs(self.stored()["enabled"], True)
+
+    def test_a_failed_write_is_reported_once_and_never_raised(self) -> None:
+        saver = cm._Saver(save=mock.Mock(side_effect=ValueError("nope")))
+        saver.submit({"enabled": True})
+        self.assertEqual(saver.close(), "nope")
+        self.assertIsNone(saver.take_error())
+
+    def test_an_unwritable_config_is_an_error_not_a_crash(self) -> None:
+        saver = cm._Saver(save=mock.Mock(side_effect=OSError("read-only fs")))
+        saver.submit({"enabled": True})
+        self.assertIn("read-only fs", saver.close())
+
+    def test_a_submit_after_close_still_starts_a_new_worker(self) -> None:
+        saver = cm._Saver()
+        saver.submit({"enabled": True})
+        saver.close()
+        saver.submit({"switch_when_used_pct": 55})
+        self.assertIsNone(saver.close())
+        self.assertEqual(self.stored()["switch_when_used_pct"], 55)
 
 
 class FallbackTest(_ConfigFileMixin, unittest.TestCase):
@@ -639,9 +770,12 @@ class ConfigSetupTimingTest(_ConfigFileMixin, unittest.TestCase):
         state = cm.MenuState(
             values={**config_schema.defaults(), "enabled": enabled},
             touched=frozenset({"enabled"}),
-            dirty=True,
+            pending_save=True,
         )
-        return cm._save(state)
+        saver = cm._Saver()
+        result = cm._save(state, saver)
+        self.assertIsNone(saver.close())
+        return result
 
     def fallback(self, lines):
         it = iter(lines)
