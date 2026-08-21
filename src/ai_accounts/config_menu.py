@@ -43,6 +43,15 @@ and the two ways out both preserve what is stored:
   is the explicit, typed-out way to do that.
 * **Escape cancels** as it does everywhere else.
 
+**Autosave.** There is no save key: every committed change is persisted the
+moment it happens, through :class:`_Saver`, which writes on a background
+thread so a keypress never waits on the disk. Pending updates merge into one
+dict drained by at most one worker at a time, so a rapid re-toggle of the same
+row cannot land out of order, and :meth:`_Saver.close` flushes before
+:func:`run_menu` returns. A failed write is reported on the menu's error line
+(and on stderr at exit) while the in-memory value stays on screen — the user
+sees both what they chose and that it did not land.
+
 **Data-loss rule — a save writes only the keys the user touched.** ``values``
 is a snapshot taken when the menu opened, so posting all of it to
 ``save_config`` (whose merge is ``{**on_disk, **updates}``) would make that
@@ -62,7 +71,7 @@ lossless for bools/ints/plain strings and so cannot corrupt anything.
 Canonical here (behavioural half): :class:`MenuState` + :func:`step`, the
 **pure** ``(state, KeyEvent) -> state`` transition every behaviour test drives
 from a fake key iterator; :func:`run_menu`, the thin terminal shell around it
-(raw mode, in-place redraw, ``Spinner`` while saving); the non-TTY numbered
+(raw mode, in-place redraw, autosave through :class:`_Saver`); the non-TTY numbered
 fallback; and :func:`cmd_config`, the ONE entry point all six CLIs delegate
 to for both the menu and the scriptable ``config get`` / ``config set`` forms.
 
@@ -70,7 +79,7 @@ Delegated elsewhere: key decoding, raw mode and the "is a menu even possible"
 check (:mod:`ai_accounts._keyreader`); reading/writing the config file
 (:mod:`ai_accounts.autoswitch` — ``load_config``/``save_config``/``masked_config``,
 never a direct write from here); per-key types, parsing, ranges and masking
-(:mod:`ai_accounts.config_schema`); colors, ``log_*`` and ``Spinner``
+(:mod:`ai_accounts.config_schema`); colors and ``log_*``
 (:mod:`ai_accounts._utils`).
 
 Schema-driven, no per-key branching anywhere: whether a row is *typed* or
@@ -81,9 +90,16 @@ validation is ``Field.parse``. Appending a 7th field to
 
 **Deliberate decisions, recorded so they read as choices:**
 
-* *Quit with unsaved changes discards them* (with a yellow warning naming the
-  ``s`` key) rather than prompting. A save-on-quit prompt on an escape-hatch
-  keystroke is how a half-typed threshold gets persisted; ``s`` is one key.
+* *Every change saves itself* — there is no ``s`` key, so quitting can no
+  longer discard anything. What used to be a save-then-quit dance is now one
+  keypress, and the only state that survives a quit unsaved is a change whose
+  write actually failed, which is reported rather than silently dropped.
+* *``r`` resets every declared field to its default, but only after a ``y``* —
+  one stray keypress must not be able to blank a stored token, so the row list
+  is left untouched until the confirmation arrives, and *any* other key
+  cancels (cancel is the safe default). The reset writes the defaults like any
+  other change: through the same touched-keys path, so a key this ai-accounts
+  knows nothing about is still left alone in the file.
 * *``config set`` echoes a masked value for a masked key* — the only byte
   divergence from the legacy ``ai_accounts`` block, which echoed the raw
   token back. Every other key, including the ``True``/``False`` Python repr
@@ -102,25 +118,94 @@ validation is ``Field.parse``. Appending a 7th field to
 from __future__ import annotations
 
 import sys
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from . import autoswitch, config_schema, i18n
 from . import _keyreader as kr
 from ._present import visible_len
-from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW, Spinner
-from ._utils import log_red, log_yellow, package_version
+from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW
+from ._utils import log_red, package_version
 
 _CURSOR_MARK = "❯ "
 _NO_CURSOR_MARK = "  "
 _UNSET_EN = "(unset)"
-_FOOTER_HINT_EN = "↑↓ select · ←→ change · ⏎ edit/toggle · s save · Esc cancel · q/Ctrl-C quit"
+_FOOTER_HINT_EN = (
+    "↑↓ select · ←→ change · ⏎ edit/toggle · r reset · Esc cancel · q/Ctrl-C quit"
+    " · saves as you go"
+)
+_RESET_CONFIRM_EN = "Reset ALL settings to their defaults? [y/N]"
 _MIN_WIDTH = 40
 
 
 def _save_config(updates: dict) -> None:
     """Save only config values; OS setup is an explicit, one-time action."""
     autoswitch.save_config(updates)
+
+
+class _Saver:
+    """Persist config updates off the key loop.
+
+    Autosave fires on every committed change, so the write must not sit in
+    front of the next keypress. Updates are merged into one pending dict that
+    at most one worker thread drains at a time: single worker ⇒ writes happen
+    in the order they were submitted, so toggling a row twice quickly cannot
+    leave the older value on disk. A failure is remembered (not retried) for
+    the menu to show, and :meth:`close` flushes before the menu returns, so a
+    change is on disk by the time the process moves on.
+    """
+
+    def __init__(self, save: Callable[[dict], None] = _save_config) -> None:
+        self._save = save
+        self._pending: dict = {}
+        self._error: str | None = None
+        self._lock = threading.Lock()
+        self._worker: threading.Thread | None = None
+
+    def submit(self, updates: dict) -> None:
+        """Queue *updates*; returns immediately. Empty updates are a no-op."""
+        if not updates:
+            return
+        with self._lock:
+            self._pending.update(updates)
+            if self._worker is not None:
+                return  # a live worker will pick this batch up
+            self._worker = threading.Thread(target=self._drain, daemon=True)
+            self._worker.start()
+
+    def _drain(self) -> None:
+        while True:
+            with self._lock:
+                if not self._pending:
+                    # Clear the handle under the same lock `submit` takes, so a
+                    # batch queued as this worker exits always starts a new one
+                    # instead of being stranded behind a dying thread.
+                    self._worker = None
+                    return
+                batch, self._pending = self._pending, {}
+            try:
+                self._save(batch)
+            except (ValueError, OSError) as exc:
+                # A pre-existing invalid value elsewhere in the stored config
+                # (e.g. a hand-edited "notify") poisons every rewrite, and a
+                # read-only HOME raises OSError. Neither may kill the menu.
+                with self._lock:
+                    self._error = str(exc)
+
+    def take_error(self) -> str | None:
+        """The last failure, cleared — so one bad write is reported once."""
+        with self._lock:
+            error, self._error = self._error, None
+        return error
+
+    def close(self, timeout: float = 5.0) -> str | None:
+        """Wait for queued writes, then hand back any failure they hit."""
+        with self._lock:
+            worker = self._worker
+        if worker is not None:
+            worker.join(timeout)
+        return self.take_error()
 
 
 def _format_value(
@@ -174,6 +259,7 @@ def render(
     editing: bool = False,
     edit_buffer: str = "",
     error: str | None = None,
+    confirm_reset: bool = False,
     width: int | None = None,
 ) -> list[str]:
     """Render one frame of the config menu as a ``list[str]`` — no I/O.
@@ -185,6 +271,8 @@ def render(
     that row shows ``edit_buffer`` (the in-progress typed value) instead of
     its stored value. ``error``, if given, is shown as its own line — for
     displaying a ``config_schema.parse_value`` ``ValueError`` message.
+    ``confirm_reset`` adds the yellow "reset everything?" prompt line, so the
+    ``r`` key visibly waits for a ``y`` instead of acting on the spot.
     """
     # Read the language off the values being EDITED, not off disk: cycling the
     # language row has to repaint the menu in that language right away, before
@@ -212,6 +300,9 @@ def render(
     body = ["", *field_rows]
     if fields:
         body.append(f"{DIM}{fields[cursor].display_help(lang)}{RESET}")
+    if confirm_reset:
+        prompt = i18n.t("menu.reset_confirm", lang=lang, default=_RESET_CONFIRM_EN)
+        body.append(f"{YELLOW}⚠ {prompt}{RESET}")
     if error is not None:
         body.append(f"{RED}⚠ {error}{RESET}")
     body.append("")
@@ -253,8 +344,12 @@ class MenuState:
     editing: bool = False
     edit_buffer: str = ""
     error: str | None = None
-    dirty: bool = False
+    #: A change just landed in ``values`` and is waiting to be written. Set by
+    #: every committing transition (autosave), cleared by :func:`_save`.
     pending_save: bool = False
+    #: ``r`` was pressed and the reset is waiting for its ``y``. Nothing in
+    #: ``values`` has changed yet, so any other key simply drops the prompt.
+    confirm_reset: bool = False
     quitting: bool = False
     #: Keys whose value the USER actually changed this session — the ONLY keys
     #: a save may write. ``values`` is a snapshot taken when the menu opened,
@@ -290,7 +385,7 @@ def _cycled(state: MenuState, field: config_schema.Field, delta: int) -> MenuSta
         state,
         values={**state.values, field.key: chosen},
         touched=state.touched | {field.key},
-        dirty=True,
+        pending_save=True,
         error=None,
     )
 
@@ -333,7 +428,7 @@ def _step_editing(
         if value == state.values.get(field.key, field.default):
             # Committing the value that is already there is not a change: don't
             # mark it touched (that would make an untouched key win over a
-            # concurrent write) and don't claim the menu is dirty.
+            # concurrent write) and don't trigger a pointless write.
             return replace(state, editing=False, edit_buffer="", error=None)
         return replace(
             state,
@@ -342,18 +437,41 @@ def _step_editing(
             editing=False,
             edit_buffer="",
             error=None,
-            dirty=True,
+            pending_save=True,
         )
     return state  # UNKNOWN, arrows, anything else: ignored, buffer intact
+
+
+def _step_confirm_reset(
+    state: MenuState, event: kr.KeyEvent, fields: Sequence[config_schema.Field]
+) -> MenuState:
+    """Answer the ``r`` prompt: ``y`` resets, ANYTHING else cancels.
+
+    Cancel-by-default is deliberate — a reset blanks a stored token, so a
+    keypress the user did not mean as "yes" must never be read as one.
+    """
+    if not (event.key is kr.Key.CHAR and event.char in ("y", "Y")):
+        return replace(state, confirm_reset=False, error=None)
+    defaults = {field.key: field.default for field in fields}
+    return replace(
+        state,
+        values={**state.values, **defaults},
+        # Touch every field so the write actually restores them; a key this
+        # ai-accounts does not declare is left in the file untouched.
+        touched=state.touched | frozenset(defaults),
+        confirm_reset=False,
+        pending_save=bool(defaults),
+        error=None,
+    )
 
 
 def _step_browsing(
     state: MenuState, event: kr.KeyEvent, fields: Sequence[config_schema.Field]
 ) -> MenuState:
+    if event.key is kr.Key.CHAR and event.char == "r":
+        return replace(state, confirm_reset=True, error=None)
     if not fields:
-        # No rows to move over, cycle or edit — only save/quit stay meaningful.
-        if event.key is kr.Key.CHAR and event.char == "s":
-            return replace(state, pending_save=True, error=None)
+        # No rows to move over, cycle or edit — only quit stays meaningful.
         if event.key is kr.Key.CHAR and event.char == "q":
             return replace(state, quitting=True)
         return state
@@ -372,8 +490,6 @@ def _step_browsing(
         return replace(
             state, editing=True, edit_buffer=_seed_buffer(state, field), error=None
         )
-    if event.key is kr.Key.CHAR and event.char == "s":
-        return replace(state, pending_save=True, error=None)
     if event.key is kr.Key.CHAR and event.char == "q":
         return replace(state, quitting=True)
     return state
@@ -390,7 +506,9 @@ def step(
     returns *state* unchanged rather than raising.
     """
     if event.key is kr.Key.CTRL_C:
-        return replace(state, quitting=True, editing=False)
+        return replace(state, quitting=True, editing=False, confirm_reset=False)
+    if state.confirm_reset:
+        return _step_confirm_reset(state, event, fields)
     if state.editing:
         return _step_editing(state, event, fields[state.cursor])
     return _step_browsing(state, event, fields)
@@ -416,13 +534,17 @@ def run_menu(
     *,
     read: Callable[[], kr.KeyEvent] = kr.read_key,
     out=None,
+    saver: _Saver | None = None,
 ) -> int:
     """Run the interactive menu until the user quits. Returns an exit code.
 
     *read* is the injection seam: production passes ``_keyreader.read_key``,
     tests pass an iterator of ``KeyEvent``s and never touch a terminal.
+    *saver* is the same seam for the write side; the default autosaves in the
+    background and is flushed before this function returns.
     """
     out = sys.stdout if out is None else out
+    saver = _Saver() if saver is None else saver
     state = MenuState(values=dict(autoswitch.load_config() if values is None else values))
     painted = 0
     with kr.raw_mode():
@@ -437,42 +559,42 @@ def run_menu(
                         editing=state.editing,
                         edit_buffer=state.edit_buffer,
                         error=state.error,
+                        confirm_reset=state.confirm_reset,
                     ),
                     out,
                     painted,
                 )
                 state = step(state, read(), fields)
                 if state.pending_save:
-                    state = _save(state)
+                    state = _save(state, saver)
                 if state.quitting:
+                    # Don't consume a failure there is no frame left to draw:
+                    # `close` below reports whatever the last write hit.
                     break
+                # A background write that failed reports itself on the next
+                # frame — the keypress that queued it did not wait for it.
+                failure = saver.take_error()
+                if failure is not None:
+                    state = replace(state, error=failure)
         except KeyboardInterrupt:
             # cbreak leaves ISIG on, so a real Ctrl-C arrives as a signal
             # rather than as a decodable byte — same exit as pressing `q`.
             state = replace(state, quitting=True)
-    if state.dirty:
-        log_yellow(i18n.t("menu.discarded", default="Discarded unsaved changes (press s to save next time)."))
+    failure = saver.close()
+    if failure is not None:
+        # The last write did not land and there is no frame left to show it on.
+        log_red(f"❌ {failure}")
     return 0
 
 
-def _save(state: MenuState) -> MenuState:
+def _save(state: MenuState, saver: _Saver) -> MenuState:
     # ONLY the keys the user actually touched. Handing over the whole snapshot
     # would defeat `save_config`'s merge (every on-disk value would lose to a
     # value read before the session started) and silently revert another
     # terminal's write, secrets included.
     updates = {key: state.values[key] for key in state.touched if key in state.values}
-    try:
-        with Spinner("Saving config…"):
-            _save_config(updates)
-    except ValueError as exc:
-        # A pre-existing invalid value elsewhere in the stored config (e.g. a
-        # hand-edited "notify") poisons the whole-dict rewrite. Surface it on
-        # the error line rather than let it traceback, and keep `dirty` true —
-        # the save did not actually happen.
-        return replace(state, pending_save=False, error=str(exc))
-    return replace(
-        state, pending_save=False, dirty=False, error=None, touched=frozenset()
-    )
+    saver.submit(updates)
+    return replace(state, pending_save=False, touched=frozenset())
 
 
 # ── non-TTY numbered fallback ───────────────────────────────────────────────

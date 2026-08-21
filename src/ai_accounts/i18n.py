@@ -262,9 +262,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "group.Provider behavior": {"zh-TW": "各家 CLI 行為"},
     "group.General": {"zh-TW": "一般"},
     # ── config menu chrome (English lives at each call site as the default) ──
-    "menu.keys": {"zh-TW": "↑↓ 移動 · ←→ 切換 · Enter 編輯/切換 · s 儲存 · Esc 取消 · q/Ctrl-C 離開"},
+    "menu.keys": {"zh-TW": "↑↓ 移動 · ←→ 切換 · Enter 編輯/切換 · r 重設 · Esc 取消 · q/Ctrl-C 離開 · 自動儲存"},
     "menu.unset": {"zh-TW": "（未設定）"},
-    "menu.discarded": {"zh-TW": "已放棄未儲存的變更（下次請按 s 儲存）。"},
+    "menu.reset_confirm": {"zh-TW": "確定要把所有設定還原為預設值嗎？[y/N]"},
     "menu.prompt": {"zh-TW": "{label} 的新值{hint}："},
     "menu.masked_hint": {"zh-TW": "（留空保持原值）"},
     "menu.select": {"zh-TW": "選擇要修改的項目（留空離開）："},
