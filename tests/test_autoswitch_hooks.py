@@ -88,6 +88,53 @@ class HookConfigTests(unittest.TestCase):
         self.assertEqual(self.read(".codex/hooks.json")["hooks"]["Stop"], [{"hooks": [{"command": "keep"}]}])
         self.assertNotIn(hooks.MANAGED_HOOK, self.read(".gemini/config/hooks.json"))
 
+    def test_install_rewrites_hooks_left_by_another_interpreter(self) -> None:
+        stale_codex = "/old/venv/bin/python3 -m ai_accounts.autoswitch_hooks run codex"
+        stale_agy = "/old/venv/bin/python3 -m ai_accounts.autoswitch_hooks run agy"
+        codex = self.home / ".codex" / "hooks.json"
+        codex.parent.mkdir(parents=True)
+        codex.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "Stop": [
+                            {"hooks": [{"command": "keep"}, {"command": stale_codex}]},
+                            {"hooks": [{"command": stale_codex}]},
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        agy = self.home / ".gemini" / "config" / "hooks.json"
+        agy.parent.mkdir(parents=True)
+        agy.write_text(
+            json.dumps({hooks.MANAGED_HOOK: {"Stop": [{"command": stale_agy}]}}),
+            encoding="utf-8",
+        )
+
+        self.assertFalse(hooks.is_installed())
+        hooks.install()
+
+        self.assertTrue(hooks.is_installed())
+        stop = self.read(".codex/hooks.json")["hooks"]["Stop"]
+        self.assertEqual(
+            [hook["command"] for group in stop for hook in group["hooks"]],
+            ["keep", hooks.command("codex")],
+        )
+        agy_data = self.read(".gemini/config/hooks.json")
+        self.assertEqual(agy_data[hooks.MANAGED_HOOK]["Stop"][0]["command"], hooks.command("agy"))
+
+    def test_install_leaves_a_foreign_managed_key_alone(self) -> None:
+        agy = self.home / ".gemini" / "config" / "hooks.json"
+        agy.parent.mkdir(parents=True)
+        foreign: dict = {hooks.MANAGED_HOOK: {"Stop": [{"command": "someone else"}]}}
+        agy.write_text(json.dumps(foreign), encoding="utf-8")
+
+        hooks.install()
+
+        self.assertEqual(self.read(".gemini/config/hooks.json"), foreign)
+
     def test_an_unreachable_credential_store_skips_the_agy_hook(self) -> None:
         with mock.patch.object(u, "go_keyring_available", return_value=(False, "no secret-tool")):
             hooks.install()

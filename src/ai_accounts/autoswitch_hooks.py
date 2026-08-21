@@ -73,14 +73,26 @@ def _save(path: Path, data: JsonObject) -> None:
     autoswitch._write_private(path, json.dumps(data, indent=2) + "\n")  # pyright: ignore[reportPrivateUsage]  # canonical atomic 0600 writer
 
 
-def _has_command(groups: JsonList, value: str) -> bool:
-    for group in groups:
-        handlers = _handlers(group)
-        if handlers and any(
-            isinstance(hook, dict) and hook.get("command") == value for hook in handlers
-        ):
-            return True
-    return False
+def _is_managed(hook: JsonValue, provider: str) -> bool:
+    """Whether a hook entry is ai-accounts's own, whatever interpreter installed it.
+
+    The installed command embeds `sys.executable`, so the same hook reads
+    differently from an editable checkout and from a `uv tool` install. Owning
+    a hook by its module marker keeps a reinstall a rewrite instead of a
+    duplicate (grouped hooks) or a false ownership clash (`agy`).
+    """
+    if not isinstance(hook, dict):
+        return False
+    return f"-m ai_accounts.autoswitch_hooks run {provider}" in str(hook.get("command", ""))
+
+
+def _managed_commands(groups: JsonList, provider: str) -> list[str]:
+    return [
+        str(cast(JsonObject, hook).get("command", ""))
+        for group in groups
+        for hook in (_handlers(group) or [])
+        if _is_managed(hook, provider)
+    ]
 
 
 def _handlers(group: JsonValue) -> JsonList | None:
@@ -108,10 +120,30 @@ def _install_grouped_stop(data: JsonObject, provider: str) -> bool:
     else:
         stop = stop_value
     value = command(provider)
-    if _has_command(stop, value):
+    if _managed_commands(stop, provider) == [value]:
         return False
+    _prune_managed(stop, provider)
     stop.append({"hooks": [{"type": "command", "command": value, "timeout": 30}]})
     return True
+
+
+def _prune_managed(stop: JsonList, provider: str) -> bool:
+    """Drop every ai-accounts-owned hook from `stop` in place."""
+    kept: JsonList = []
+    changed = False
+    for group in stop:
+        handlers = _handlers(group)
+        if handlers is None:
+            kept.append(group)
+            continue
+        remaining = [hook for hook in handlers if not _is_managed(hook, provider)]
+        changed |= len(remaining) != len(handlers)
+        if remaining:
+            assert isinstance(group, dict)
+            kept.append({**group, "hooks": remaining})
+    if changed:
+        stop[:] = kept
+    return changed
 
 
 def _remove_grouped_stop(data: JsonObject, provider: str) -> bool:
@@ -121,36 +153,26 @@ def _remove_grouped_stop(data: JsonObject, provider: str) -> bool:
     stop_value = hooks_value.get("Stop")
     if not isinstance(stop_value, list):
         return False
-    value = command(provider)
-    kept: JsonList = []
-    changed = False
-    for group in stop_value:
-        handlers = _handlers(group)
-        if handlers is None:
-            kept.append(group)
-            continue
-        remaining = [
-            hook
-            for hook in handlers
-            if not (isinstance(hook, dict) and hook.get("command") == value)
-        ]
-        changed |= len(remaining) != len(handlers)
-        if remaining:
-            assert isinstance(group, dict)
-            kept.append({**group, "hooks": remaining})
-    if changed:
-        hooks_value["Stop"] = kept
-    return changed
+    return _prune_managed(stop_value, provider)
+
+
+def _agy_value() -> JsonObject:
+    return {"Stop": [{"type": "command", "command": command("agy"), "timeout": 30}]}
+
+
+def _owns_agy(entry: JsonValue) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    installed = [hook for value in entry.values() if isinstance(value, list) for hook in value]
+    return bool(installed) and all(_is_managed(hook, "agy") for hook in installed)
 
 
 def _install_agy_stop(data: JsonObject) -> bool:
-    value: JsonObject = {
-        "Stop": [{"type": "command", "command": command("agy"), "timeout": 30}]
-    }
+    value = _agy_value()
     current = data.get(MANAGED_HOOK)
     if current == value:
         return False
-    if current is not None:
+    if current is not None and not _owns_agy(current):
         raise ValueError(f"{MANAGED_HOOK!r} is reserved for ai-accounts")
     data[MANAGED_HOOK] = value
     return True
@@ -175,7 +197,7 @@ def _grouped_update(
 def _grouped_stop_installed(data: JsonObject, provider: str) -> bool:
     hooks = data.get("hooks")
     stop = hooks.get("Stop") if isinstance(hooks, dict) else None
-    return isinstance(stop, list) and _has_command(stop, command(provider))
+    return isinstance(stop, list) and _managed_commands(stop, provider) == [command(provider)]
 
 
 def is_installed() -> bool:
@@ -185,7 +207,7 @@ def is_installed() -> bool:
         for provider in providers():
             data = _load(paths[provider])
             if provider == "agy":
-                if MANAGED_HOOK not in data:
+                if data.get(MANAGED_HOOK) != _agy_value():
                     return False
             elif not _grouped_stop_installed(data, provider):
                 return False

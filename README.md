@@ -1323,9 +1323,12 @@ Run `ai-accounts autoswitch setup` once after enabling the feature. It adds one
 provider `autoswitch` command when an agent turn completes, so usage is checked
 while the CLI is active rather than by a one-minute background poll. Grok and
 Vibe are excluded because they do not expose a quota API. Existing user hooks
-are preserved. Changing `enabled` merely enables or disables checks; it does
-not rewrite hooks or scheduler entries. Opening the interactive `config` menu
-detects a missing setup and offers to install it; `config set` remains fully
+are preserved. The hook command embeds the interpreter ai-accounts runs from, so
+re-running setup after a reinstall (editable checkout → `uv tool`, or a rebuilt
+venv) rewrites ai-accounts's own stale entry in place instead of adding a second
+one. Changing `enabled` merely enables or disables checks; it does not rewrite
+hooks or scheduler entries. Opening the interactive `config` menu detects a
+missing setup and offers to install it; `config set` remains fully
 non-interactive.
 
 Codex requires a one-time trust review for a newly installed user hook: start
