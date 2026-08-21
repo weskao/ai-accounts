@@ -1,3 +1,21 @@
+## [5.0.0] - 2026-08-21
+
+### 🚀 Features
+
+- **config:** [**breaking**] Autosave the config menu, add r reset
+
+### 📚 Documentation
+
+- Add prerequisites to README
+- **readme:** Document config menu autosave and r reset
+
+### 🧪 Testing
+
+- **config:** Cover config menu autosave and reset
+
+### ⚙️ Miscellaneous Tasks
+
+- Resync uv.lock with the released version bump
 ## [4.0.0] - 2026-08-20
 
 ### 🚀 Features
@@ -35,6 +53,10 @@
 - **readme:** Document the language key and message formats
 - **readme:** Unframed notifications and the language row
 - **readme:** Document the terminal-notifier notification path
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 4.0.0
 ## [3.0.0] - 2026-08-20
 
 ### 🚀 Features
