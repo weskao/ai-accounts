@@ -1063,6 +1063,23 @@ with `ai-accounts autoswitch setup` (see [Event hooks](#event-hooks) and
 autoswitch`, `grok-accounts autoswitch`, `vibe-accounts autoswitch`, or `ai-accounts autoswitch` to run
 all five at once) stays available for an immediate check.
 
+### Prerequisites
+
+AI Accounts requires Python ≥ 3.10 and `uv`; the Python dependency `pypinyin` is
+installed automatically by `uv`. The autoswitch setup itself uses only built-in
+OS facilities and Python's standard JSON library — `jq` is not required.
+
+| OS | Timer prerequisite |
+| --- | --- |
+| macOS | Built-in `launchctl` |
+| Linux | `systemctl --user` or `crontab` (either one) |
+| Windows | Built-in `schtasks` |
+
+Codex and Claude need valid logins plus saved profiles before their quotas can
+be checked. agy requires a macOS Keychain session and is skipped on Linux and
+Windows. Codex also requires one manual `/hooks` approval the first time its
+user hook is installed.
+
 ### Config
 
 ```sh
