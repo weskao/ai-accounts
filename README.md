@@ -47,18 +47,6 @@ uv tool uninstall ai-accounts
 | `grok-accounts` | Manage Grok Build OAuth profiles |
 | `vibe-accounts` | Manage Mistral Vibe API-key profiles |
 
-Every provider command supports the common profile workflow:
-
-```sh
-codex-accounts who
-codex-accounts save work
-codex-accounts list
-codex-accounts switch work
-codex-accounts refresh --all
-codex-accounts remove work
-codex-accounts --help
-```
-
 Use the umbrella command to run the same action for all providers:
 
 ```sh
@@ -72,6 +60,18 @@ ai-accounts --help
 
 `list` fetches providers concurrently. Interactive actions run providers one at
 a time so their prompts remain usable.
+
+Every provider command supports the common profile workflow:
+
+```sh
+codex-accounts who
+codex-accounts save work
+codex-accounts list
+codex-accounts switch work
+codex-accounts refresh --all
+codex-accounts remove work
+codex-accounts --help
+```
 
 ## Profile storage
 
