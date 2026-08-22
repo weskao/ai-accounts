@@ -148,7 +148,7 @@ class _HomeMixin(unittest.TestCase):
 
 
 class StoragePathTests(unittest.TestCase):
-    def test_default_storage_is_ai-accounts_owned(self) -> None:
+    def test_default_storage_is_ai_accounts_owned(self) -> None:
         with (
             mock.patch.dict(os.environ, {}, clear=True),
             mock.patch.object(ga.Path, "home", return_value=Path("/tmp/home")),

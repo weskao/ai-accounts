@@ -183,7 +183,7 @@ class NoDuplicateConfigImplementationTest(unittest.TestCase):
         import ast
         import pathlib
 
-        src_dir = pathlib.Path(__file__).resolve().parent.parent / "src" / "ai-accounts"
+        src_dir = pathlib.Path(__file__).resolve().parent.parent / "src" / "ai_accounts"
         owners = []
         for path in src_dir.glob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -198,7 +198,7 @@ class NoDuplicateConfigImplementationTest(unittest.TestCase):
         src = (
             pathlib.Path(__file__).resolve().parent.parent
             / "src"
-            / "ai-accounts"
+            / "ai_accounts"
             / "ai_accounts.py"
         ).read_text(encoding="utf-8")
         for name in (

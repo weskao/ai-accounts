@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -637,13 +636,9 @@ class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
         self.assertIn("partial output before the hang", output)
 
 
-# KNOWN ISSUE (pre-existing, out of scope for the token-refresh project): a
-# second `class MainDispatchTests` is defined further down this file. Python
-# rebinds the module-level name, so pytest only collects the LATER class —
-# the two tests below (test_main_run_invokes_run_once,
-# test_main_install_invokes_install) are silently dropped from collection.
-# Flagged here rather than fixed/renamed, per T6's scope.
-class MainDispatchTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, _ConfigMixin, unittest.TestCase):
+class MainRunInstallDispatchTests(
+    _PlatformMixin, _HomeMixin, _SubprocessMixin, _ConfigMixin, unittest.TestCase
+):
     def test_main_run_invokes_run_once(self) -> None:
         # Given: the "run" subcommand, as the scheduler would invoke it
         with mock.patch.object(at, "run_once", return_value=0) as run_once:

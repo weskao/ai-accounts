@@ -1,21 +1,14 @@
 [project]
 name = "ai-accounts"
-version = "5.0.0"
-description = "Personal CLI toolbox extracted from ~/.zshrc, packaged as uv tools"
+version = "0.1.0"
+description = "Manage and switch profiles across AI coding CLIs"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "ai-accounts" }]
+authors = [{ name = "Wes Kao" }]
 license = { text = "MIT" }
-dependencies = ["pypinyin"]
+dependencies = []
 
 [project.scripts]
-gtrans = "ai_accounts.gtrans:main"
-charcount = "ai_accounts.charcount:main"
-imgmin = "ai_accounts.imgmin:main"
-resize-image = "ai_accounts.resize:main"
-towebp = "ai_accounts.towebp:main"
-html2md = "ai_accounts.html_to_md:main"
-vcadd = "ai_accounts.vcadd:main"
 codex-accounts = "ai_accounts.codex_accounts:main"
 claude-accounts = "ai_accounts.claude_accounts:main"
 agy-accounts = "ai_accounts.gemini_accounts:main"
@@ -23,12 +16,16 @@ grok-accounts = "ai_accounts.grok_accounts:main"
 vibe-accounts = "ai_accounts.vibe_accounts:main"
 ai-accounts = "ai_accounts.ai_accounts:main"
 
+[project.urls]
+Repository = "https://github.com/weskao/ai-accounts"
+Issues = "https://github.com/weskao/ai-accounts/issues"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ai-accounts"]
+packages = ["src/ai_accounts"]
 
 [dependency-groups]
 dev = [

@@ -487,12 +487,12 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
 
     def test_a_reset_keeps_a_key_this_version_does_not_declare(self) -> None:
         self.config_path.write_text(
-            json.dumps({"enabled": True, "from_a_newer_ai-accounts": "keep me"}),
+            json.dumps({"enabled": True, "from_a_newer_ai_accounts": "keep me"}),
             encoding="utf-8",
         )
         rc, _, _ = self.run_menu(keys(char("r"), char("y"), char("q")))
         self.assertEqual(rc, 0)
-        self.assertEqual(self.stored()["from_a_newer_ai-accounts"], "keep me")
+        self.assertEqual(self.stored()["from_a_newer_ai_accounts"], "keep me")
         self.assertIs(self.stored()["enabled"], False)
 
     def test_a_rejected_edit_never_reaches_disk(self) -> None:

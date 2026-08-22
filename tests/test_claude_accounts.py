@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import time
 import unittest
+import urllib.error
+import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -128,7 +130,7 @@ class ClaimsTests(unittest.TestCase):
 
 
 class StoragePathTests(unittest.TestCase):
-    def test_default_storage_is_central_ai-accounts(self) -> None:
+    def test_default_storage_is_central_ai_accounts(self) -> None:
         # Profile store defaults OUTSIDE ~/.claude so a dotfiles repo of the
         # app dotdir can never accidentally commit OAuth token snapshots.
         with tempfile.TemporaryDirectory() as tmp:
@@ -222,7 +224,7 @@ class WireFormatTests(unittest.TestCase):
             captured["req"] = req
             return self._fake_response({"access_token": "new", "expires_in": 3600})
 
-        with mock.patch.object(ca.urllib.request, "urlopen", side_effect=fake_urlopen):
+        with mock.patch.object(urllib.request, "urlopen", side_effect=fake_urlopen):
             _, err = ca._oauth_refresh("rt-xyz")
         self.assertIsNone(err)
         req = captured["req"]
@@ -241,20 +243,20 @@ class WireFormatTests(unittest.TestCase):
     def test_oauth_refresh_bare_403_is_edge_block_not_revoked(self) -> None:
         # A 403 with no OAuth error body is a Cloudflare/WAF block before the
         # endpoint — transient, NOT a revoked token (which would be relogin).
-        err = ca.urllib.error.HTTPError(
+        err = urllib.error.HTTPError(
             ca._OAUTH_TOKEN_URL, 403, "Forbidden", {},
             io.BytesIO(b'{"error_name":"browser_signature_banned"}'),
         )
-        with mock.patch.object(ca.urllib.request, "urlopen", side_effect=err):
+        with mock.patch.object(urllib.request, "urlopen", side_effect=err):
             _, msg = ca._oauth_refresh("rt-xyz")
         self.assertFalse(ca._is_revoked_error(msg), msg)
 
     def test_oauth_refresh_403_invalid_grant_is_revoked(self) -> None:
-        err = ca.urllib.error.HTTPError(
+        err = urllib.error.HTTPError(
             ca._OAUTH_TOKEN_URL, 403, "Forbidden", {},
             io.BytesIO(b'{"error":"invalid_grant"}'),
         )
-        with mock.patch.object(ca.urllib.request, "urlopen", side_effect=err):
+        with mock.patch.object(urllib.request, "urlopen", side_effect=err):
             _, msg = ca._oauth_refresh("rt-xyz")
         self.assertTrue(ca._is_revoked_error(msg), msg)
 
@@ -422,7 +424,7 @@ class ProfileCommandTests(_HomeMixin):
             json.dumps(
                 {
                     "claudeAiOauth": _oauth(access="at-a", refresh="rt-a"),
-                    "ai-accountsAccount": {"email": "wes@example.com", "name": "Wes"},
+                    "aiAccountsAccount": {"email": "wes@example.com", "name": "Wes"},
                 }
             ),
             encoding="utf-8",

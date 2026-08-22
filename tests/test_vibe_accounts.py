@@ -141,7 +141,7 @@ class VibeAccountsTests(unittest.TestCase):
             (self.account_dir / ".current-profile").read_text(), "personal"
         )
 
-    def test_switch_keeps_backup_in_ai-accounts_store(self) -> None:
+    def test_switch_keeps_backup_in_ai_accounts_store(self) -> None:
         self.assertTrue(va._write_env(va._auth_file(), _auth("sk-old-key")))
         self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
 

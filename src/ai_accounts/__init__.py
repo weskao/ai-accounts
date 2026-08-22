@@ -1,3 +1,3 @@
-"""ai-accounts: personal CLI tools extracted from ~/.zshrc."""
+"""Profile management for AI coding CLIs."""
 
 __version__ = "0.1.0"

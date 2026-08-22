@@ -76,7 +76,7 @@ class HookConfigTests(unittest.TestCase):
             agy_data[hooks.MANAGED_HOOK]["Stop"][0]["command"], hooks.command("agy")
         )
 
-    def test_uninstall_removes_only_ai-accounts_hooks(self) -> None:
+    def test_uninstall_removes_only_ai_accounts_hooks(self) -> None:
         hooks.install()
         codex = self.home / ".codex" / "hooks.json"
         data = json.loads(codex.read_text(encoding="utf-8"))

@@ -24,9 +24,6 @@ import re
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Final
@@ -75,7 +72,7 @@ from ._utils import (
 _PLAN_TIERS = ("pro", "team", "max")
 
 _OAUTH_KEY: Final = "claudeAiOauth"
-_IDENTITY_KEY: Final = "ai-accountsAccount"  # non-secret identity snapshot (email/name)
+_IDENTITY_KEY: Final = "aiAccountsAccount"  # non-secret identity snapshot (email/name)
 
 HELP = """claude-accounts — manage multiple Claude Code login profiles
 

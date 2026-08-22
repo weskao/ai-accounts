@@ -22,12 +22,9 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest
       - run: uv build
-      - run: uv run gtrans --help
-      - run: uv run charcount --help
-      - run: uv run imgmin --help
-      - run: uv run resize-image --help
-      - run: uv run towebp --help
-      - run: uv run html2md --help
-      - run: uv run vcadd --help
+      - run: uv run ai-accounts --help
       - run: uv run codex-accounts --help
+      - run: uv run claude-accounts --help
       - run: uv run agy-accounts --help
+      - run: uv run grok-accounts --help
+      - run: uv run vibe-accounts --help
