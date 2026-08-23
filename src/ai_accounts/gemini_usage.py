@@ -156,28 +156,31 @@ def _ports(pid: int) -> list[int]:
     return ports
 
 
-def _post(port: int, method: str) -> JsonDict | None:
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    for scheme in ("https", "http"):
-        request = urllib.request.Request(
-            f"{scheme}://127.0.0.1:{port}{_SERVICE}{method}",
-            data=b"{}",
-            headers={
-                "Content-Type": "application/json",
-                "Connect-Protocol-Version": "1",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=2, context=context) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            if isinstance(payload, dict):
-                return payload
-        except (OSError, ValueError):
-            continue
-    return None
+def _tls_context(port: int) -> ssl.SSLContext | None:
+    """Pin the certificate served by the already PID-verified local port."""
+    try:
+        pem = ssl.get_server_certificate(("localhost", port), timeout=2)
+        return ssl.create_default_context(cadata=pem)
+    except (OSError, ValueError, ssl.SSLError):
+        return None
+
+
+def _post(port: int, method: str, context: ssl.SSLContext) -> JsonDict | None:
+    request = urllib.request.Request(
+        f"https://localhost:{port}{_SERVICE}{method}",
+        data=b"{}",
+        headers={
+            "Content-Type": "application/json",
+            "Connect-Protocol-Version": "1",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=2, context=context) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return payload if isinstance(payload, dict) else None
+    except (OSError, ValueError):
+        return None
 
 
 def _drain(fd: int, output: bytearray) -> None:
@@ -200,8 +203,11 @@ def _open_pty() -> tuple[int, int]:
 def fetch_usage_from_pid(pid: int) -> UsageSnapshot | None:
     summary = status = None
     for port in _ports(pid):
-        summary = summary or _post(port, "RetrieveUserQuotaSummary")
-        status = status or _post(port, "GetUserStatus")
+        context = _tls_context(port)
+        if context is None:
+            continue
+        summary = summary or _post(port, "RetrieveUserQuotaSummary", context)
+        status = status or _post(port, "GetUserStatus", context)
     if summary is None or status is None:
         return None
     gemini_weekly, gemini_session, other_weekly, other_session = _parse_summary(summary)
@@ -233,7 +239,6 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
     binary = os.environ.get("ANTIGRAVITY_CLI_PATH") or shutil.which("agy")
     if not binary:
         return UsageSnapshot(None, None, None, None, None, None, None, "agy not found")
-
     master, slave = _open_pty()
     process = subprocess.Popen(
         [binary],

@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: "3.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Check, test, and build
+        run: |
+          uv run ruff check .
+          uv run pytest
+          uv build
+      - name: Validate release wheel
+        run: |
+          uv venv .release-venv
+          uv pip install --python .release-venv/bin/python --no-index dist/*.whl
+          for command in ai-accounts codex-accounts claude-accounts agy-accounts grok-accounts vibe-accounts; do
+            ".release-venv/bin/$command" --help
+          done
+      - name: Create checksums
+        run: sha256sum dist/* > dist/SHA256SUMS
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --title "$GITHUB_REF_NAME" --verify-tag

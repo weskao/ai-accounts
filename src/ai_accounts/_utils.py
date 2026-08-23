@@ -568,7 +568,8 @@ def keychain_write(service: str, account: str, secret: str) -> bool:
     try:
         result = subprocess.run(
             ["security", "add-generic-password", "-U",
-             "-s", service, "-a", account, "-w", secret],
+             "-s", service, "-a", account, "-w"],
+            input=secret + "\n",
             capture_output=True,
             text=True,
         )

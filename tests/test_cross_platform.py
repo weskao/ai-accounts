@@ -324,6 +324,49 @@ class PlatformLimitedCommandTests(unittest.TestCase):
             self.assertFalse(ca._write_keychain_creds("secret"))
 
 
+class KeychainSecurityTests(unittest.TestCase):
+    def test_write_passes_secret_via_stdin_not_process_arguments(self):
+        secret = "private-token"
+        with mock.patch.object(u, "IS_MACOS", True), mock.patch.object(
+            u.subprocess, "run", return_value=mock.Mock(returncode=0)
+        ) as run:
+            self.assertTrue(u.keychain_write("service", "account", secret))
+        self.assertNotIn(secret, run.call_args.args[0])
+        self.assertEqual(run.call_args.kwargs["input"], secret + "\n")
+        self.assertEqual(run.call_args.args[0][-1], "-w")
+
+
+class GeminiUsageTransportTests(unittest.TestCase):
+    def test_pid_owned_port_certificate_builds_the_verified_context(self):
+        pem = "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----"
+        context = mock.sentinel.context
+        with mock.patch.object(
+            gu.ssl, "get_server_certificate", return_value=pem
+        ) as get_certificate, mock.patch.object(
+            gu.ssl, "create_default_context", return_value=context
+        ) as create:
+            self.assertIs(gu._tls_context(1234), context)
+        get_certificate.assert_called_once_with(("localhost", 1234), timeout=2)
+        create.assert_called_once_with(cadata=pem)
+
+    def test_local_rpc_uses_verified_https_without_plaintext_fallback(self):
+        response = mock.MagicMock()
+        response.read.return_value = b'{"ok": true}'
+        response.__enter__.return_value = response
+        context = mock.sentinel.context
+        with mock.patch.object(
+            gu.urllib.request, "urlopen", return_value=response
+        ) as open_url:
+            self.assertEqual(gu._post(1234, "GetUserStatus", context), {"ok": True})
+        request = open_url.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            "https://localhost:1234/exa.language_server_pb.LanguageServerService/GetUserStatus",
+        )
+        self.assertIs(open_url.call_args.kwargs["context"], context)
+        open_url.assert_called_once()
+
+
 
 if __name__ == "__main__":
     unittest.main()
