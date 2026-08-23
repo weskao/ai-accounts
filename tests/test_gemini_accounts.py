@@ -928,10 +928,13 @@ class AgyBlindSwitchGateTests(_AutoswitchMixin):
             rc = self.quiet(ga.cmd_autoswitch)
 
         listing.assert_not_called()
+        # And: the vanished target does not end the run — the next candidate in
+        # order takes over, so one dead profile cannot strand the user on an
+        # exhausted account.
         self.assertEqual(
-            (self.home / "accounts" / ".current-profile").read_text(), "work"
+            (self.home / "accounts" / ".current-profile").read_text(), "spare"
         )
-        self.assertEqual(rc, 1)
+        self.assertEqual(rc, 0)
 
 
 class AgyAutoswitchKeychainSafetyTests(unittest.TestCase):

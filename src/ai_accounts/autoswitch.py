@@ -326,7 +326,9 @@ def run_autoswitch(
     ``switch_when_used_pct``. The target is the candidate with the lowest used
     percentage *strictly below* that threshold, ties broken by profile name;
     the active profile and any candidate without usage data are skipped. A
-    dead end goes through :func:`notify_once`, a switch through :func:`notify`.
+    candidate whose *switch* fails hands over to the next one in that order,
+    so one dead profile cannot wedge the run. A dead end goes through
+    :func:`notify_once`, a switch through :func:`notify`.
     Never raises: probe, switch and restart failures come back inside the
     returned :class:`SwitchOutcome`.
     """
@@ -383,14 +385,26 @@ def run_autoswitch(
             i18n.t("notify.no_candidate.body", threshold=threshold),
         )
         return outcome("no_candidate")
-    target_used, target = min(qualified)  # least used, ties by name
-    failure = f"{provider}: could not switch to {target}"
-    try:
-        error = None if switch(target) else failure
-    except Exception as exc:
-        error = f"{failure}: {exc}"
-    if error is not None:
-        u.log_red(error)
+    # Least used first, ties by name — then on to the next one when a switch
+    # fails. A single unactivatable profile (a foreign credential blob, a
+    # revoked token) would otherwise be re-picked and re-fail on every later
+    # tick, wedging the switch on a dead target with live accounts waiting
+    # behind it. Reported as switch_failed only once every candidate refused.
+    target: str | None = None
+    target_used = 0
+    error: str | None = None
+    for candidate_used, candidate in sorted(qualified):
+        failure = f"{provider}: could not switch to {candidate}"
+        try:
+            switched = switch(candidate)
+        except Exception as exc:
+            switched, failure = False, f"{failure}: {exc}"
+        if switched:
+            target, target_used = candidate, candidate_used
+            break
+        u.log_red(failure)
+        error = failure
+    if target is None:
         return outcome("switch_failed", error=error)
     # Restart first, notify second: the notification states whether the new
     # account is already live or the user still has to restart, and it can

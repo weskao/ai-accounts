@@ -1086,6 +1086,69 @@ class EngineUnknownActiveTests(_EngineMixin):
         self.assertEqual(self.spawned, [])
 
 
+class EngineFailedSwitchTests(_EngineMixin):
+    """A candidate that refuses to activate must not end the run.
+
+    Blind-mode agy ranks candidates by name when no quota is readable, so an
+    unactivatable profile (a foreign credential blob, a revoked token) can sit
+    at the front of the queue and be re-picked on every 30-minute tick —
+    stranding the user on an exhausted account forever.
+    """
+
+    def _run(self, refuse: set[str]):
+        def switch(name: str) -> bool:
+            self.switched.append(name)
+            return name not in refuse
+
+        with redirect_stderr(io.StringIO()):
+            return aw.run_autoswitch(
+                "agy",
+                ["backup", "spare", "work"],
+                "work",
+                self.probe_from({"work": 97, "backup": 0, "spare": 0}),
+                switch,
+            )
+
+    def test_a_refused_candidate_hands_over_to_the_next_one(self) -> None:
+        # Given: the first candidate in order cannot be activated
+        # When: the engine runs
+        outcome = self._run({"backup"})
+        # Then: it moves on rather than giving up, and reports the one that took
+        self.assertEqual(outcome.reason, "switched")
+        self.assertEqual(outcome.to_profile, "spare")
+        self.assertEqual(self.switched, ["backup", "spare"])
+
+    def test_only_an_all_refused_queue_is_a_failure(self) -> None:
+        # Given: every candidate refuses
+        # When: the engine runs
+        outcome = self._run({"backup", "spare"})
+        # Then: switch_failed — after each one was actually tried
+        self.assertEqual(outcome.reason, "switch_failed")
+        self.assertIsNone(outcome.to_profile)
+        self.assertEqual(self.switched, ["backup", "spare"])
+
+    def test_a_raising_switch_is_not_the_end_of_the_run_either(self) -> None:
+        # Given: activating the first candidate raises instead of returning False
+        def switch(name: str) -> bool:
+            self.switched.append(name)
+            if name == "backup":
+                raise OSError("keychain locked")
+            return True
+
+        with redirect_stderr(io.StringIO()):
+            outcome = aw.run_autoswitch(
+                "agy",
+                ["backup", "spare", "work"],
+                "work",
+                self.probe_from({"work": 97, "backup": 0, "spare": 0}),
+                switch,
+            )
+        # Then: the exception is contained and the next candidate still runs
+        self.assertEqual(outcome.reason, "switched")
+        self.assertEqual(outcome.to_profile, "spare")
+        self.assertEqual(self.switched, ["backup", "spare"])
+
+
 class EngineOutcomeTests(_EngineMixin):
     def _run(self, used, *, profiles=("work", "spare"), active="work", switch=None):
         return aw.run_autoswitch(
