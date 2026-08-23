@@ -73,6 +73,11 @@ codex-accounts remove work
 codex-accounts --help
 ```
 
+`list` gives a compact, provider-by-provider view of every saved profile and
+marks the active one.
+
+![Saved profiles from every provider](ai-accounts-list%20demo.png)
+
 ## Profile storage
 
 Saved profiles and shared settings live under `~/.ai-accounts`:
@@ -115,6 +120,11 @@ ai-accounts autoswitch
 ai-accounts autoswitch setup
 ai-accounts timer-status
 ```
+
+`ai-accounts config` opens the interactive menu for configuring auto-switch
+behavior and notifications.
+
+![Interactive ai-accounts configuration](ai-accounts%20config%20demo.gif)
 
 `ai-accounts autoswitch setup` installs provider event hooks plus a low-frequency
 OS timer fallback. Re-run it after reinstalling the package so hooks point at
