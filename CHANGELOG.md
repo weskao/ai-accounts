@@ -1,3 +1,13 @@
+## [0.2.1] - 2026-08-23
+
+### 🐛 Bug Fixes
+
+- Secure cross-platform CI and credentials
+
+### 📚 Documentation
+
+- Add list and config demos to readme
+- Update config demo gif
 ## [0.2.0] - 2026-08-23
 
 ### 🚀 Features
@@ -14,6 +24,10 @@
 - Move common workflow example after umbrella command
 - Document candidate order and the agy exception
 - Document agy's two candidate-measuring modes
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.2.0
 ## [0.1.0] - 2026-08-22
 
 ### 🚀 Features
