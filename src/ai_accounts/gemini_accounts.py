@@ -91,8 +91,10 @@ USAGE
   agy-accounts refresh --all         Refresh every saved profile
   agy-accounts sync                  Copy the active auth back to its matching profile
   agy-accounts autoswitch            Leave the active account when its quota runs out
-                                     (only the live session's quota is readable, so
-                                     switching needs "agy_blind_switch": true)
+                                     (measures candidates for real when no agy or
+                                     Antigravity IDE is running; otherwise ranks them
+                                     by their last reading, and a candidate with no
+                                     reading at all needs "agy_blind_switch": true)
   agy-accounts login-switch <name>   Antigravity Google login + save as <name>
   agy-accounts config                Interactive config menu shared by every ai-accounts CLI
                                      (works even where the credential store is
@@ -975,6 +977,10 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
                         usage = _validated_usage(
                             gemini_usage.fetch_usage(timeout=8), claims
                         )
+                        # This loop already paid for the reading autoswitch is
+                        # not allowed to take itself — keep it.
+                        if usage.error is None:
+                            _cache_usage(name, _worst_window(usage))
                         refreshed_text = (
                             _read_active_auth_text() if usage.error is None else None
                         )
@@ -1356,14 +1362,16 @@ def cmd_login_switch(name: str) -> int:
     return agy_exit or 1
 
 
-def _live_used_pct(snapshot: gemini_usage.UsageSnapshot) -> int | None:
-    """Worst used percentage across *snapshot*'s windows — None when unknown.
+def _worst_window(snapshot: gemini_usage.UsageSnapshot) -> UsageWindow | None:
+    """The fullest of *snapshot*'s windows — None when none of them read.
 
     The account is throttled as soon as any one window runs out, so the
-    fullest window is the one that decides whether it is time to move.
+    fullest window is the one that decides whether it is time to move. The
+    whole window rather than its percentage, because its own reset time is
+    when that verdict expires — which is what the usage cache stores with it.
     """
-    used = [
-        window.percentage
+    windows = [
+        window
         for window in (
             snapshot.gemini_weekly,
             snapshot.gemini_session,
@@ -1372,7 +1380,76 @@ def _live_used_pct(snapshot: gemini_usage.UsageSnapshot) -> int | None:
         )
         if window is not None
     ]
-    return max(used) if used else None
+    return max(windows, key=lambda window: window.percentage) if windows else None
+
+
+def _live_used_pct(snapshot: gemini_usage.UsageSnapshot) -> int | None:
+    """Worst used percentage across *snapshot*'s windows — None when unknown."""
+    window = _worst_window(snapshot)
+    return None if window is None else window.percentage
+
+
+# ── usage cache ───────────────────────────────────────────────────────────
+# Only the LIVE agy session answers quota questions, so every reading costs an
+# `agy` launch and a turn in the shared credential slot. Whoever paid for one
+# (`list`, an autoswitch probe, the active-account check) leaves it here, so a
+# later run can rank candidates it is not allowed to probe. Percentages and
+# reset times only — no credentials.
+
+
+def _usage_cache_file() -> Path:
+    return _antigravity_dir() / "usage-cache.json"
+
+
+def _read_usage_cache() -> JsonDict:
+    try:
+        cache = json.loads(_usage_cache_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return cache if isinstance(cache, dict) else {}
+
+
+def _cache_usage(name: str, window: UsageWindow | None) -> None:
+    """Remember *name*'s fullest window. Best effort: never fails the caller.
+
+    A cache that cannot be written must not break the command that was really
+    asked for — the reading was a side effect of it, not its purpose.
+    """
+    if window is None:
+        return
+    cache = _read_usage_cache()
+    cache[name] = {
+        "used": window.percentage,
+        "reset_time": window.reset_time,
+        "at": int(time.time()),
+    }
+    try:
+        atomic_write_json(_usage_cache_file(), cache)
+    except OSError:
+        pass
+
+
+def _cached_used_pct(name: str, cache: JsonDict) -> int | None:
+    """*name*'s last known used percentage, or None when nothing is known.
+
+    A reading ages in one direction only: a profile nobody activated cannot
+    have spent more quota since it was taken, so the stored percentage holds
+    as a lower bound until its window resets — after which that window starts
+    empty again.
+    """
+    entry = cache.get(name)
+    if not isinstance(entry, dict):
+        return None
+    used = entry.get("used")
+    if not isinstance(used, int) or isinstance(used, bool):
+        return None
+    reset = entry.get("reset_time")
+    # ponytail: assumes this machine is the only one spending the quota — a
+    # second machine using the account would make this read low until the next
+    # real probe corrects it. Upgrade path: shorten the trusted age.
+    if isinstance(reset, int) and time.time() >= reset:
+        return 0
+    return used
 
 
 def _blind_candidate(name: str, active: Path | None) -> bool:
@@ -1419,6 +1496,55 @@ def _antigravity_ide_running() -> bool:
     return result.returncode == 0
 
 
+def _slot_readers_running() -> bool:
+    """Whether anything but us might read the shared credential slot right now.
+
+    Reading a saved profile's quota means making it live for a moment, so it is
+    safe exactly while nothing else holds that slot: no Antigravity IDE, no
+    `agy` process. Read-only — pgrep only looks at the process table. Fails
+    CLOSED: with no way to look, assume there is a reader.
+
+    Note this is True on the Stop-hook path: the agy session whose end fired
+    the hook is still up, and is itself a reader. Probing is therefore the
+    timer's job, and the hook falls back to the cache.
+    """
+    if _antigravity_ide_running():
+        return True
+    if not have("pgrep"):
+        return True
+    try:
+        result = subprocess.run(
+            ["pgrep", "-x", "agy"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return True
+    return result.returncode == 0
+
+
+def _probe_saved_profile(name: str, restore_text: str | None) -> UsageWindow | None:
+    """Read a *saved* profile's quota by making it live only for the read.
+
+    The credential slot is written, queried through a throwaway `agy`, and
+    restored in a ``finally``. Restoring per probe rather than once at the end
+    is what keeps the real switch that may follow from being rolled back. The
+    caller must have established that nothing else is reading the slot
+    (:func:`_slot_readers_running`).
+    """
+    profile = _profile_file(name)
+    if profile is None or not profile.is_file():
+        return None
+    claims = _read_claims(profile)
+    if not _write_cli_auth_text(profile.read_text(encoding="utf-8")):
+        return None
+    try:
+        snapshot = _validated_usage(gemini_usage.fetch_usage(timeout=8), claims)
+    finally:
+        _restore_cli_auth(restore_text)
+    window = None if snapshot.error else _worst_window(snapshot)
+    _cache_usage(name, window)
+    return window
+
+
 def _autoswitch_resume() -> bool:
     """Start a NEW agy CLI session continuing the last conversation.
 
@@ -1438,15 +1564,17 @@ def _autoswitch_resume() -> bool:
 def cmd_autoswitch() -> int:
     """Move off the active account when its quota runs out.
 
-    Antigravity answers quota questions only for the session that is *live*,
-    and making a candidate live means writing its credential into the single
-    shared keychain slot the running agy process reads — which would corrupt
-    an in-flight request on the user's real session. So candidates are never
-    probed here; only the active account is.
+    Antigravity answers quota questions only for the session that is *live*, so
+    reading a candidate's quota means writing its credential into the single
+    shared slot a running agy reads. That is safe exactly while nothing else
+    holds that slot, which splits this into two modes:
 
-    That leaves every switch blind: the target may be just as exhausted as the
-    account being left. Which is why it is opt-in through ``agy_blind_switch``
-    and off by default — without it this command reports and stops.
+    * nothing running — every candidate is measured for real, the slot restored
+      after each read, and the switch goes to a verified account.
+    * something running — nothing is swapped. Candidates are ranked by the last
+      reading taken for them (:func:`_cached_used_pct`), and only a candidate
+      nothing at all is known about needs the blind ``agy_blind_switch``
+      leap-of-faith it was always gated on.
     """
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
@@ -1454,29 +1582,43 @@ def cmd_autoswitch() -> int:
     # config_flag, not bool(): a hand-edited `"agy_blind_switch": "false"`
     # is a truthy string, and this gate must fail closed on anything odd.
     blind = autoswitch.config_flag("agy_blind_switch")
+    cache = _read_usage_cache()
+    # Evaluated once, up front: a probe of our own spawns `agy`, which would
+    # otherwise look like somebody else's reader to every later candidate.
+    live_reader = _slot_readers_running()
+    restore_text = None if live_reader else _read_active_auth_text()
     probe_error: list[str] = []
+    readings: dict[str, int] = {}
 
     def probe(name: str) -> UsageWindow | None:
-        if active is None or name != active.stem:
-            # Never activate a candidate (see the docstring). Blind mode takes
-            # the unknown as "has quota" — but only for a profile that could
-            # actually take over (_blind_candidate); otherwise it stays
-            # unknown, and the engine finds nothing to switch to.
-            if blind and _blind_candidate(name, active):
-                return UsageWindow(0, None, None)
+        if active is not None and name == active.stem:
+            snapshot = gemini_usage.fetch_usage(timeout=8)
+            if snapshot.error:
+                probe_error.append(snapshot.error)
+                return None
+            window = _worst_window(snapshot)
+            _cache_usage(name, window)
+            return window
+        if not _blind_candidate(name, active):
             return None
-        snapshot = gemini_usage.fetch_usage(timeout=8)
-        if snapshot.error:
-            probe_error.append(snapshot.error)
-        used = _live_used_pct(snapshot)
-        return None if used is None else UsageWindow(used, None, None)
+        if live_reader:
+            cached = _cached_used_pct(name, cache)
+            if cached is None:
+                return UsageWindow(0, None, None) if blind else None
+            readings[name] = cached
+            return UsageWindow(cached, None, None)
+        window = _probe_saved_profile(name, restore_text)
+        if window is None:
+            return None
+        readings[name] = window.percentage
+        return window
 
     def switch(name: str) -> bool:
         # cmd_switch falls back to cmd_list() when the profile file is gone,
         # and cmd_list activates every saved profile in turn to read its quota
-        # — the very keychain hijack this command exists to avoid. The target
-        # can disappear during the live quota fetch (a concurrent `remove`),
-        # so re-check here rather than let it reach that branch.
+        # — a keychain hijack nobody asked for. The target can disappear during
+        # the quota fetches (a concurrent `remove`), so re-check here rather
+        # than let it reach that branch.
         profile = _profile_file(name)
         if profile is None or not profile.is_file():
             log_red(f"❌ Profile disappeared before the switch: {name}")
@@ -1504,7 +1646,13 @@ def cmd_autoswitch() -> int:
             agy_ide_running=interactive and _antigravity_ide_running(),
         ),
     )
-    _render_autoswitch(outcome, probe_error, others=len(profiles) - 1, blind=blind)
+    _render_autoswitch(
+        outcome,
+        probe_error,
+        others=len(profiles) - 1,
+        blind=blind,
+        readings=readings,
+    )
     return 1 if outcome.reason == "switch_failed" else 0
 
 
@@ -1514,6 +1662,7 @@ def _render_autoswitch(
     *,
     others: int,
     blind: bool,
+    readings: dict[str, int],
 ) -> None:
     """Say on the terminal what the engine just decided, and why."""
     name = outcome.from_profile or "—"
@@ -1534,6 +1683,22 @@ def _render_autoswitch(
         log_yellow(f"⚠️  {name} is at {outcome.used_pct}% used.")
         if others < 1:
             print(f"{DIM}   No other saved Antigravity profile to switch to.{RESET}")
+        elif readings:
+            # Measured, not guessed: say so with the numbers, so "wait for the
+            # reset" is advice the user can actually check.
+            measured = ", ".join(
+                f"{profile} {used}%"
+                for profile, used in sorted(readings.items(), key=lambda row: row[1])
+            )
+            print(
+                f"{DIM}   Every readable alternative is over the threshold "
+                f"too: {measured}.{RESET}"
+            )
+            if len(readings) < others:
+                print(
+                    f"{DIM}   The rest could not take over — check them with: "
+                    f"agy-accounts list{RESET}"
+                )
         elif blind:
             # Blind mode is already on, so pointing at the setting would send
             # the user in a circle: what is left out is every profile that

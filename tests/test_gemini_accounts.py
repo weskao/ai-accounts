@@ -685,14 +685,21 @@ class LoginAndRefreshTests(_HomeMixin):
         self.assertEqual(self.active["refresh_token"], "rt-old")
 
 
-def _quota(used: int, *, error: str | None = None) -> gu.UsageSnapshot:
-    """Placeholder agy snapshot whose every live window sits at *used* percent."""
+def _quota(
+    used: int, *, error: str | None = None, email: str = "user@example.com"
+) -> gu.UsageSnapshot:
+    """Placeholder agy snapshot whose every live window sits at *used* percent.
+
+    *email* is who the live session belongs to: ``_validated_usage`` discards a
+    reading whose email does not match the profile it was taken for, so a fake
+    that probes several profiles has to answer as whichever one is live.
+    """
     return gu.UsageSnapshot(
         UsageWindow(used, 2_000_000_000, 10080),
         UsageWindow(used, 2_000_000_000, 300),
         None,
         None,
-        "user@example.com",
+        email,
         "Free",
         2_000_000_000,
         error,
@@ -731,8 +738,9 @@ class _AutoswitchMixin(_HomeMixin):
 
 
 class AgyAutoswitchProbeTests(_AutoswitchMixin):
-    def test_quota_check_queries_only_the_active_account(self) -> None:
-        # Given: an exhausted active account and two untouched alternatives
+    def test_a_live_reader_keeps_the_quota_check_to_the_active_account(self) -> None:
+        # Given: an exhausted active account, two untouched alternatives, and
+        # something else holding the credential slot
         self.given_active("work", "spare", "backup")
         calls: list[float] = []
 
@@ -741,19 +749,291 @@ class AgyAutoswitchProbeTests(_AutoswitchMixin):
             return _quota(96)
 
         # When: autoswitch runs
-        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch):
+        with (
+            mock.patch.object(ga, "_slot_readers_running", return_value=True),
+            mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch),
+        ):
             rc = self.quiet(ga.cmd_autoswitch)
 
         # Then: the agy RPC was consulted exactly once — for the live session.
-        # Probing a candidate would mean activating it first, which is the one
-        # thing this command must never do.
+        # Probing a candidate would mean activating it first, which must never
+        # happen while somebody else is reading that slot.
         self.assertEqual(len(calls), 1)
         self.assertEqual(rc, 0)
+
+
+class AgyAutoswitchVerifiedSwitchTests(_AutoswitchMixin):
+    """With nothing holding the credential slot, candidates are measured.
+
+    Only the live session answers quota questions, so measuring a saved profile
+    means making it live for the length of one read. That is safe exactly while
+    nothing else reads that slot — and the read must put back what it borrowed.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        reader = mock.patch.object(ga, "_slot_readers_running", return_value=False)
+        reader.start()
+        self.addCleanup(reader.stop)
+        self.payloads: dict[str, ga.JsonDict] = {}
+
+    def given_accounts(self, active: str, *others: str) -> None:
+        """Like ``given_active``, but every profile gets tokens of its OWN.
+
+        The credential slot holds the keyring form, which carries no id_token —
+        so the token pair is the only thing in it that says who is live. With
+        the shared placeholder tokens, a restored slot and a slot still holding
+        the last probed candidate would look identical.
+        """
+        self.payloads = {
+            name: _creds(
+                f"sub-{name}",
+                f"{name}@example.com",
+                refresh_token=f"rt-{name}",
+                access_token=f"at-{name}",
+            )
+            for name in (active, *others)
+        }
+        for name, payload in self.payloads.items():
+            self.write_profile(name, payload)
+        self.set_active(self.payloads[active])
+        self.mark_current(active)
+
+    def live_token(self) -> str | None:
+        """The refresh token sitting in the credential slot right now."""
+        return (self.active or {}).get("refresh_token")
+
+    def answering(
+        self, used_by_profile: dict[str, int], *, raises: set[str] = frozenset()
+    ):
+        """A fetch_usage that answers for whichever profile is currently live."""
+        seen: list[str] = []
+
+        def fetch(timeout: float = 15) -> gu.UsageSnapshot:
+            token = self.live_token() or ""
+            name = token.removeprefix("rt-")
+            seen.append(name)
+            if name in raises:
+                raise RuntimeError(f"agy died probing {name}")
+            return _quota(used_by_profile[name], email=f"{name}@example.com")
+
+        return fetch, seen
+
+    def test_the_least_used_measured_candidate_wins_not_the_first_by_name(self) -> None:
+        # Given: an exhausted active account and three alternatives whose real
+        # usage runs opposite to their name order
+        self.write_config(enabled=True)
+        self.given_accounts("work", "aa-busy", "bb-free", "cc-half")
+        fetch, seen = self.answering(
+            {"work": 96, "aa-busy": 99, "bb-free": 40, "cc-half": 70}
+        )
+
+        # When: autoswitch runs with nothing holding the slot
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch):
+            rc = self.quiet(ga.cmd_autoswitch)
+
+        # Then: every profile was measured, and the switch went to the emptiest
+        # one — name order would have picked the 99% account
+        self.assertEqual(rc, 0)
+        self.assertEqual(sorted(seen), ["aa-busy", "bb-free", "cc-half", "work"])
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "bb-free"
+        )
+        self.assertEqual(self.live_token(), "rt-bb-free")
+
+    def test_a_verified_switch_needs_no_blind_opt_in(self) -> None:
+        # Given: agy_blind_switch NOT opted into — nothing here is blind
+        self.write_config(enabled=True, agy_blind_switch=False)
+        self.given_accounts("work", "spare")
+        fetch, _ = self.answering({"work": 96, "spare": 3})
+
+        # When: autoswitch runs
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch):
+            rc = self.quiet(ga.cmd_autoswitch)
+
+        # Then: a measured candidate is not a leap of faith, so it switches
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "spare"
+        )
+
+    def test_measuring_puts_the_active_credential_back(self) -> None:
+        # Given: every alternative is over the threshold too, so no switch will
+        # happen and the slot must end up holding what it started with
+        self.write_config(enabled=True)
+        self.given_accounts("work", "aa-full", "bb-full")
+        fetch, _ = self.answering({"work": 96, "aa-full": 99, "bb-full": 97})
+
+        # When: autoswitch runs
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch):
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        # Then: the borrowed slot is returned — not left on the last candidate
+        # probed — and the report carries the real numbers rather than calling
+        # the candidates unreadable
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.live_token(), "rt-work")
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+        report = ga._ANSI_RE.sub("", out + err)
+        self.assertIn("bb-full 97%", report)
+        self.assertIn("aa-full 99%", report)
+
+    def test_the_slot_is_restored_even_when_a_probe_blows_up(self) -> None:
+        # Given: reading the last candidate raises mid-probe, and no switch
+        # follows to paper over a slot left behind
+        self.write_config(enabled=True)
+        self.given_accounts("work", "aa-full", "bb-broken")
+        fetch, _ = self.answering(
+            {"work": 96, "aa-full": 99, "bb-broken": 0}, raises={"bb-broken"}
+        )
+
+        # When: autoswitch runs
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch):
+            rc = self.quiet(ga.cmd_autoswitch)
+
+        # Then: the exception did not leave the failed candidate live
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.live_token(), "rt-work")
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+
+    def test_one_broken_probe_does_not_hide_a_good_candidate(self) -> None:
+        # Given: one candidate cannot be read, another is nearly empty
+        self.write_config(enabled=True)
+        self.given_accounts("work", "aa-broken", "bb-free")
+        fetch, _ = self.answering(
+            {"work": 96, "aa-broken": 0, "bb-free": 5}, raises={"aa-broken"}
+        )
+
+        # When: autoswitch runs
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch):
+            rc = self.quiet(ga.cmd_autoswitch)
+
+        # Then: the unreadable one is skipped, not fatal
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "bb-free"
+        )
+        self.assertEqual(self.live_token(), "rt-bb-free")
+
+    def test_every_reading_is_cached_for_the_runs_that_cannot_probe(self) -> None:
+        # Given: a run that measures everything
+        self.write_config(enabled=True)
+        self.given_accounts("work", "spare")
+        fetch, _ = self.answering({"work": 96, "spare": 12})
+
+        # When: autoswitch runs
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch):
+            self.quiet(ga.cmd_autoswitch)
+
+        # Then: what it paid for is kept, so a later run holding no slot can
+        # still rank candidates
+        cache = json.loads((self.home / "usage-cache.json").read_text())
+        self.assertEqual(cache["work"]["used"], 96)
+        self.assertEqual(cache["spare"]["used"], 12)
+        self.assertEqual(cache["spare"]["reset_time"], 2_000_000_000)
+
+
+class AgyUsageCacheTests(_AutoswitchMixin):
+    """The cache is what a run that may not probe ranks candidates by."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        reader = mock.patch.object(ga, "_slot_readers_running", return_value=True)
+        reader.start()
+        self.addCleanup(reader.stop)
+
+    def test_a_reading_holds_until_its_window_resets(self) -> None:
+        now = int(time.time())
+        # Given/Then: a full account stays full until its window turns over,
+        # and reads empty afterwards
+        cache = {
+            "still-full": {"used": 100, "reset_time": now + 3600, "at": now},
+            "reset-since": {"used": 100, "reset_time": now - 1, "at": now - 7200},
+            "no-reset-known": {"used": 42, "reset_time": None, "at": now},
+            "junk": {"used": "lots"},
+            "bool-is-not-a-percentage": {"used": True},
+        }
+        self.assertEqual(ga._cached_used_pct("still-full", cache), 100)
+        self.assertEqual(ga._cached_used_pct("reset-since", cache), 0)
+        self.assertEqual(ga._cached_used_pct("no-reset-known", cache), 42)
+        self.assertIsNone(ga._cached_used_pct("junk", cache))
+        self.assertIsNone(ga._cached_used_pct("bool-is-not-a-percentage", cache))
+        self.assertIsNone(ga._cached_used_pct("never-seen", cache))
+
+    def test_a_run_that_cannot_probe_ranks_by_the_last_reading(self) -> None:
+        # Given: something holds the slot, and the cache remembers one busy and
+        # one idle alternative
+        self.write_config(enabled=True)
+        self.given_active("work", "aa-busy", "bb-free")
+        now = int(time.time())
+        (self.home / "usage-cache.json").write_text(
+            json.dumps(
+                {
+                    "aa-busy": {"used": 99, "reset_time": now + 3600, "at": now},
+                    "bb-free": {"used": 10, "reset_time": now + 3600, "at": now},
+                }
+            ),
+            encoding="utf-8",
+        )
+        calls: list[float] = []
+
+        def fetch(timeout: float = 15) -> gu.UsageSnapshot:
+            calls.append(timeout)
+            return _quota(96, email="work@example.com")
+
+        # When: autoswitch runs
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=fetch):
+            rc = self.quiet(ga.cmd_autoswitch)
+
+        # Then: it switches to the one last seen with room, without activating
+        # anything to find out — the active account was the only read
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "bb-free"
+        )
+
+    def test_a_cached_full_account_is_not_a_candidate_at_all(self) -> None:
+        # Given: the only alternative was last seen full, with its window still
+        # open, and blind switching opted in
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self.given_active("work", "spare")
+        now = int(time.time())
+        (self.home / "usage-cache.json").write_text(
+            json.dumps({"spare": {"used": 100, "reset_time": now + 3600, "at": now}}),
+            encoding="utf-8",
+        )
+
+        # When: autoswitch runs
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96, email="work@example.com")
+        ):
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        # Then: knowing it is full beats the blind guess that it might not be
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+        self.assertIn("spare 100%", ga._ANSI_RE.sub("", out + err))
 
 
 class AgyBlindSwitchGateTests(_AutoswitchMixin):
     """A candidate's quota cannot be checked in advance, so switching to one is
     a leap of faith — off unless the user opted in via ``agy_blind_switch``."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # Blind selection only ever runs when something else holds the
+        # credential slot — with nothing running, candidates are measured for
+        # real (AgyAutoswitchVerifiedSwitchTests covers that path).
+        reader = mock.patch.object(ga, "_slot_readers_running", return_value=True)
+        reader.start()
+        self.addCleanup(reader.stop)
 
     def test_switch_is_skipped_when_blind_switching_is_not_opted_into(self) -> None:
         # Given: default config (agy_blind_switch unset) and an exhausted active
@@ -1104,6 +1384,59 @@ class AgyAutoswitchKeychainSafetyTests(unittest.TestCase):
         self.assertEqual(len(fetches), 1)
 
 
+class AgySlotReaderTests(unittest.TestCase):
+    """Whether it is safe to borrow the credential slot for a quota read.
+
+    Its own class, with no pinned answer: every other autoswitch test pins this
+    to pick a path, so the real check needs somewhere to be exercised.
+    """
+
+    def test_a_running_agy_counts_as_a_reader(self) -> None:
+        # Given: a process query answering "no IDE", then "an agy is up"
+        seen: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            seen.append(list(cmd))
+            # 1st query: the IDE, no match. 2nd: agy, a match.
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0 if len(seen) == 2 else 1
+            )
+
+        # When/Then: the agy process alone makes borrowing the slot unsafe
+        with (
+            mock.patch.object(ga, "have", return_value=True),
+            mock.patch.object(ga.subprocess, "run", side_effect=fake_run),
+        ):
+            self.assertTrue(ga._slot_readers_running())
+        self.assertIn(["pgrep", "-x", "agy"], seen)
+        # And: only ever pgrep — this check reads the process table, never
+        # signals anything
+        self.assertEqual({call[0] for call in seen}, {"pgrep"})
+
+    def test_nothing_running_means_the_slot_can_be_borrowed(self) -> None:
+        with (
+            mock.patch.object(ga, "have", return_value=True),
+            mock.patch.object(
+                ga.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess(args=[], returncode=1),
+            ),
+        ):
+            self.assertFalse(ga._slot_readers_running())
+
+    def test_no_way_to_look_assumes_a_reader(self) -> None:
+        # Given: no pgrep to ask with — a probe must not go ahead on a guess
+        with mock.patch.object(ga, "have", return_value=False):
+            self.assertTrue(ga._slot_readers_running())
+
+    def test_a_failing_process_query_assumes_a_reader(self) -> None:
+        with (
+            mock.patch.object(ga, "have", return_value=True),
+            mock.patch.object(ga.subprocess, "run", side_effect=OSError("no fork")),
+        ):
+            self.assertTrue(ga._slot_readers_running())
+
+
 class AgyLiveUsedPctTests(unittest.TestCase):
     """The worst window decides — an account is throttled the moment any one
     of its quota windows runs out."""
@@ -1138,6 +1471,14 @@ class AgyAutoswitchRestartTests(_AutoswitchMixin):
     resume, so its presence forces the manual-restart rung
     (docs/autoswitch-hot-reload-spike.md, agy section, footnote 2).
     """
+
+    def setUp(self) -> None:
+        super().setUp()
+        # A blind switch means something is holding the credential slot; pinned
+        # so the process queries counted below are the ladder's own.
+        reader = mock.patch.object(ga, "_slot_readers_running", return_value=True)
+        reader.start()
+        self.addCleanup(reader.stop)
 
     def _autoswitch_on_a_tty(self, fake_run) -> tuple[int, str]:
         """cmd_autoswitch with a stdout that is a terminal, capturing spawns."""
