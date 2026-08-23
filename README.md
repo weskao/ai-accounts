@@ -84,12 +84,15 @@ Saved profiles and shared settings live under `~/.ai-accounts`:
 ├── codex/accounts/
 ├── claude/accounts/
 ├── antigravity/accounts/
+├── antigravity/usage-cache.json
 ├── grok/accounts/
 └── vibe/accounts/
 ```
 
-Profile JSON files contain live credentials. Do not commit, publish, or share
-this directory. Writes use owner-only permissions and atomic replacement where
+`antigravity/usage-cache.json` holds the last quota reading seen for each agy
+profile — percentages and reset times, no credentials (see below for why it is
+kept). Profile JSON files do contain live credentials: do not commit, publish,
+or share this directory. Writes use owner-only permissions and atomic replacement where
 the provider format allows it.
 
 Provider-native legacy stores such as `~/.codex/accounts` and
@@ -129,13 +132,27 @@ credential the CLI refuses — the next candidate in that order is tried, so one
 dead profile cannot strand you on an exhausted account.
 
 Antigravity is the exception: `agy` reports quota only for the session that is
-*live*, and reading a candidate's quota would mean writing its credential into
-the single slot a running `agy` reads. `agy-accounts autoswitch` therefore
-reports and stops unless you opt in with `agy_blind_switch`, which lets it
-switch without verifying the target's quota first. Even then it passes over a
-profile that could not take over: a malformed or foreign credential blob, a
-token that can no longer be refreshed, or a second profile of the same Google
-account as the exhausted one.
+*live*, so reading a candidate's quota means writing its credential into the
+single slot a running `agy` reads. That is safe only while nothing else holds
+that slot, which gives `agy-accounts autoswitch` two modes:
+
+- **Nothing running** (no Antigravity IDE, no `agy` process) — every candidate
+  is measured for real, the slot restored after each reading, and the switch
+  goes to the account with the lowest verified usage. No opt-in needed: nothing
+  here is a guess.
+- **Something running** — nothing is swapped. Candidates are ranked by the last
+  reading taken for each of them, which is what `antigravity/usage-cache.json`
+  is for; a reading holds until its window's reset time passes. A candidate
+  nothing at all is known about still needs the `agy_blind_switch` opt-in,
+  which switches without any usage data for the target.
+
+Note the Stop hook always takes the second path: the agy session whose exit
+fired the hook is still up, and is itself a reader. Measuring is the background
+timer's job.
+
+Either way it passes over a profile that could not take over: a malformed or
+foreign credential blob, a token that can no longer be refreshed, or a second
+profile of the same Google account as the exhausted one.
 
 The interactive config menu documents each setting. CLI config reads mask the
 Telegram bot token.
