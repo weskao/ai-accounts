@@ -906,10 +906,71 @@ class AgyBlindSwitchGateTests(_AutoswitchMixin):
             (self.home / "accounts" / ".current-profile").read_text(), "work"
         )
 
+    def _given_unusable_neighbours(self) -> None:
+        """The active profile plus three candidates that cannot help it.
+
+        Blind mode has no quota to rank by, so it takes candidates in name
+        order — and these three all sort ahead of any well-formed alternative.
+        """
+        self.given_active("work")
+        # A misfiled foreign credential (this is what a stray grok profile in
+        # the antigravity store looks like): no keyring secret, so it can never
+        # become the live session.
+        self.write_profile("aa-foreign", {"https://auth.x.ai::abc": {"token": "t"}})
+        # Live for one request, then dead: no refresh token to renew with.
+        creds = _creds("sub-bb", "bb@example.com")
+        del creds["refresh_token"]
+        self.write_profile("bb-norefresh", creds)
+        # A second profile of the SAME Google account as the exhausted one —
+        # switching to it lands on the very quota being escaped.
+        self.write_profile("cc-twin", _creds("sub-work", "work@example.com"))
+
+    def test_a_blind_switch_skips_every_candidate_that_cannot_help(self) -> None:
+        # Given: blind switching allowed, an exhausted active account, and a
+        # usable alternative sorting *behind* three unusable ones
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self._given_unusable_neighbours()
+        self.write_profile("dd-good", _creds("sub-dd", "dd@example.com"))
+
+        # When: autoswitch runs
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96)
+        ):
+            rc = self.quiet(ga.cmd_autoswitch)
+
+        # Then: name order does not hand the switch to a profile that cannot
+        # take over — the one real alternative goes live
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "dd-good"
+        )
+        self.assertEqual((self.active or {})["id_token"], _creds("sub-dd", "dd@example.com")["id_token"])
+
+    def test_all_candidates_unusable_says_so_instead_of_the_opt_in_hint(self) -> None:
+        # Given: blind switching already on, and every alternative unusable
+        self.write_config(enabled=True, agy_blind_switch=True)
+        self._given_unusable_neighbours()
+
+        # When: autoswitch runs
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_quota(96)
+        ):
+            rc, out, err = self.capture(ga.cmd_autoswitch)
+
+        # Then: nothing moved, and the advice is not "turn on the setting you
+        # already turned on"
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            (self.home / "accounts" / ".current-profile").read_text(), "work"
+        )
+        self.assertIn("unusable", out + err)
+        self.assertNotIn("agy_blind_switch", out + err)
+
     def test_target_deleted_mid_run_never_falls_back_to_the_listing_scan(self) -> None:
-        # Given: blind switching allowed, and the chosen target profile is
-        # deleted during the (up to 8s) live quota fetch — i.e. after the
-        # profile list was globbed but before the switch is attempted.
+        # Given: blind switching allowed, and the chosen target profile
+        # ("backup" — first in name order) is deleted during the (up to 8s)
+        # live quota fetch, i.e. after the profile list was globbed but before
+        # the switch is attempted.
         self.write_config(enabled=True, agy_blind_switch=True)
         self.given_active("work", "spare", "backup")
 

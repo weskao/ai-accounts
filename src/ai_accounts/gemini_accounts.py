@@ -1375,6 +1375,25 @@ def _live_used_pct(snapshot: gemini_usage.UsageSnapshot) -> int | None:
     return max(used) if used else None
 
 
+def _blind_candidate(name: str, active: Path | None) -> bool:
+    """Whether *name* is worth a blind switch — local file reads, no network.
+
+    A blind switch has no quota to rank candidates by, so it takes them in name
+    order: without this, the first name wins even when it cannot possibly help.
+    Rejected are the profile that cannot become live at all (a foreign or
+    truncated credential blob — ``_write_cli_auth_text`` would refuse it), the
+    one whose token can no longer be refreshed (live for one request, then
+    dead), and a second profile of the *same* Google account as the exhausted
+    one, which shares the very quota being escaped.
+    """
+    profile = _profile_file(name)
+    claims = _read_claims(profile) if profile is not None else None
+    if claims is None or claims.get("malformed") or not claims.get("refreshable"):
+        return False
+    active_identity = _identity_key(_read_claims(active)) if active is not None else None
+    return active_identity is None or _identity_key(claims) != active_identity
+
+
 def _antigravity_ide_running() -> bool:
     """Whether an Antigravity IDE process is up — a read-only process query.
 
@@ -1440,9 +1459,12 @@ def cmd_autoswitch() -> int:
     def probe(name: str) -> UsageWindow | None:
         if active is None or name != active.stem:
             # Never activate a candidate (see the docstring). Blind mode takes
-            # the unknown as "has quota"; otherwise it stays unknown, and the
-            # engine finds nothing to switch to.
-            return UsageWindow(0, None, None) if blind else None
+            # the unknown as "has quota" — but only for a profile that could
+            # actually take over (_blind_candidate); otherwise it stays
+            # unknown, and the engine finds nothing to switch to.
+            if blind and _blind_candidate(name, active):
+                return UsageWindow(0, None, None)
+            return None
         snapshot = gemini_usage.fetch_usage(timeout=8)
         if snapshot.error:
             probe_error.append(snapshot.error)
@@ -1482,12 +1504,16 @@ def cmd_autoswitch() -> int:
             agy_ide_running=interactive and _antigravity_ide_running(),
         ),
     )
-    _render_autoswitch(outcome, probe_error, others=len(profiles) - 1)
+    _render_autoswitch(outcome, probe_error, others=len(profiles) - 1, blind=blind)
     return 1 if outcome.reason == "switch_failed" else 0
 
 
 def _render_autoswitch(
-    outcome: autoswitch.SwitchOutcome, probe_error: list[str], *, others: int
+    outcome: autoswitch.SwitchOutcome,
+    probe_error: list[str],
+    *,
+    others: int,
+    blind: bool,
 ) -> None:
     """Say on the terminal what the engine just decided, and why."""
     name = outcome.from_profile or "—"
@@ -1508,6 +1534,15 @@ def _render_autoswitch(
         log_yellow(f"⚠️  {name} is at {outcome.used_pct}% used.")
         if others < 1:
             print(f"{DIM}   No other saved Antigravity profile to switch to.{RESET}")
+        elif blind:
+            # Blind mode is already on, so pointing at the setting would send
+            # the user in a circle: what is left out is every profile that
+            # cannot take over (see _blind_candidate).
+            print(
+                f"{DIM}   Every other profile is unusable — malformed, needing "
+                f"a re-login, or the same account.{RESET}"
+            )
+            print(f"{DIM}   Check them with: agy-accounts list{RESET}")
         else:
             print(
                 f"{DIM}   agy reports quota only for the live session — "
