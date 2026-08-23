@@ -30,6 +30,11 @@ from ._utils import BOLD, CYAN, DIM, GREEN, RESET, RED, YELLOW, log_red, log_yel
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 
+def strip_ansi(s: str) -> str:
+    """``s`` without color escapes — the shared stripper (see ``_ANSI_RE``)."""
+    return _ANSI_RE.sub("", s)
+
+
 def visible_len(s: str) -> int:
     """Terminal column width of ``s``, ignoring embedded ANSI color escapes.
 
@@ -39,7 +44,7 @@ def visible_len(s: str) -> int:
     table borders right.
     """
     width = 0
-    for char in _ANSI_RE.sub("", s):
+    for char in strip_ansi(s):
         if unicodedata.combining(char):
             continue
         width += 2 if unicodedata.east_asian_width(char) in "WF" else 1

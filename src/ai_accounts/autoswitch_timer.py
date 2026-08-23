@@ -33,6 +33,7 @@ from . import ai_accounts
 from . import autoswitch_hooks
 from . import autoswitch as aw
 from . import i18n
+from . import refresh_report
 
 LABEL = "com.ai_accounts.autoswitch"
 DEFAULT_INTERVAL_SEC = 30 * 60  # 30 minutes
@@ -306,6 +307,11 @@ def _run_token_refresh_everywhere() -> str:
     output_parts: list[str] = []
     for label, module in ai_accounts._TOOLS:
         ai_accounts._header(label)
+        # The header goes into the captured text too (uncolored — the printed
+        # one carries ANSI), so refresh_report can tell which provider a
+        # failing profile belongs to. Without it the combined output is one
+        # anonymous blob.
+        output_parts.append(f"━━━ {label} ━━━")
         try:
             result = u.run(
                 [sys.executable, "-m", module, "refresh", "--all"],
@@ -351,14 +357,39 @@ def run_once(
     if aw.config_flag("enabled"):  # fail closed: only a JSON `true` runs
         (check or _run_autoswitch_everywhere)()
     if aw.config_flag("token_refresh"):  # fail closed: same rule, own flag
-        output = (refresh or _run_token_refresh_everywhere)().lower()
-        if any(marker in output for marker in _REVOKED_MARKERS):
-            aw.notify_once(
-                "token-refresh:revoked",
-                i18n.t("notify.revoked.title"),
-                i18n.t("notify.revoked.body"),
-            )
+        output = (refresh or _run_token_refresh_everywhere)()
+        if any(marker in output.lower() for marker in _REVOKED_MARKERS):
+            _report_revoked(output)
     return 0
+
+
+def _report_revoked(output: str) -> None:
+    """Show and send the re-login report for one refresh tick's *output*.
+
+    The terminal report is printed whether or not the notification goes out —
+    a run inside its cooldown still has to say what it found — and the
+    de-duplication key names the profiles, so a NEWLY revoked account alerts
+    at once instead of hiding behind the previous alert's hour.
+
+    Falls back to the generic one-liner when nothing could be attributed:
+    ``_REVOKED_MARKERS`` matched, so an alert is owed even if the wording
+    changed under the parser.
+    """
+    records = refresh_report.parse(output)
+    if not records:
+        aw.notify_once(
+            "token-refresh:revoked",
+            i18n.t("notify.revoked.title"),
+            i18n.t("notify.revoked.body"),
+        )
+        return
+    refresh_report.print_report(records)
+    key = ",".join(sorted(f"{r.provider}/{r.profile}" for r in records))
+    aw.notify_once(
+        f"token-refresh:revoked:{key}",
+        refresh_report.title(records),
+        refresh_report.message(records),
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

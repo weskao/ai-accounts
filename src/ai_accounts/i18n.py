@@ -192,9 +192,39 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "💡 Others are {threshold}%+ or unreadable — wait for the reset, or add one",
         "zh-TW": "💡 其他帳號都在 {threshold}% 以上或讀不到用量 — 等配額重置，或再新增一個",
     },
+    # The generic title/body pair is the FALLBACK, used only when a tick
+    # reported a revocation in wording `refresh_report.parse` could not
+    # attribute to a profile. The normal path is the grouped trio below: a
+    # headline naming the count and the provider types, then one heading per
+    # provider over its own profile rows (refresh_report.detail_lines).
     "notify.revoked.title": {
         "en": "🔑 ai-accounts: a token expired, re-login needed",
         "zh-TW": "🔑 ai-accounts：token 已失效，需重新登入",
+    },
+    # `.one`/`.many` pairs, picked by refresh_report._plural: English needs the
+    # plural agreement and "profile(s)" in a headline reads like a form field.
+    # Languages without plural agreement give the pair the same text.
+    "notify.revoked.grouped.one.title": {
+        "en": "🔑 ai-accounts: 1 profile needs re-login — {providers}",
+        "zh-TW": "🔑 ai-accounts：{count} 個帳號需重新登入 — {providers}",
+    },
+    "notify.revoked.grouped.many.title": {
+        "en": "🔑 ai-accounts: {count} profiles need re-login — {providers}",
+        "zh-TW": "🔑 ai-accounts：{count} 個帳號需重新登入 — {providers}",
+    },
+    "notify.revoked.group.one": {
+        "en": "🔐 {provider} · 1 profile",
+        "zh-TW": "🔐 {provider} · {count} 個帳號",
+    },
+    "notify.revoked.group.many": {
+        "en": "🔐 {provider} · {count} profiles",
+        "zh-TW": "🔐 {provider} · {count} 個帳號",
+    },
+    "notify.revoked.reason.missing": {
+        # Shown when no inline reason was printed: the profile had no refresh
+        # token worth an attempt, so the bulk summary is all there was.
+        "en": "refresh token missing or rejected",
+        "zh-TW": "refresh token 遺失或已被拒絕",
     },
     "notify.terminal_notifier_hint": {
         "en": (

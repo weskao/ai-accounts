@@ -12,8 +12,21 @@ commands for Codex, Claude Code, Antigravity, Grok Build, and Mistral Vibe.
 - [`uv`](https://docs.astral.sh/uv/)
 - The provider CLI for each account manager you use
 
-The Python package has no runtime dependencies. It supports macOS, Linux, and
-Windows; credential-store integration follows the native platform.
+The Python package has no runtime dependencies.
+
+## Supported operating systems
+
+`ai-accounts` is tested on and supports macOS, Windows, and Linux. Profile
+management, the umbrella command, and auto-switch timers work on all three.
+
+| Operating system | Native integration | Caveat |
+| --- | --- | --- |
+| macOS | Keychain and `launchd` | None |
+| Windows | Credential Manager and Task Scheduler | `agy-accounts usage` is unavailable because Antigravity usage inspection requires POSIX pseudo-terminals. |
+| Linux | Secret Service (`secret-tool`) and systemd user timers (or cron fallback) | Install `libsecret-tools` before using `agy-accounts`. |
+
+Credential-store integration follows the native platform. The provider CLI for
+each account manager must also support your operating system.
 
 ## Install
 
@@ -167,6 +180,35 @@ profile of the same Google account as the exhausted one.
 The interactive config menu documents each setting. CLI config reads mask the
 Telegram bot token.
 
+### Scheduled token refresh and the re-login report
+
+`token_refresh` is an independent switch from `enabled`: each timer tick runs
+`refresh --all` on every provider even when auto-switching is off. A routine
+rotation is silent. When a refresh token can only be fixed by a fresh login,
+the tick prints a report and sends the same content over the configured
+`notify` channel — grouped by provider, one row per profile with the reason it
+failed and the command that fixes it:
+
+```
+┌─ 🔑 ai-accounts: 3 profiles need re-login — codex, agy ─┐
+│  🔐 codex · 2 profiles
+│    • work — HTTP 400 from token endpoint
+│      ↳ codex-accounts login-switch work
+│    • spare — refresh token missing or rejected
+│      ↳ codex-accounts login-switch spare
+│  🔐 agy · 1 profile
+│    • personal — revoked: refresh token rejected (invalid_grant)
+│      ↳ agy-accounts login-switch personal
+└─────────────────────────────────────────────────────────┘
+```
+
+Each provider gets its own color, on the heading and on every profile name
+under it. The alert is de-duplicated by the exact set of profiles it names:
+the same set stays quiet for an hour, while a newly revoked profile alerts on
+the next tick instead of waiting out the previous alert's cooldown. Transient
+failures (a 5xx, a timeout, an unreachable token endpoint) are retried on the
+next tick and never reported here.
+
 ## Platform notes
 
 | Provider | Credential source | Notes |
@@ -175,7 +217,7 @@ Telegram bot token.
 | Claude Code | `~/.claude/.credentials.json` and macOS Keychain when used | `claude` is required for login flows |
 | Antigravity | macOS Keychain, Windows Credential Manager, or Linux Secret Service | Linux needs `secret-tool` from libsecret |
 | Grok Build | `$GROK_HOME/auth.json` | Quota switching is skipped when no quota API is available |
-| Mistral Vibe | macOS Keychain or `$VIBE_HOME/.env` | `vibe` is required for login flows |
+| Mistral Vibe | macOS Keychain or `$VIBE_HOME/.env` | On Windows and Linux, `$VIBE_HOME/.env` is used; `vibe` is required for login flows |
 
 Run a provider command with `--help` for its exact files, environment overrides,
 and authentication behavior.

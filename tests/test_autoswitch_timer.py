@@ -555,9 +555,9 @@ class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
         aw.save_config({"enabled": False, "token_refresh": True})
         refresh = mock.Mock(
             return_value=(
-                "❌ Refresh token revoked/dead for wes: revoked: refresh token "
+                "❌ Refresh token revoked/dead for test: revoked: refresh token "
                 "rejected (invalid_grant)\n   Re-login with: "
-                "claude-accounts login-switch wes"
+                "claude-accounts login-switch test"
             )
         )
 
@@ -565,11 +565,17 @@ class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
         with mock.patch.object(aw, "notify_once") as notify_once:
             result = at.run_once(refresh=refresh)
 
-        # Then: exactly one alert, keyed so repeated ticks de-duplicate
+        # Then: exactly one alert, keyed by the profiles it names — repeated
+        # ticks de-duplicate, a newly revoked profile re-arms it
         self.assertEqual(result, 0)
         notify_once.assert_called_once()
         args, _ = notify_once.call_args
-        self.assertEqual(args[0], "token-refresh:revoked")
+        self.assertEqual(args[0], "token-refresh:revoked:claude/test")
+        # And: the alert itself names the provider, the profile and the reason
+        title, message = args[1], args[2]
+        self.assertIn("claude", title)
+        self.assertIn("• test — revoked: refresh token rejected (invalid_grant)", message)
+        self.assertIn("claude-accounts login-switch test", message)
 
     def test_bulk_revoked_summary_alone_still_triggers_notification(self) -> None:
         # Given: codex's bulk-only wording (a profile with no refresh_token to
@@ -610,8 +616,13 @@ class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
         with mock.patch.object(at.u, "run", return_value=completed) as run:
             output = at._run_token_refresh_everywhere()
 
-        # Then: one `<module> refresh --all` call per provider in ai_accounts._TOOLS
-        self.assertEqual(output, "")
+        # Then: one `<module> refresh --all` call per provider in ai_accounts._TOOLS,
+        # and the captured text carries each provider's section header (nothing
+        # else here: every provider printed clean) so failures stay attributable
+        self.assertEqual(
+            output.splitlines(),
+            [f"━━━ {label} ━━━" for label, _ in at.ai_accounts._TOOLS],
+        )
         called_modules = [c.args[0][2] for c in run.call_args_list]
         expected_modules = [module for _, module in at.ai_accounts._TOOLS]
         self.assertEqual(called_modules, expected_modules)
