@@ -123,6 +123,20 @@ Remove only the timer with:
 ai-accounts uninstall-timer
 ```
 
+The target is the saved profile with the lowest usage still under the threshold,
+ties broken by profile name. When activating it fails — a deleted profile, a
+credential the CLI refuses — the next candidate in that order is tried, so one
+dead profile cannot strand you on an exhausted account.
+
+Antigravity is the exception: `agy` reports quota only for the session that is
+*live*, and reading a candidate's quota would mean writing its credential into
+the single slot a running `agy` reads. `agy-accounts autoswitch` therefore
+reports and stops unless you opt in with `agy_blind_switch`, which lets it
+switch without verifying the target's quota first. Even then it passes over a
+profile that could not take over: a malformed or foreign credential blob, a
+token that can no longer be refreshed, or a second profile of the same Google
+account as the exhausted one.
+
 The interactive config menu documents each setting. CLI config reads mask the
 Telegram bot token.
 
