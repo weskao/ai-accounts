@@ -331,9 +331,25 @@ class KeychainSecurityTests(unittest.TestCase):
             u.subprocess, "run", return_value=mock.Mock(returncode=0)
         ) as run:
             self.assertTrue(u.keychain_write("service", "account", secret))
-        self.assertNotIn(secret, run.call_args.args[0])
-        self.assertEqual(run.call_args.kwargs["input"], secret + "\n")
-        self.assertEqual(run.call_args.args[0][-1], "-w")
+        self.assertEqual(run.call_args.args[0], ["security", "-i"])
+        self.assertNotIn(secret, run.call_args.kwargs["input"])  # hex-encoded
+        self.assertIn(secret.encode().hex(), run.call_args.kwargs["input"])
+
+    @unittest.skipUnless(u.IS_MACOS, "keychain round-trip is macOS-only")
+    def test_write_round_trips_through_the_real_keychain(self):
+        """The mocked test above cannot see that `-w` with no value prompts on the
+        tty and stores an empty secret while still exiting 0 — only a real write
+        followed by a real read catches that."""
+        service, account = "ai-accounts self-test", "cli|roundtrip"
+        secret = '{\n  "a": "b c\'d/+=", "n": 1\n}\n'  # newlines + quotes
+        try:
+            self.assertTrue(u.keychain_write(service, account, secret))
+            self.assertEqual(u.keychain_read(service, account), secret)
+        finally:
+            u.subprocess.run(
+                ["security", "delete-generic-password", "-s", service, "-a", account],
+                capture_output=True,
+            )
 
 
 class GeminiUsageTransportTests(unittest.TestCase):

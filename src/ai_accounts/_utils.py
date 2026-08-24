@@ -561,15 +561,29 @@ def keychain_read(service: str, account: str) -> str | None:
     return secret
 
 
+def _security_quote(value: str) -> str:
+    """Escape a value for a double-quoted argument in `security -i` batch mode."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def keychain_write(service: str, account: str, secret: str) -> bool:
     """Create-or-update a generic-password item. False off macOS or on failure."""
     if not IS_MACOS:
         return False
+    # `add-generic-password -w` with no value prompts on the *tty* — it never
+    # reads stdin, so piping the secret there stored an empty item and still
+    # exited 0. Batch mode (`security -i`) takes the whole command over stdin,
+    # which keeps the secret out of every argv (i.e. out of `ps`), and -X
+    # hex-encodes it past the tokenizer's quoting and newline rules.
+    command = 'add-generic-password -U -s "{}" -a "{}" -X {}\n'.format(
+        _security_quote(service),
+        _security_quote(account),
+        secret.encode("utf-8").hex(),
+    )
     try:
         result = subprocess.run(
-            ["security", "add-generic-password", "-U",
-             "-s", service, "-a", account, "-w"],
-            input=secret + "\n",
+            ["security", "-i"],
+            input=command,
             capture_output=True,
             text=True,
         )
