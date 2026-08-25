@@ -213,7 +213,11 @@ def _write_cli_auth_text(auth_text: str) -> bool:
     if not isinstance(auth, dict):
         return False
     secret = _keyring_secret_from_auth(auth)
-    if secret is None or not _store_keychain_secret(secret):
+    if secret is None:
+        return False
+    # A switch to the already-live profile needs no Keychain mutation.  Besides
+    # avoiding needless writes, this keeps the normal path entirely noninteractive.
+    if _read_cli_keyring_secret() != secret and not _store_keychain_secret(secret):
         return False
     try:
         atomic_write_json(_auth_file(), auth)

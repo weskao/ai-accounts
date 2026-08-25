@@ -256,13 +256,27 @@ class KeyringTests(unittest.TestCase):
         auth = _creds("sub", "a@x.com")
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
             os.environ, {"ANTIGRAVITY_HOME": tmp}
-        ), mock.patch.object(ga, "_store_keychain_secret", return_value=True) as store:
+        ), mock.patch.object(ga, "_read_cli_keyring_secret", return_value=None), mock.patch.object(
+            ga, "_store_keychain_secret", return_value=True
+        ) as store:
             self.assertTrue(ga._write_cli_auth_text(json.dumps(auth)))
         secret = store.call_args.args[0]
         self.assertFalse(secret.startswith("go-keyring-base64:"))
         self.assertEqual(
             json.loads(secret)["token"]["access_token"], auth["access_token"]
         )
+
+    def test_keyring_write_reuses_an_identical_live_secret(self) -> None:
+        auth = _creds("sub", "a@x.com")
+        secret = ga._keyring_secret_from_auth(auth)
+        assert secret is not None
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ, {"ANTIGRAVITY_HOME": tmp}
+        ), mock.patch.object(ga, "_read_cli_keyring_secret", return_value=secret), mock.patch.object(
+            ga, "_store_keychain_secret", return_value=True
+        ) as store:
+            self.assertTrue(ga._write_cli_auth_text(json.dumps(auth)))
+        store.assert_not_called()
 
     def test_keyring_secret_round_trip_goes_through_the_os_slot(self) -> None:
         auth = _creds("sub", "a@x.com")
