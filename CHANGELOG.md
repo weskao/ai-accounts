@@ -1,3 +1,17 @@
+## [0.3.0] - 2026-08-25
+
+### 🚀 Features
+
+- **timer:** [**breaking**] Report revoked profiles by provider
+
+### 🐛 Bug Fixes
+
+- **keychain:** Stop silently storing empty secrets
+- **agy:** Skip redundant keychain writes
+
+### 🧪 Testing
+
+- **keychain:** Guard oauth token exposure
 ## [0.2.1] - 2026-08-23
 
 ### 🐛 Bug Fixes
@@ -8,6 +22,10 @@
 
 - Add list and config demos to readme
 - Update config demo gif
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.2.1
 ## [0.2.0] - 2026-08-23
 
 ### 🚀 Features
