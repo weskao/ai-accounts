@@ -335,6 +335,20 @@ class KeychainSecurityTests(unittest.TestCase):
         self.assertNotIn(secret, run.call_args.kwargs["input"])  # hex-encoded
         self.assertIn(secret.encode().hex(), run.call_args.kwargs["input"])
 
+    def test_go_keyring_write_keeps_oauth_tokens_out_of_command_data(self):
+        secret = '{"access_token":"private-access-token","refresh_token":"private-refresh-token"}'
+        with mock.patch.object(u, "IS_MACOS", True), mock.patch.object(
+            u.subprocess, "run", return_value=mock.Mock(returncode=0)
+        ) as run:
+            self.assertTrue(u.go_keyring_write("gemini", "antigravity", secret))
+        command, = run.call_args.args
+        stdin = run.call_args.kwargs["input"]
+        self.assertEqual(command, ["security", "-i"])
+        self.assertNotIn("private-access-token", command)
+        self.assertNotIn("private-refresh-token", command)
+        self.assertNotIn("private-access-token", stdin)
+        self.assertNotIn("private-refresh-token", stdin)
+
     @unittest.skipUnless(u.IS_MACOS, "keychain round-trip is macOS-only")
     def test_write_round_trips_through_the_real_keychain(self):
         """The mocked test above cannot see that `-w` with no value prompts on the
