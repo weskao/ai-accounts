@@ -18,3 +18,4 @@ accounts/
 
 # Session status output by omo wrapper
 .omo/
+.omc/
