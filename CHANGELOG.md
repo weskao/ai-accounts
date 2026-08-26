@@ -1,3 +1,8 @@
+## [0.3.1] - 2026-08-26
+
+### ⚙️ Miscellaneous Tasks
+
+- Ignore .omc directory
 ## [0.3.0] - 2026-08-25
 
 ### 🚀 Features
@@ -8,6 +13,10 @@
 
 - **keychain:** Stop silently storing empty secrets
 - **agy:** Skip redundant keychain writes
+
+### 📚 Documentation
+
+- **changelog:** Release v0.3.0
 
 ### 🧪 Testing
 
