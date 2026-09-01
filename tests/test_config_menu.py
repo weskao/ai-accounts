@@ -102,14 +102,22 @@ class StateMachineEditTest(unittest.TestCase):
         self.assertIsNone(after.error)
 
     def test_invalid_input_surfaces_the_schema_message_and_keeps_editing(self) -> None:
-        state = state_at("switch_when_used_pct", editing=True, edit_buffer="150")
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="abc")
         after = cm.step(state, KeyEvent(Key.ENTER))
         self.assertTrue(after.editing)
         self.assertEqual(
-            after.error, "switch_when_used_pct must be an integer 1-100, got 150"
+            after.error, "switch_when_used_pct must be an integer 0-100, got 'abc'"
         )
         self.assertEqual(after.values["switch_when_used_pct"], 90)
         self.assertFalse(after.pending_save)
+
+    def test_an_over_range_value_commits_clamped_to_the_maximum(self) -> None:
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="150")
+        after = cm.step(state, KeyEvent(Key.ENTER))
+        self.assertFalse(after.editing)
+        self.assertIsNone(after.error)
+        self.assertEqual(after.values["switch_when_used_pct"], 100)
+        self.assertTrue(after.pending_save)
 
     def test_escape_cancels_the_edit_and_restores_the_prior_value(self) -> None:
         state = state_at("switch_when_used_pct", editing=True, edit_buffer="7")
@@ -412,8 +420,15 @@ class TouchedKeysTest(unittest.TestCase):
         self.assertEqual(after.values["telegram_bot_token"], TOKEN)
 
     def test_a_rejected_edit_touches_nothing(self) -> None:
-        state = state_at("switch_when_used_pct", editing=True, edit_buffer="150")
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="abc")
         self.assertEqual(cm.step(state, KeyEvent(Key.ENTER)).touched, frozenset())
+
+    def test_a_clamped_edit_still_touches_the_key(self) -> None:
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="150")
+        self.assertEqual(
+            cm.step(state, KeyEvent(Key.ENTER)).touched,
+            frozenset({"switch_when_used_pct"}),
+        )
 
     def test_save_passes_only_the_touched_keys(self) -> None:
         state = cm.MenuState(
@@ -495,9 +510,9 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
         self.assertEqual(self.stored()["from_a_newer_ai_accounts"], "keep me")
         self.assertIs(self.stored()["enabled"], False)
 
-    def test_a_rejected_edit_never_reaches_disk(self) -> None:
+    def test_an_over_range_edit_clamps_and_reaches_disk(self) -> None:
         autoswitch.save_config({"switch_when_used_pct": 42})
-        rc, out, _ = self.run_menu(
+        rc, _, _ = self.run_menu(
             keys(
                 KeyEvent(Key.DOWN),
                 KeyEvent(Key.ENTER),
@@ -506,14 +521,33 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
                 char("9"),
                 char("9"),
                 char("9"),
-                KeyEvent(Key.ENTER),  # rejected: out of range
+                KeyEvent(Key.ENTER),  # clamped to the maximum, not rejected
+                char("q"),
+            )
+        )
+        self.assertEqual(rc, 0)
+        # 999 is clamped to 100, and *that* value is what autosave carries
+        # to disk — never the raw out-of-range 999.
+        self.assertEqual(self.stored()["switch_when_used_pct"], 100)
+        self.assertNotIn("999", self.config_path.read_text(encoding="utf-8"))
+
+    def test_a_rejected_edit_never_reaches_disk(self) -> None:
+        autoswitch.save_config({"switch_when_used_pct": 42})
+        rc, out, _ = self.run_menu(
+            keys(
+                KeyEvent(Key.DOWN),
+                KeyEvent(Key.ENTER),
+                KeyEvent(Key.BACKSPACE),
+                KeyEvent(Key.BACKSPACE),
+                char("x"),
+                KeyEvent(Key.ENTER),  # rejected: not a number
                 KeyEvent(Key.ESCAPE),
                 char("q"),
             )
         )
         self.assertEqual(rc, 0)
-        self.assertIn("must be an integer 1-100", out)
-        # The rejected 999 never entered `values`, so no autosave could carry
+        self.assertIn("must be an integer 0-100", out)
+        # The rejected "x" never entered `values`, so no autosave could carry
         # it to disk — the stored 42 stands.
         self.assertEqual(self.stored()["switch_when_used_pct"], 42)
         self.assertNotIn("999", self.config_path.read_text(encoding="utf-8"))
@@ -888,10 +922,20 @@ class CmdConfigLegacyTest(_ConfigFileMixin, unittest.TestCase):
         self.assertIn("notify must be one of", err)
         self.assertFalse(self.config_path.exists())
 
-    def test_set_rejects_an_out_of_range_pct(self) -> None:
-        rc, _, err = self.call(["set", "switch_when_used_pct", "150"])
+    def test_set_clamps_an_over_range_pct_to_the_maximum(self) -> None:
+        rc, out, _ = self.call(["set", "switch_when_used_pct", "150"])
+        self.assertEqual((rc, out), (0, "switch_when_used_pct = 100\n"))
+        self.assertEqual(self.stored()["switch_when_used_pct"], 100)
+
+    def test_set_clamps_a_negative_pct_to_the_minimum(self) -> None:
+        rc, out, _ = self.call(["set", "switch_when_used_pct", "-5"])
+        self.assertEqual((rc, out), (0, "switch_when_used_pct = 0\n"))
+        self.assertEqual(self.stored()["switch_when_used_pct"], 0)
+
+    def test_set_rejects_a_non_numeric_pct(self) -> None:
+        rc, _, err = self.call(["set", "switch_when_used_pct", "ninety"])
         self.assertEqual(rc, 1)
-        self.assertIn("must be an integer 1-100, got 150", err)
+        self.assertIn("must be an integer 0-100, got 'ninety'", err)
         self.assertFalse(self.config_path.exists())
 
     def test_set_masks_a_secret_in_its_echo(self) -> None:

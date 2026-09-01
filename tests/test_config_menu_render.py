@@ -191,11 +191,11 @@ class ValidationErrorTests(unittest.TestCase):
                 cursor=1,
                 editing=True,
                 edit_buffer="abc",
-                error="switch_when_used_pct must be an integer 1-100, got 'abc'",
+                error="switch_when_used_pct must be an integer 0-100, got 'abc'",
             )
         )
         joined = "\n".join(lines)
-        self.assertIn("must be an integer 1-100", joined)
+        self.assertIn("must be an integer 0-100", joined)
 
 
 class FooterTests(unittest.TestCase):

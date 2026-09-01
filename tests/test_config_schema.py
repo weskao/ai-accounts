@@ -7,8 +7,8 @@ default, allowed values, parser, masked-ness and human label. Two concerns:
      of naming keys, so a seventh key needs one declarative entry and no test
      edit. The only place keys are spelled out is the back-compat pin below,
      which exists precisely to catch an accidental key *removal*.
-  2. **Preserved semantics.** Strict true/false parsing, the inclusive 1-100
-     range, the three notify channels, masking delegated to the existing
+  2. **Preserved semantics.** Strict true/false parsing, the inclusive 0-100
+     clamped range, the three notify channels, masking delegated to the existing
      ``autoswitch._mask``, and the byte-identical error messages the
      ``ai-accounts config set`` CLI already emits.
 
@@ -130,27 +130,60 @@ class ThresholdParsingTests(unittest.TestCase):
     KEY = "switch_when_used_pct"
 
     def test_the_inclusive_boundaries_are_accepted(self) -> None:
-        for raw, expected in (("1", 1), ("100", 100), ("90", 90)):
+        for raw, expected in (("0", 0), ("100", 100), ("90", 90)):
             with self.subTest(raw=raw):
                 self.assertEqual(cs.parse_value(self.KEY, raw), expected)
 
-    def test_out_of_range_values_are_rejected_with_the_cli_message(self) -> None:
-        for raw, shown in (("0", "0"), ("101", "101"), ("-1", "-1")):
+    def test_field_declares_clamping_over_its_0_to_100_range(self) -> None:
+        field = cs.field(self.KEY)
+        self.assertTrue(field.clamp)
+        self.assertEqual(field.minimum, 0)
+        self.assertEqual(field.maximum, 100)
+
+    def test_a_value_above_the_maximum_is_clamped_to_it(self) -> None:
+        for raw in ("101", "999"):
             with self.subTest(raw=raw):
-                with self.assertRaises(ValueError) as ctx:
-                    cs.parse_value(self.KEY, raw)
-                self.assertEqual(
-                    str(ctx.exception),
-                    f"{self.KEY} must be an integer 1-100, got {shown}",
-                )
+                self.assertEqual(cs.parse_value(self.KEY, raw), 100)
+
+    def test_a_negative_value_is_clamped_to_the_minimum(self) -> None:
+        for raw in ("-1", "-999"):
+            with self.subTest(raw=raw):
+                self.assertEqual(cs.parse_value(self.KEY, raw), 0)
 
     def test_a_non_integer_is_rejected_with_the_cli_message(self) -> None:
         with self.assertRaises(ValueError) as ctx:
             cs.parse_value(self.KEY, "ninety")
         self.assertEqual(
             str(ctx.exception),
-            f"{self.KEY} must be an integer 1-100, got 'ninety'",
+            f"{self.KEY} must be an integer 0-100, got 'ninety'",
         )
+
+
+class DynamicHelpTests(unittest.TestCase):
+    """The threshold's help text tracks its own current value, not a fixed 90/10."""
+
+    KEY = "switch_when_used_pct"
+
+    def test_help_reflects_the_value_passed_in(self) -> None:
+        field = cs.field(self.KEY)
+        text = field.display_help(value=60)
+        self.assertIn("60%", text)
+        self.assertIn("40%", text)
+        self.assertNotIn("90%", text)
+        self.assertNotIn("10%", text)
+
+    def test_help_falls_back_to_the_default_when_no_value_is_given(self) -> None:
+        field = cs.field(self.KEY)
+        text = field.display_help()
+        self.assertIn("90%", text)
+        self.assertIn("10%", text)
+
+    def test_a_field_without_a_maximum_ignores_the_remaining_placeholder(self) -> None:
+        # Given/When: a plain field's help, which carries no {value}/{remaining}
+        # Then: passing a value is harmless — nothing to substitute. Pinned to
+        # English so this doesn't depend on the process's resolved language.
+        field = cs.field("enabled")
+        self.assertEqual(field.display_help("en", value=True), field.help)
 
 
 class ChoiceParsingTests(unittest.TestCase):

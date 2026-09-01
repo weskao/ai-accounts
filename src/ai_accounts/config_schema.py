@@ -59,6 +59,10 @@ class Field:
     choices: tuple[str, ...] | None = None
     minimum: int | None = None
     maximum: int | None = None
+    # An int field with this set never rejects an in-range-adjacent number —
+    # it clamps to `minimum`/`maximum` instead of raising. Only a genuinely
+    # non-numeric value still errors (see `_parse`).
+    clamp: bool = False
     masked: bool = False
     group: str | None = None
     # Optional display names for `choices`, as a callable so a label can depend
@@ -80,9 +84,23 @@ class Field:
         """This field's label in *lang*, English if untranslated."""
         return i18n.t(f"config.{self.key}.label", lang=lang, default=self.label)
 
-    def display_help(self, lang: str | None = None) -> str:
-        """This field's help text in *lang*, English if untranslated."""
-        return i18n.t(f"config.{self.key}.help", lang=lang, default=self.help)
+    def display_help(self, lang: str | None = None, value: object = None) -> str:
+        """This field's help text in *lang*, English if untranslated.
+
+        *value* (falling back to this field's own default) fills a
+        ``{value}``/``{remaining}`` placeholder in the text, so e.g. the
+        threshold's help stays in sync with whatever it is currently set to
+        instead of a hardcoded "90%"/"10%". ``remaining`` is how far *value*
+        sits below ``maximum`` — only meaningful for a field that declares
+        one. A help text with neither placeholder is unaffected.
+        """
+        text = i18n.t(f"config.{self.key}.help", lang=lang, default=self.help)
+        if value is None:
+            value = self.default
+        fmt: dict[str, object] = {"value": value}
+        if self.maximum is not None and isinstance(value, int):
+            fmt["remaining"] = self.maximum - value
+        return text.format(**fmt)
 
     @property
     def parse(self) -> Callable[[str], object]:
@@ -109,6 +127,12 @@ class Field:
                 value = int(raw)
             except ValueError:
                 raise ValueError(self._range_error(repr(raw))) from None
+            if self.clamp:
+                if self.minimum is not None:
+                    value = max(value, self.minimum)
+                if self.maximum is not None:
+                    value = min(value, self.maximum)
+                return value
             if not self._in_range(value):
                 raise ValueError(self._range_error(str(value)))
             return value
@@ -181,10 +205,11 @@ FIELDS: tuple[Field, ...] = (
         key="switch_when_used_pct",
         type=int,
         default=90,
-        minimum=1,
+        minimum=0,
         maximum=100,
+        clamp=True,
         label="↳ Switch at usage (%)",
-        help="Start switching at this usage. 90% means the active account has 10% quota left.",
+        help="Start switching at this usage. {value}% means the active account has {remaining}% quota left.",
         group="Automatic switching",
     ),
     Field(

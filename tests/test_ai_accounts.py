@@ -328,12 +328,12 @@ class AiAccountsConfigTest(_ConfigMixin, unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertFalse(self.config_path.exists())
 
-    def test_config_set_rejects_out_of_range_pct(self) -> None:
+    def test_config_set_clamps_out_of_range_pct_to_the_maximum(self) -> None:
         buf = io.StringIO()
         with redirect_stdout(buf):
             rc = aa.main(["config", "set", "switch_when_used_pct", "150"])
-        self.assertEqual(rc, 1)
-        self.assertFalse(self.config_path.exists())
+        self.assertEqual(rc, 0)
+        self.assertEqual(autoswitch.load_config()["switch_when_used_pct"], 100)
 
     def test_config_set_parses_bool_strictly(self) -> None:
         # Given/When: "false" is set for a boolean key

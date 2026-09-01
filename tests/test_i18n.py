@@ -187,9 +187,15 @@ class ConfigLabelTests(_ConfigMixin):
         aw.save_config({"language": "en"})
         for field in cs.FIELDS:
             with self.subTest(key=field.key):
-                # Then: the schema's own literal is what shows
+                # Then: the schema's own literal is what shows — for a field
+                # whose help carries a {value}/{remaining} placeholder (the
+                # threshold), that means the *filled* template, same as any
+                # other language; the literal itself is never shown raw.
                 self.assertEqual(field.display_label(), field.label)
-                self.assertEqual(field.display_help(), field.help)
+                fmt: dict[str, object] = {"value": field.default}
+                if field.maximum is not None:
+                    fmt["remaining"] = field.maximum - field.default
+                self.assertEqual(field.display_help(), field.help.format(**fmt))
 
     def test_every_field_is_translated_in_every_declared_language(self) -> None:
         # Given: each language other than the English source

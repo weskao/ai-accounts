@@ -299,7 +299,9 @@ def render(
 
     body = ["", *field_rows]
     if fields:
-        body.append(f"{DIM}{fields[cursor].display_help(lang)}{RESET}")
+        cursor_field = fields[cursor]
+        cursor_value = values.get(cursor_field.key, cursor_field.default)
+        body.append(f"{DIM}{cursor_field.display_help(lang, value=cursor_value)}{RESET}")
     if confirm_reset:
         prompt = i18n.t("menu.reset_confirm", lang=lang, default=_RESET_CONFIRM_EN)
         body.append(f"{YELLOW}⚠ {prompt}{RESET}")
@@ -314,7 +316,10 @@ def render(
     # Reserve for every help message so moving the cursor never resizes the box.
     max_line = max(
         *(visible_len(line) for line in body),
-        *(visible_len(field.display_help(lang)) for field in fields),
+        *(
+            visible_len(field.display_help(lang, value=values.get(field.key, field.default)))
+            for field in fields
+        ),
         0,
     )
     inner = max(max_line + 3, visible_len(title) + 4, _MIN_WIDTH - 2)

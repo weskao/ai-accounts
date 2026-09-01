@@ -255,7 +255,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "config.switch_when_used_pct.label": {"zh-TW": "↳ 切換門檻（%）"},
     "config.switch_when_used_pct.help": {
-        "zh-TW": "達到這個用量就開始切換。90% 代表作用中的帳號還剩 10% 配額。"
+        "zh-TW": "達到這個用量就開始切換。{value}% 代表作用中的帳號還剩 {remaining}% 配額。"
     },
     "config.switch_window.label": {"zh-TW": "↳ 配額視窗"},
     "config.switch_window.help": {
