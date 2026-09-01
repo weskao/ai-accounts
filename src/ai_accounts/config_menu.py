@@ -301,6 +301,24 @@ def render(
     if fields:
         cursor_field = fields[cursor]
         cursor_value = values.get(cursor_field.key, cursor_field.default)
+        if editing:
+            # Preview the value being typed, not just the last-committed one,
+            # so e.g. the threshold's "X% left" math updates keystroke by
+            # keystroke. A buffer that isn't parseable yet (a bare "-",
+            # mid-typo) falls back to the committed value rather than
+            # erroring — this is a preview, not a commit. Backspacing a
+            # clamped numeric field down to nothing is calculator-style: it
+            # previews the floor, not the old value (see `_step_editing`,
+            # which commits the same way on Enter).
+            try:
+                cursor_value = cursor_field.parse(edit_buffer)
+            except ValueError:
+                if (
+                    not edit_buffer
+                    and cursor_field.clamp
+                    and cursor_field.minimum is not None
+                ):
+                    cursor_value = cursor_field.minimum
         body.append(f"{DIM}{cursor_field.display_help(lang, value=cursor_value)}{RESET}")
     if confirm_reset:
         prompt = i18n.t("menu.reset_confirm", lang=lang, default=_RESET_CONFIRM_EN)
@@ -424,8 +442,15 @@ def _step_editing(
             # "" here would silently destroy the token, which is the very bug
             # the empty seed exists to prevent. See module docstring.
             return replace(state, editing=False, edit_buffer="", error=None)
+        raw = state.edit_buffer
+        if not raw and field.clamp and field.minimum is not None:
+            # Calculator-style: backspacing a clamped numeric field down to
+            # nothing commits the floor, not an error — mirrors the live
+            # preview in `render`. Scoped to `clamp` fields only, so a plain
+            # text field's empty-means-cleared behavior is untouched.
+            raw = str(field.minimum)
         try:
-            value = field.parse(state.edit_buffer)
+            value = field.parse(raw)
         except ValueError as exc:
             # Stay in edit mode with the schema's own message: the invalid
             # value never enters `values`, so it can never reach disk.

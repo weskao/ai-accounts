@@ -119,6 +119,26 @@ class StateMachineEditTest(unittest.TestCase):
         self.assertEqual(after.values["switch_when_used_pct"], 100)
         self.assertTrue(after.pending_save)
 
+    def test_backspacing_to_empty_then_enter_commits_the_minimum(self) -> None:
+        # Calculator-style: backspacing a numeric field down to nothing is
+        # the floor value, not an error — mirrors the live help preview.
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="")
+        after = cm.step(state, KeyEvent(Key.ENTER))
+        self.assertFalse(after.editing)
+        self.assertIsNone(after.error)
+        self.assertEqual(after.values["switch_when_used_pct"], 0)
+        self.assertTrue(after.pending_save)
+        self.assertEqual(after.touched, frozenset({"switch_when_used_pct"}))
+
+    def test_an_empty_buffer_commit_on_a_plain_text_field_still_clears_it(self) -> None:
+        # The empty-means-floor rule is scoped to clamped numeric fields —
+        # a plain text field's existing empty-means-cleared behavior must
+        # not change.
+        state = state_at("telegram_chat_id", editing=True, edit_buffer="")
+        after = cm.step(state, KeyEvent(Key.ENTER))
+        self.assertFalse(after.editing)
+        self.assertEqual(after.values["telegram_chat_id"], "")
+
     def test_escape_cancels_the_edit_and_restores_the_prior_value(self) -> None:
         state = state_at("switch_when_used_pct", editing=True, edit_buffer="7")
         after = cm.step(state, KeyEvent(Key.ESCAPE))

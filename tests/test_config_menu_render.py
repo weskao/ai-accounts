@@ -181,6 +181,89 @@ class EditModeTests(unittest.TestCase):
         self.assertIn("new-typed-secret", row)
 
 
+class LiveHelpPreviewTests(unittest.TestCase):
+    """While editing the threshold, the help line previews the typed value —
+    not just the last-committed one — so the "10% left" math updates as you
+    type, before Enter commits anything."""
+
+    KEY = "switch_when_used_pct"
+
+    def setUp(self) -> None:
+        self.cursor = [f.key for f in cs.FIELDS].index(self.KEY)
+
+    def test_help_line_previews_the_in_progress_edit_buffer(self) -> None:
+        lines = _clean(
+            config_menu.render(
+                "t", cs.FIELDS, _default_values(), cursor=self.cursor,
+                editing=True, edit_buffer="60",
+            )
+        )
+        joined = "\n".join(lines)
+        self.assertIn("60%", joined)
+        self.assertIn("40%", joined)
+        self.assertNotIn("90%", joined)
+        self.assertNotIn("10%", joined)
+
+    def test_help_line_previews_the_clamped_value_for_an_over_range_buffer(self) -> None:
+        lines = _clean(
+            config_menu.render(
+                "t", cs.FIELDS, _default_values(), cursor=self.cursor,
+                editing=True, edit_buffer="999",
+            )
+        )
+        joined = "\n".join(lines)
+        self.assertIn("100%", joined)
+        self.assertIn("0% quota left", joined)
+
+    def test_help_line_previews_the_minimum_once_backspaced_to_empty(self) -> None:
+        # Calculator-style: backspacing the buffer down to nothing previews
+        # the field's floor (0), not the last-committed value and not a crash.
+        lines = _clean(
+            config_menu.render(
+                "t", cs.FIELDS, _default_values(), cursor=self.cursor,
+                editing=True, edit_buffer="",
+            )
+        )
+        joined = "\n".join(lines)
+        self.assertIn("0% means", joined)
+        self.assertIn("100% quota left", joined)
+        self.assertNotIn("90%", joined)
+
+    def test_help_line_falls_back_to_the_stored_value_for_a_not_yet_numeric_buffer(self) -> None:
+        # Given: the buffer mid-typing a negative number — not parseable yet
+        lines = _clean(
+            config_menu.render(
+                "t", cs.FIELDS, _default_values(), cursor=self.cursor,
+                editing=True, edit_buffer="-",
+            )
+        )
+        joined = "\n".join(lines)
+        # Then: the help line shows the last-committed (default) value rather
+        # than crashing or showing nothing
+        self.assertIn("90%", joined)
+        self.assertIn("10%", joined)
+
+    def test_help_line_falls_back_to_the_stored_value_when_the_buffer_is_non_numeric(self) -> None:
+        lines = _clean(
+            config_menu.render(
+                "t", cs.FIELDS, _default_values(), cursor=self.cursor,
+                editing=True, edit_buffer="abc",
+            )
+        )
+        joined = "\n".join(lines)
+        self.assertIn("90%", joined)
+        self.assertIn("10%", joined)
+
+    def test_help_line_matches_the_committed_value_when_not_editing(self) -> None:
+        values = {**_default_values(), self.KEY: 60}
+        lines = _clean(
+            config_menu.render("t", cs.FIELDS, values, cursor=self.cursor)
+        )
+        joined = "\n".join(lines)
+        self.assertIn("60%", joined)
+        self.assertIn("40%", joined)
+
+
 class ValidationErrorTests(unittest.TestCase):
     def test_error_message_rendered_as_its_own_line(self) -> None:
         lines = _clean(
