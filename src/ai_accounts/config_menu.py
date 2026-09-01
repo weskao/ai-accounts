@@ -228,6 +228,21 @@ def _format_value(
     return f"{CYAN}{rendered}{RESET}"
 
 
+def _empty_buffer_value(field: config_schema.Field) -> object | None:
+    """What an empty edit buffer stands for on *field*, or ``None`` if empty
+    is not a value there.
+
+    Calculator-style: a clamped numeric field backspaced down to nothing
+    reads as its floor — shown as that number on the row, previewed in the
+    help line, and committed on Enter. One helper, so those three sites
+    cannot drift apart. A free-text field keeps empty meaning *cleared*, and
+    a masked one keeps empty meaning *cancel*, so both answer ``None``.
+    """
+    if field.clamp and field.minimum is not None:
+        return field.minimum
+    return None
+
+
 def _field_row(
     field: config_schema.Field,
     value: object,
@@ -243,7 +258,16 @@ def _field_row(
     pad = " " * (label_width - visible_len(label))
     if is_cursor and editing:
         # Cleartext while typing — see module docstring "Deliberate decision".
-        value_text = f"{MAGENTA}{edit_buffer}{RESET}_"
+        shown = edit_buffer
+        if not shown:
+            # An emptied numeric buffer displays the value it stands for (0)
+            # instead of an empty cell, so the row agrees with the help line
+            # and with what Enter commits. The buffer itself stays empty, so
+            # the next digit typed replaces this 0 rather than following it.
+            empty_value = _empty_buffer_value(field)
+            if empty_value is not None:
+                shown = field.format(empty_value)
+        value_text = f"{MAGENTA}{shown}{RESET}_"
     else:
         value_text = _format_value(field, value, lang=lang)
     label_text = f"{CYAN}{BOLD}{label}{RESET}" if is_cursor else label
@@ -313,12 +337,9 @@ def render(
             try:
                 cursor_value = cursor_field.parse(edit_buffer)
             except ValueError:
-                if (
-                    not edit_buffer
-                    and cursor_field.clamp
-                    and cursor_field.minimum is not None
-                ):
-                    cursor_value = cursor_field.minimum
+                empty_value = _empty_buffer_value(cursor_field)
+                if not edit_buffer and empty_value is not None:
+                    cursor_value = empty_value
         body.append(f"{DIM}{cursor_field.display_help(lang, value=cursor_value)}{RESET}")
     if confirm_reset:
         prompt = i18n.t("menu.reset_confirm", lang=lang, default=_RESET_CONFIRM_EN)
@@ -435,6 +456,23 @@ def _step_editing(
     if event.key is kr.Key.BACKSPACE:
         return replace(state, edit_buffer=state.edit_buffer[:-1])
     if event.key is kr.Key.CHAR and event.char:
+        if field.type is int:
+            # Calculator-style keypad: digits only; a fresh digit replaces a
+            # lone leading zero instead of stacking onto it ("0" + "6" is
+            # "6", never a displayed "06"); the buffer is capped at as many
+            # digits as the field's own maximum needs (100 -> 3) and is
+            # clamped live the instant it would exceed that maximum — it
+            # never shows a number the schema would reject on Enter.
+            if event.char not in "0123456789":
+                return state
+            buffer = "" if state.edit_buffer == "0" else state.edit_buffer
+            digit_cap = len(str(field.maximum)) if field.maximum is not None else None
+            if digit_cap is not None and len(buffer) >= digit_cap:
+                return state
+            candidate = buffer + event.char
+            if field.maximum is not None and int(candidate) > field.maximum:
+                candidate = str(field.maximum)
+            return replace(state, edit_buffer=candidate)
         return replace(state, edit_buffer=state.edit_buffer + event.char)
     if event.key is kr.Key.ENTER:
         if field.masked and not state.edit_buffer:
@@ -443,12 +481,12 @@ def _step_editing(
             # the empty seed exists to prevent. See module docstring.
             return replace(state, editing=False, edit_buffer="", error=None)
         raw = state.edit_buffer
-        if not raw and field.clamp and field.minimum is not None:
+        empty_value = _empty_buffer_value(field)
+        if not raw and empty_value is not None:
             # Calculator-style: backspacing a clamped numeric field down to
-            # nothing commits the floor, not an error — mirrors the live
-            # preview in `render`. Scoped to `clamp` fields only, so a plain
-            # text field's empty-means-cleared behavior is untouched.
-            raw = str(field.minimum)
+            # nothing commits the floor, not an error — the same rule the row
+            # and the help line display while editing.
+            raw = field.format(empty_value)
         try:
             value = field.parse(raw)
         except ValueError as exc:

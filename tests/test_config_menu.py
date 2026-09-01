@@ -23,6 +23,7 @@ from unittest import mock
 
 from ai_accounts import autoswitch, config_menu as cm, config_schema
 from ai_accounts._keyreader import Key, KeyEvent
+from ai_accounts._present import _ANSI_RE
 
 TOKEN = "12345:FAKE-TOKEN-PLACEHOLDER"
 
@@ -83,10 +84,61 @@ class StateMachineEditTest(unittest.TestCase):
 
     def test_typing_appends_and_backspace_deletes(self) -> None:
         state = state_at("switch_when_used_pct", editing=True, edit_buffer="")
-        for c in "755":
+        for c in "75":
             state = cm.step(state, char(c))
-        state = cm.step(state, KeyEvent(Key.BACKSPACE))
         self.assertEqual(state.edit_buffer, "75")
+        state = cm.step(state, KeyEvent(Key.BACKSPACE))
+        self.assertEqual(state.edit_buffer, "7")
+
+    def test_a_non_digit_keystroke_is_ignored_on_the_threshold_field(self) -> None:
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="4")
+        after = cm.step(state, char("x"))
+        self.assertEqual(after.edit_buffer, "4")
+
+    def test_a_minus_sign_keystroke_is_ignored_on_the_threshold_field(self) -> None:
+        # "0~9 only" — no sign entry either, matching the field's 0-100 floor.
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="")
+        after = cm.step(state, char("-"))
+        self.assertEqual(after.edit_buffer, "")
+
+    def test_a_non_digit_keystroke_is_still_accepted_on_a_plain_text_field(self) -> None:
+        # The digits-only rule is scoped to int fields — a free-text field
+        # (chat id, token) must keep accepting any character.
+        state = state_at("telegram_chat_id", editing=True, edit_buffer="")
+        after = cm.step(state, char("x"))
+        self.assertEqual(after.edit_buffer, "x")
+
+    def test_the_threshold_field_caps_input_at_three_digits(self) -> None:
+        # 100 (the field's own maximum) is 3 digits — a 4th keystroke is a
+        # no-op rather than building an ever-longer number to clamp down.
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="999")
+        after = cm.step(state, char("9"))
+        self.assertEqual(after.edit_buffer, "999")
+
+    def test_backspace_then_typing_still_live_clamps_to_the_maximum(self) -> None:
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="999")
+        state = cm.step(state, KeyEvent(Key.BACKSPACE))  # -> "99"
+        state = cm.step(state, char("5"))  # 995 exceeds 100
+        self.assertEqual(state.edit_buffer, "100")
+
+    def test_typing_past_the_maximum_snaps_the_buffer_live(self) -> None:
+        # Not just the help-line preview and not just on Enter — the buffer
+        # itself never shows a number over 100 while typing.
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="")
+        for c in "101":
+            state = cm.step(state, char(c))
+        self.assertEqual(state.edit_buffer, "100")
+
+    def test_a_digit_after_a_lone_zero_replaces_it_instead_of_appending(self) -> None:
+        # Calculator-style: "0" then "6" is "6", never a displayed "06".
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="0")
+        after = cm.step(state, char("6"))
+        self.assertEqual(after.edit_buffer, "6")
+
+    def test_a_second_zero_after_a_lone_zero_stays_a_single_zero(self) -> None:
+        state = state_at("switch_when_used_pct", editing=True, edit_buffer="0")
+        after = cm.step(state, char("0"))
+        self.assertEqual(after.edit_buffer, "0")
 
     def test_backspace_on_an_empty_buffer_is_harmless(self) -> None:
         state = state_at("telegram_chat_id", editing=True, edit_buffer="")
@@ -150,6 +202,98 @@ class StateMachineEditTest(unittest.TestCase):
     def test_moving_the_cursor_clears_a_stale_error(self) -> None:
         start = cm.MenuState(values={}, error="boom")
         self.assertIsNone(cm.step(start, KeyEvent(Key.DOWN)).error)
+
+
+class EmptyBufferFloorTest(unittest.TestCase):
+    """The "backspaced to nothing reads as the floor" rule, and the one helper
+    that keeps its three consumers — the row, the help line and the Enter
+    commit — from disagreeing.
+
+    The bug this guards: the commit and the help line honoured the rule while
+    the row still rendered a bare cursor, so the field *looked* empty while
+    behaving as 0. Any future site that grows its own copy of the condition
+    fails ``test_the_row_the_help_line_and_the_commit_all_agree``.
+    """
+
+    KEY = "switch_when_used_pct"
+
+    def _rendered_at(self, key: str, **kwargs) -> list[str]:
+        state = state_at(key, **kwargs)
+        lines = cm.render(
+            "t",
+            config_schema.FIELDS,
+            state.values,
+            state.cursor,
+            editing=state.editing,
+            edit_buffer=state.edit_buffer,
+        )
+        return [_ANSI_RE.sub("", line) for line in lines]
+
+    def _rendered(self, **kwargs) -> list[str]:
+        return self._rendered_at(self.KEY, **kwargs)
+
+    def _value_cell(self, lines: list[str], key: str) -> str:
+        label = config_schema.field(key).label
+        row = next(line for line in lines if label in line)
+        return row.split(label)[1].strip(" │")
+
+    def test_the_helper_reports_the_floor_for_a_clamped_numeric_field(self) -> None:
+        self.assertEqual(cm._empty_buffer_value(config_schema.field(self.KEY)), 0)
+
+    def test_the_helper_reports_nothing_for_fields_where_empty_is_not_a_value(self) -> None:
+        # Free text keeps empty meaning "cleared", masked keeps it meaning
+        # "cancel", cycled choices never type at all — none may sprout a floor.
+        for key in ("telegram_chat_id", "telegram_bot_token", "notify", "enabled"):
+            with self.subTest(key=key):
+                self.assertIsNone(cm._empty_buffer_value(config_schema.field(key)))
+
+    def test_the_row_the_help_line_and_the_commit_all_agree(self) -> None:
+        # Given: the threshold backspaced down to nothing, stored value 90
+        lines = self._rendered(editing=True, edit_buffer="")
+        committed = cm.step(
+            state_at(self.KEY, editing=True, edit_buffer=""), KeyEvent(Key.ENTER)
+        )
+        # Then: all three say 0 — no site left behind
+        self.assertEqual(self._value_cell(lines, self.KEY), "0_")
+        self.assertIn(
+            "0% means the active account has 100% quota left",
+            "\n".join(lines),
+        )
+        self.assertEqual(committed.values[self.KEY], 0)
+
+    def test_the_row_shows_the_floor_not_a_blank_cell(self) -> None:
+        self.assertEqual(self._value_cell(self._rendered(editing=True, edit_buffer=""), self.KEY), "0_")
+
+    def test_backspace_cannot_take_the_row_below_the_floor(self) -> None:
+        # Given: an already-emptied buffer
+        state = state_at(self.KEY, editing=True, edit_buffer="")
+        # When: backspace is pressed again
+        after = cm.step(state, KeyEvent(Key.BACKSPACE))
+        # Then: still empty, and still displayed as 0 — a calculator floor
+        self.assertEqual(after.edit_buffer, "")
+        self.assertEqual(
+            self._value_cell(self._rendered(editing=True, edit_buffer=""), self.KEY), "0_"
+        )
+
+    def test_the_displayed_floor_is_replaced_by_the_next_digit(self) -> None:
+        # The buffer stays a real empty string, which is *why* typing replaces
+        # the displayed 0 instead of prefixing it.
+        state = state_at(self.KEY, editing=True, edit_buffer="")
+        after = cm.step(state, char("7"))
+        self.assertEqual(after.edit_buffer, "7")
+        self.assertEqual(self._value_cell(self._rendered(editing=True, edit_buffer="7"), self.KEY), "7_")
+
+    def test_an_emptied_masked_row_stays_blank_and_cancels(self) -> None:
+        # The display rule must not reach the secret row: an empty masked
+        # buffer means "cancel", so a "0" there would be a lie.
+        lines = self._rendered_at("telegram_bot_token", editing=True, edit_buffer="")
+        self.assertEqual(self._value_cell(lines, "telegram_bot_token"), "_")
+        after = cm.step(
+            state_at("telegram_bot_token", editing=True, edit_buffer=""),
+            KeyEvent(Key.ENTER),
+        )
+        self.assertFalse(after.editing)
+        self.assertEqual(after.touched, frozenset())
 
 
 class StateMachineToggleTest(unittest.TestCase):
@@ -551,37 +695,72 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
         self.assertEqual(self.stored()["switch_when_used_pct"], 100)
         self.assertNotIn("999", self.config_path.read_text(encoding="utf-8"))
 
-    def test_a_rejected_edit_never_reaches_disk(self) -> None:
+    def test_backspacing_to_empty_shows_zero_and_writes_zero(self) -> None:
+        # The end-to-end version of the rule: what the user sees on the row
+        # while the buffer is empty, and what lands on disk on Enter.
+        autoswitch.save_config({"switch_when_used_pct": 42})
+        rc, out, _ = self.run_menu(
+            keys(
+                KeyEvent(Key.DOWN),
+                KeyEvent(Key.ENTER),  # seeds the buffer with "42"
+                KeyEvent(Key.BACKSPACE),
+                KeyEvent(Key.BACKSPACE),  # emptied -> reads as 0
+                KeyEvent(Key.ENTER),  # commits that 0
+                char("q"),
+            )
+        )
+        self.assertEqual(rc, 0)
+        clean = _ANSI_RE.sub("", out)
+        self.assertIn("0_", clean)  # the row showed 0, not a bare cursor
+        self.assertIn("0% means the active account has 100% quota left", clean)
+        self.assertEqual(self.stored()["switch_when_used_pct"], 0)
+
+    def test_backspacing_to_empty_then_typing_replaces_the_displayed_zero(self) -> None:
         autoswitch.save_config({"switch_when_used_pct": 42})
         rc, out, _ = self.run_menu(
             keys(
                 KeyEvent(Key.DOWN),
                 KeyEvent(Key.ENTER),
                 KeyEvent(Key.BACKSPACE),
-                KeyEvent(Key.BACKSPACE),
-                char("x"),
-                KeyEvent(Key.ENTER),  # rejected: not a number
-                KeyEvent(Key.ESCAPE),
+                KeyEvent(Key.BACKSPACE),  # emptied -> displays 0
+                char("7"),  # replaces that 0
+                char("5"),
+                KeyEvent(Key.ENTER),
                 char("q"),
             )
         )
         self.assertEqual(rc, 0)
-        self.assertIn("must be an integer 0-100", out)
-        # The rejected "x" never entered `values`, so no autosave could carry
-        # it to disk — the stored 42 stands.
+        clean = _ANSI_RE.sub("", out)
+        self.assertNotIn("07", clean)  # never a leading zero
+        self.assertEqual(self.stored()["switch_when_used_pct"], 75)
+
+    def test_a_non_digit_keystroke_never_reaches_the_buffer_or_disk(self) -> None:
+        # Calculator-style keypad: "x" is blocked at the keystroke, so the
+        # buffer is never anything the schema would need to reject on Enter.
+        autoswitch.save_config({"switch_when_used_pct": 42})
+        rc, out, _ = self.run_menu(
+            keys(
+                KeyEvent(Key.DOWN),
+                KeyEvent(Key.ENTER),  # seeds the buffer with "42"
+                char("x"),  # ignored: not a digit
+                KeyEvent(Key.ENTER),  # commits the unchanged 42
+                char("q"),
+            )
+        )
+        self.assertEqual(rc, 0)
+        self.assertNotIn("42x", out)
         self.assertEqual(self.stored()["switch_when_used_pct"], 42)
         self.assertNotIn("999", self.config_path.read_text(encoding="utf-8"))
 
-    def test_a_rejected_edit_then_quit_leaves_the_file_byte_identical(self) -> None:
+    def test_an_ignored_keystroke_then_quit_leaves_the_file_byte_identical(self) -> None:
         autoswitch.save_config({"switch_when_used_pct": 42})
         before = self.config_path.read_text(encoding="utf-8")
         rc, out, _ = self.run_menu(
             keys(
                 KeyEvent(Key.DOWN),
-                KeyEvent(Key.ENTER),
-                char("x"),
-                KeyEvent(Key.ENTER),  # rejected
-                KeyEvent(Key.ESCAPE),
+                KeyEvent(Key.ENTER),  # seeds the buffer with "42"
+                char("x"),  # ignored: not a digit
+                KeyEvent(Key.ENTER),  # commits the unchanged 42: no write
                 char("q"),
             )
         )

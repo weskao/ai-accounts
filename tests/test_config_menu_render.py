@@ -159,6 +159,33 @@ class EditModeTests(unittest.TestCase):
         row = next(line for line in lines if cs.FIELDS[1].label in line)
         self.assertIn("55", row)
 
+    def test_an_emptied_numeric_buffer_shows_its_floor_not_a_blank_cell(self) -> None:
+        # Calculator display: backspacing the threshold down to nothing reads
+        # as 0 on the row itself, matching what the help line previews and
+        # what Enter would commit — a blank cell reads as "no value".
+        cursor = [f.key for f in cs.FIELDS].index("switch_when_used_pct")
+        lines = _clean(
+            config_menu.render(
+                "t", cs.FIELDS, _default_values(), cursor=cursor,
+                editing=True, edit_buffer="",
+            )
+        )
+        row = next(line for line in lines if cs.FIELDS[cursor].label in line)
+        self.assertIn("0", row.split(cs.FIELDS[cursor].label)[1])
+
+    def test_an_empty_buffer_on_a_text_field_stays_blank(self) -> None:
+        # The floor-on-empty display is scoped to clamped numeric fields; a
+        # free-text row must not sprout a "0" while being typed into.
+        cursor = [f.key for f in cs.FIELDS].index("telegram_chat_id")
+        lines = _clean(
+            config_menu.render(
+                "t", cs.FIELDS, _default_values(), cursor=cursor,
+                editing=True, edit_buffer="",
+            )
+        )
+        row = next(line for line in lines if cs.FIELDS[cursor].label in line)
+        self.assertNotIn("0", row.split(cs.FIELDS[cursor].label)[1])
+
     def test_edit_buffer_on_masked_field_is_not_masked_cleartext_by_design(self) -> None:
         # Deliberate decision: while typing a new secret, the buffer echoes
         # cleartext (it's the user's own terminal and their own new value —
