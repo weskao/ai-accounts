@@ -1,4 +1,15 @@
+## [0.4.0] - 2026-09-01
+
+### 🚀 Features
+
+- **config:** [**breaking**] Clamp switch threshold, sync help text
+- **config:** Live-preview threshold edits, floor on empty
+- **config:** Calculator-style numeric input for threshold field
 ## [0.3.1] - 2026-08-26
+
+### 📚 Documentation
+
+- **changelog:** Release v0.3.1
 
 ### ⚙️ Miscellaneous Tasks
 
