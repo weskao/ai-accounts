@@ -182,15 +182,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "⚠️ 需重啟 session 才會生效",
     },
     "notify.no_candidate.title": {
-        "en": "🚫 {provider}: {profile} at {used}%, nothing to switch to",
-        "zh-TW": "🚫 {provider}：{profile} 已用 {used}%，無帳號可切",
+        # Always say which direction the number runs ("used", not a bare "at
+        # {used}%"): a percentage next to a quota reads as "left" just as
+        # easily as "spent", and the two lead to opposite actions.
+        "en": "🚫 {provider}: {profile} has used {used}% of its quota, nothing to switch to",
+        "zh-TW": "🚫 {provider}：{profile} 已用掉 {used}% 配額，沒有其他帳號可切",
     },
     "notify.no_candidate.body": {
         # "unreadable" is load-bearing: never claim an account we could not
         # read is over quota — that sends the user to "wait for the reset"
         # when the real fix is a re-login.
-        "en": "💡 Others are {threshold}%+ or unreadable — wait for the reset, or add one",
-        "zh-TW": "💡 其他帳號都在 {threshold}% 以上或讀不到用量 — 等配額重置，或再新增一個",
+        "en": "💡 Every other account has used ≥{threshold}% too, or its usage is unreadable — wait for the quota reset, or add an account",
+        "zh-TW": "💡 其他帳號的已用配額也都 ≥{threshold}%，或讀不到用量 — 等配額重置，或新增帳號",
     },
     # The generic title/body pair is the FALLBACK, used only when a tick
     # reported a revocation in wording `refresh_report.parse` could not
