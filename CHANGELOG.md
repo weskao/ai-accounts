@@ -1,9 +1,23 @@
-## [Unreleased]
+## [0.5.0] - 2026-09-03
 
 ### 🚀 Features
 
 - **config:** Add layout setting for narrow-terminal output
+- **present:** Render a narrow stacked layout for phone-width terminals
+- **config:** Reflow the interactive menu for narrow terminals
 
+### 🐛 Bug Fixes
+
+- **i18n:** Remove used-vs-left ambiguity in no_candidate wording
+- **cli:** Forward the terminal width to provider subprocesses
+
+### 📚 Documentation
+
+- Document the layout setting
+
+### 🧪 Testing
+
+- Pin wide output to golden
 ## [0.4.0] - 2026-09-01
 
 ### 🚀 Features
@@ -11,6 +25,10 @@
 - **config:** [**breaking**] Clamp switch threshold, sync help text
 - **config:** Live-preview threshold edits, floor on empty
 - **config:** Calculator-style numeric input for threshold field
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.4.0
 ## [0.3.1] - 2026-08-26
 
 ### 📚 Documentation
