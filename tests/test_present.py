@@ -895,3 +895,54 @@ class NarrowSurfaceBudgetTests(unittest.TestCase):
         for text in (headline, picker):
             widest = max(present.visible_len(line) for line in text.splitlines())
             self.assertGreater(widest, _NARROW_COLUMNS)
+
+
+class WideGoldenFixtureTests(unittest.TestCase):
+    """Wide output matches a checked-in golden, byte for byte.
+
+    ``WideModeUnchangedTests`` above diffs against ``git show HEAD``, which
+    stops being meaningful the moment this feature is committed — HEAD then
+    carries the feature and it skips itself. That leaves the "wide is
+    unchanged" guarantee with nothing enforcing it, so this pins the same
+    guarantee to a fixture that survives the merge. Regenerate the file
+    deliberately (and review the diff) if wide output is ever meant to move.
+    """
+
+    GOLDEN = Path(__file__).resolve().parent / "fixtures" / "wide_golden.txt"
+
+    COLUMNS = [
+        ("PROFILE", "profile"), ("ACCOUNT", "account"), ("PLAN", "plan"),
+        ("ID", "account_id"), ("5H USED", "usage_5h"), ("1W USED", "usage_1week"),
+        ("UPDATED", "usage_updated"), ("AUTH", "expires"), ("STATE", "status"),
+    ]
+    ROWS = [
+        {"profile": "work", "account": "Test <user@example.com>", "plan": "pro",
+         "account_id": "acct-1", "usage_5h": "12%", "usage_1week": "34%",
+         "usage_updated": "2m ago", "expires": "5h", "status": "active"},
+        {"profile": "spare", "account": "測試 <user@example.com>", "plan": "free",
+         "account_id": "—", "usage_5h": "—", "usage_1week": "—",
+         "usage_updated": "—", "expires": "expired", "status": "expired"},
+    ]
+
+    def test_wide_output_matches_the_checked_in_golden(self) -> None:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            present.accounts_table(
+                [dict(row) for row in self.ROWS], self.COLUMNS, mode="wide"
+            )
+            present.panel(
+                "Codex Login Status",
+                ["Logged in", "Account: user@example.com"],
+                mode="wide",
+            )
+            present.ok("Switched Codex account", "work", mode="wide")
+            present.success_panel(
+                "Saved Codex profile", "work", ["Account: user@example.com"],
+                title="Current Auth Claims",
+                details=["→ /tmp/accounts/work.json"], mode="wide",
+            )
+        self.assertEqual(
+            buffer.getvalue(),
+            self.GOLDEN.read_text(encoding="utf-8"),
+            "wide output drifted from tests/fixtures/wide_golden.txt",
+        )
