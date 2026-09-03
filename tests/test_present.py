@@ -20,6 +20,7 @@ import base64
 import io
 import json
 import os
+import sys
 import tempfile
 import time
 import unittest
@@ -28,6 +29,7 @@ from pathlib import Path
 from unittest import mock
 
 from ai_accounts import _present as present
+from ai_accounts import autoswitch as aw
 from ai_accounts import claude_accounts as cla
 from ai_accounts import codex_accounts as coa
 from ai_accounts import gemini_accounts as gea
@@ -36,6 +38,16 @@ from ai_accounts._utils import GREEN
 
 SENTINEL_ACCESS = "SENTINEL_LEAK_ACCESS_xyz"
 SENTINEL_REFRESH = "SENTINEL_LEAK_REFRESH_xyz"
+
+# Narrow-mode fixtures. The budget every narrow line must fit, a store path
+# long enough to overflow it (72 columns as printed), and a picker list whose
+# entries do too — all placeholders, nothing copied from a real terminal.
+_NARROW_COLUMNS = present.NARROW_WIDTH
+_LONG_STORE_PATH = "/home/example-user/.ai-accounts/codex/accounts/work-laptop.json"
+_PICKER_ITEMS = [
+    ("work-laptop-secondary", "expires in 5h 12m"),
+    ("測試設定檔", "expired 2026-01-01"),
+]
 
 
 def _future_ms() -> int:
@@ -390,3 +402,496 @@ class VisibleLenWideCharTests(unittest.TestCase):
 
     def test_combining_marks_add_no_width(self):
         self.assertEqual(present.visible_len("é"), 1)
+
+
+# ── layout: auto/wide/narrow (new in this change) ───────────────────────────
+#
+# `tests/conftest.py`'s autouse fixture pins every test's ambient terminal to
+# wide and clears the layout cache before/after each test, so nothing below
+# needs to defend against ambient COLUMNS itself — only the tests that
+# specifically probe width detection or the auto-resolver override that pin
+# with their own explicit mocks/env, scoped to just that test.
+
+
+class TerminalWidthTests(unittest.TestCase):
+    """`terminal_width()` must never invent a width — genuinely undetectable
+    (no COLUMNS, no real tty on any of the three streams) means ``None``."""
+
+    def test_columns_env_wins_over_device_detection(self) -> None:
+        with mock.patch.dict(os.environ, {"COLUMNS": "123"}, clear=False):
+            self.assertEqual(present.terminal_width(), 123)
+
+    def test_a_non_numeric_columns_value_is_ignored(self) -> None:
+        with mock.patch.dict(os.environ, {"COLUMNS": "not-a-number"}, clear=False), \
+                mock.patch("os.get_terminal_size", side_effect=OSError):
+            self.assertIsNone(present.terminal_width())
+
+    def test_a_zero_or_negative_columns_value_is_ignored(self) -> None:
+        for raw in ("0", "-40"):
+            with self.subTest(raw=raw):
+                with mock.patch.dict(os.environ, {"COLUMNS": raw}, clear=False), \
+                        mock.patch("os.get_terminal_size", side_effect=OSError):
+                    self.assertIsNone(present.terminal_width())
+
+    def test_falls_back_to_device_size_when_columns_is_unset(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("COLUMNS", None)
+            with mock.patch(
+                "os.get_terminal_size",
+                return_value=os.terminal_size((77, 24)),
+            ):
+                self.assertEqual(present.terminal_width(), 77)
+
+    def test_none_when_columns_unset_and_no_stream_is_a_real_terminal(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("COLUMNS", None)
+            with mock.patch("os.get_terminal_size", side_effect=OSError):
+                self.assertIsNone(present.terminal_width())
+
+
+class LayoutModeResolverTests(unittest.TestCase):
+    """`layout_mode()`'s full decision table: explicit override > configured
+    wide/narrow > width-based auto-resolution > the undetectable-width
+    fallback. Each test resets the cache first/after so it never leaks into a
+    sibling test or into `tests/conftest.py`'s own wide pin."""
+
+    def setUp(self) -> None:
+        present.reset_layout_cache()
+        self.addCleanup(present.reset_layout_cache)
+
+    def _with_config(self, layout: str):
+        return mock.patch.object(
+            aw, "load_config", return_value={**aw.DEFAULTS, "layout": layout}
+        )
+
+    def test_width_59_resolves_to_narrow(self) -> None:
+        with self._with_config("auto"), mock.patch.object(present, "terminal_width", return_value=59):
+            self.assertEqual(present.layout_mode(), "narrow")
+
+    def test_width_60_the_exact_boundary_resolves_to_wide(self) -> None:
+        with self._with_config("auto"), mock.patch.object(present, "terminal_width", return_value=60):
+            self.assertEqual(present.layout_mode(), "wide")
+
+    def test_configured_wide_or_narrow_beats_width_detection(self) -> None:
+        with self._with_config("wide"), mock.patch.object(present, "terminal_width", return_value=10):
+            self.assertEqual(present.layout_mode(), "wide")
+        present.reset_layout_cache()
+        with self._with_config("narrow"), mock.patch.object(present, "terminal_width", return_value=999):
+            self.assertEqual(present.layout_mode(), "narrow")
+
+    def test_auto_resolves_via_width_both_directions(self) -> None:
+        with self._with_config("auto"), mock.patch.object(present, "terminal_width", return_value=200):
+            self.assertEqual(present.layout_mode(), "wide")
+        present.reset_layout_cache()
+        with self._with_config("auto"), mock.patch.object(present, "terminal_width", return_value=20):
+            self.assertEqual(present.layout_mode(), "narrow")
+
+    def test_undetectable_width_resolves_to_wide(self) -> None:
+        with self._with_config("auto"), mock.patch.object(present, "terminal_width", return_value=None):
+            self.assertEqual(present.layout_mode(), "wide")
+
+    def test_override_argument_short_circuits_everything(self) -> None:
+        with self._with_config("narrow"), mock.patch.object(present, "terminal_width", return_value=999):
+            self.assertEqual(present.layout_mode(override="wide"), "wide")
+        present.reset_layout_cache()
+        with self._with_config("wide"), mock.patch.object(present, "terminal_width", return_value=10):
+            self.assertEqual(present.layout_mode(override="narrow"), "narrow")
+
+    def test_an_override_call_never_poisons_the_cache_for_other_callers(self) -> None:
+        # A caller passing an explicit override must not corrupt what the
+        # NEXT, override-less caller in the same process sees.
+        with self._with_config("wide"), mock.patch.object(present, "terminal_width", return_value=200):
+            # First call with no override at all: caches "wide".
+            self.assertEqual(present.layout_mode(), "wide")
+            # A second, unrelated caller passing an override gets its own
+            # answer straight back, untouched by the cache...
+            self.assertEqual(present.layout_mode(override="narrow"), "narrow")
+            # ...and a THIRD, override-less caller still sees the original
+            # cached "wide", not "narrow" leaking in from the override call.
+            self.assertEqual(present.layout_mode(), "wide")
+
+    def test_cache_is_read_once_per_reset(self) -> None:
+        with self._with_config("wide"):
+            self.assertEqual(present.layout_mode(), "wide")
+            # Config changes without a reset: the stale cached answer wins.
+            with self._with_config("narrow"):
+                self.assertEqual(present.layout_mode(), "wide")
+            # Only after an explicit reset is the new config read.
+            present.reset_layout_cache()
+            self.assertEqual(present.layout_mode(), "wide")  # outer patch restored
+        present.reset_layout_cache()
+        with self._with_config("narrow"):
+            self.assertEqual(present.layout_mode(), "narrow")
+
+    def test_configured_auto_re_resolves_the_width_on_every_call(self) -> None:
+        """The regression the cache split exists for. ``config_menu.run_menu``
+        renders a frame per keystroke for the life of an interactive session,
+        so a terminal resized mid-session has to change the answer — caching
+        the RESOLVED mode froze the first frame's answer forever. Two calls,
+        two widths, one process, no reset in between."""
+        with self._with_config("auto"):
+            with mock.patch.object(present, "terminal_width", return_value=200):
+                self.assertEqual(present.layout_mode(), "wide")
+            with mock.patch.object(present, "terminal_width", return_value=30):
+                self.assertEqual(present.layout_mode(), "narrow")
+            with mock.patch.object(present, "terminal_width", return_value=200):
+                self.assertEqual(present.layout_mode(), "wide")
+
+    def test_auto_reads_the_config_once_but_measures_the_width_every_time(self) -> None:
+        """Both halves of the split at once: the expensive disk read stays
+        cached (what ``test_cache_is_read_once_per_reset`` guards), the cheap
+        width syscall does not."""
+        with self._with_config("auto") as loader, mock.patch.object(
+            present, "terminal_width", side_effect=[200, 30]
+        ) as width:
+            self.assertEqual(present.layout_mode(), "wide")
+            self.assertEqual(present.layout_mode(), "narrow")
+        self.assertEqual(loader.call_count, 1)
+        self.assertEqual(width.call_count, 2)
+
+    def test_override_auto_re_resolves_by_width_without_reading_the_config(self) -> None:
+        """``config_menu.render`` passes the UNCOMMITTED ``values["layout"]``
+        as the override: cycling that row to ``auto`` must live-preview the
+        width-derived answer, not whatever is still on disk."""
+        with self._with_config("narrow") as loader:
+            with mock.patch.object(present, "terminal_width", return_value=200):
+                self.assertEqual(present.layout_mode("auto"), "wide")
+            with mock.patch.object(present, "terminal_width", return_value=30):
+                self.assertEqual(present.layout_mode("auto"), "narrow")
+            loader.assert_not_called()
+
+    def test_an_auto_override_call_never_poisons_the_cache_for_other_callers(self) -> None:
+        with self._with_config("wide"), mock.patch.object(present, "terminal_width", return_value=30):
+            self.assertEqual(present.layout_mode(), "wide")
+            self.assertEqual(present.layout_mode("auto"), "narrow")
+            self.assertEqual(present.layout_mode(), "wide")
+
+
+class NarrowPreservesEveryColumnTests(unittest.TestCase):
+    """The widest real table (agy/gemini: 11 columns, 5 optional) — wide mode
+    drops an optional column outright when every row renders "—" for it;
+    narrow must show every column regardless, since a stacked card has the
+    room a fixed-width table does not."""
+
+    def _row(self) -> dict[str, str]:
+        # Every OPTIONAL column dashed out (the trigger for wide's drop);
+        # every other column carries a real, distinguishable value.
+        row = {key: "—" for _, key in gea._TABLE_COLUMNS}
+        for _, key in gea._TABLE_COLUMNS:
+            if key not in gea._OPTIONAL_COLUMNS:
+                row[key] = key  # non-optional value distinct per column
+        row["profile"] = "work"
+        row["status"] = "active"
+        return row
+
+    def test_narrow_keeps_every_column_even_when_all_optional_ones_are_all_dash(self) -> None:
+        row = self._row()
+        ident_key, state_key = gea._TABLE_COLUMNS[0][1], "status"
+        out = _capture(
+            present.accounts_table,
+            [row],
+            gea._TABLE_COLUMNS,
+            optional_columns=gea._OPTIONAL_COLUMNS,
+            align_keys=gea._ALIGN_KEYS,
+            mode="narrow",
+        )
+        # Every header except the identity/state columns prints as its own
+        # "LABEL  value" card line (see `_present._accounts_cards`); identity
+        # and state print as the card's bare title/trailing text instead, by
+        # design, in both modes — so their headers are never literal text and
+        # are checked via their values below instead.
+        for header, key in gea._TABLE_COLUMNS:
+            if key in (ident_key, state_key):
+                continue
+            with self.subTest(header=header):
+                self.assertIn(header, out)
+        self.assertIn("work", out)
+        self.assertIn("active", out)
+        # All 5 optional columns are present with their real ("—") value —
+        # nothing got dropped the way wide mode would drop it.
+        self.assertEqual(out.count("—"), len(gea._OPTIONAL_COLUMNS))
+
+    def test_wide_mode_drops_the_same_all_dash_optional_columns(self) -> None:
+        # Contrast case, same input: wide mode's existing (unchanged)
+        # optional-column-hiding behavior removes them entirely.
+        row = self._row()
+        out = _capture(
+            present.accounts_table,
+            [row],
+            gea._TABLE_COLUMNS,
+            optional_columns=gea._OPTIONAL_COLUMNS,
+            align_keys=gea._ALIGN_KEYS,
+            mode="wide",
+        )
+        for header, key in gea._TABLE_COLUMNS:
+            if key not in gea._OPTIONAL_COLUMNS:
+                continue
+            with self.subTest(header=header):
+                self.assertNotIn(header, out)
+
+
+def _load_head_present():
+    """The pre-this-change ``_present`` module, loaded from git history, so
+    wide-mode output can be diffed against it byte-for-byte. Skips (rather
+    than fails) when git history/the old file genuinely isn't available —
+    this is an extra regression lock, not a substitute for the tests above."""
+    import importlib.util
+    import subprocess as sp
+
+    try:
+        old_source = sp.run(
+            ["git", "show", "HEAD:src/ai_accounts/_present.py"],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (sp.CalledProcessError, OSError) as exc:
+        raise unittest.SkipTest(f"git show HEAD:_present.py unavailable: {exc}")
+    if "def layout_mode" in old_source:
+        raise unittest.SkipTest("HEAD already carries the layout feature — nothing to diff against")
+
+    # The temp file is only needed for `exec_module` below — once the module
+    # is compiled and loaded into memory, the source file backing it is not
+    # read again, so the directory is cleaned up before returning rather than
+    # leaked for the rest of the test run.
+    with tempfile.TemporaryDirectory(prefix="present_head_") as tmp_dir:
+        tmp_file = Path(tmp_dir) / "_present_head.py"
+        tmp_file.write_text(old_source, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("ai_accounts._present_head", tmp_file)
+        module = importlib.util.module_from_spec(spec)
+        module.__package__ = "ai_accounts"  # so its `from ._utils import ...` resolves
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.modules.pop(spec.name, None)
+    return module
+
+
+class WideModeUnchangedTests(unittest.TestCase):
+    """Wide is byte-for-byte the pre-layout-feature output: fixed synthetic
+    rows rendered through the CURRENT ``_present`` in ``mode="wide"`` must
+    match the SAME call against the module as it existed at HEAD (obtained
+    via ``git show``, since HEAD predates ``mode`` existing at all)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.old = _load_head_present()
+
+    def test_accounts_table_wide_output_is_unchanged_no_optional_columns(self) -> None:
+        columns = [
+            ("PROFILE", "profile"),
+            ("ACCOUNT", "account"),
+            ("PLAN", "plan"),
+            ("ID", "account_id"),
+            ("5H USED", "usage_5h"),
+            ("1W USED", "usage_1week"),
+            ("UPDATED", "usage_updated"),
+            ("AUTH", "expires"),
+            ("STATE", "status"),
+        ]
+        rows = [
+            {
+                "profile": "work",
+                "account": "Test <user@example.com>",
+                "plan": "pro",
+                "account_id": "acct-1",
+                "usage_5h": "12%",
+                "usage_1week": "34%",
+                "usage_updated": "2m ago",
+                "expires": "5h",
+                "status": "active",
+            },
+            {
+                "profile": "spare",
+                "account": "測試 <user@example.com>",
+                "plan": "free",
+                "account_id": "—",
+                "usage_5h": "—",
+                "usage_1week": "—",
+                "usage_updated": "—",
+                "expires": "expired",
+                "status": "expired",
+            },
+        ]
+        old_out = _capture(
+            self.old.accounts_table, rows, columns, align_keys=("usage_5h", "usage_1week")
+        )
+        new_out = _capture(
+            present.accounts_table,
+            rows,
+            columns,
+            align_keys=("usage_5h", "usage_1week"),
+            mode="wide",
+        )
+        self.assertEqual(old_out, new_out)
+
+    def test_accounts_table_wide_output_is_unchanged_with_optional_columns(self) -> None:
+        rows = [
+            {"profile": "work", "account": "user@example.com", "account_id": "—", "status": "active"},
+            {"profile": "spare", "account": "second@example.com", "account_id": "id-2", "status": "active"},
+        ]
+        columns = [
+            ("PROFILE", "profile"),
+            ("ACCOUNT", "account"),
+            ("ID", "account_id"),
+            ("STATE", "status"),
+        ]
+        old_out = _capture(
+            self.old.accounts_table, rows, columns, optional_columns={"account_id"}
+        )
+        new_out = _capture(
+            present.accounts_table,
+            rows,
+            columns,
+            optional_columns={"account_id"},
+            mode="wide",
+        )
+        self.assertEqual(old_out, new_out)
+
+    def test_panel_wide_output_is_unchanged(self) -> None:
+        old_out = _capture(self.old.panel, "Profile: work", ["Account       : user@example.com"])
+        new_out = _capture(
+            present.panel, "Profile: work", ["Account       : user@example.com"], mode="wide"
+        )
+        self.assertEqual(old_out, new_out)
+
+    def test_success_panel_wide_output_is_unchanged(self) -> None:
+        old_out = _capture(
+            self.old.success_panel,
+            "Saved profile",
+            "work",
+            ["Account       : user@example.com"],
+            title="Profile: work",
+            details=("(same account is active)",),
+        )
+        new_out = _capture(
+            present.success_panel,
+            "Saved profile",
+            "work",
+            ["Account       : user@example.com"],
+            title="Profile: work",
+            details=("(same account is active)",),
+            mode="wide",
+        )
+        self.assertEqual(old_out, new_out)
+
+    def test_ok_wide_output_is_unchanged(self) -> None:
+        for action, name, bold in (
+            ("Saved Codex profile", "work", True),
+            ("Switched to Claude profile", "測試", False),
+            ("All 3 profile(s) refreshed.", None, True),
+        ):
+            with self.subTest(action=action):
+                old_out = _capture(self.old.ok, action, name, bold=bold)
+                new_out = _capture(present.ok, action, name, bold=bold, mode="wide")
+                self.assertEqual(old_out, new_out)
+
+    def test_success_panel_detail_lines_wide_output_is_unchanged(self) -> None:
+        """The long-path detail line specifically — the one narrow mode now
+        squeezes — must still print verbatim in wide mode."""
+        details = (f"→ {_LONG_STORE_PATH}", "(same account is active)")
+        old_out = _capture(
+            self.old.success_panel,
+            "Saved Codex profile",
+            "work",
+            ["Account       : user@example.com"],
+            title="Profile: work",
+            details=details,
+        )
+        new_out = _capture(
+            present.success_panel,
+            "Saved Codex profile",
+            "work",
+            ["Account       : user@example.com"],
+            title="Profile: work",
+            details=details,
+            mode="wide",
+        )
+        self.assertEqual(old_out, new_out)
+        self.assertIn(_LONG_STORE_PATH, present.strip_ansi(new_out))
+
+    def test_choose_profile_wide_output_is_unchanged(self) -> None:
+        with mock.patch("builtins.input", side_effect=KeyboardInterrupt):
+            old_out = _capture(self.old.choose_profile, "a Codex", _PICKER_ITEMS)
+        with mock.patch("builtins.input", side_effect=KeyboardInterrupt):
+            new_out = _capture(present.choose_profile, "a Codex", _PICKER_ITEMS)
+        self.assertEqual(old_out, new_out)
+
+
+class NarrowSurfaceBudgetTests(unittest.TestCase):
+    """The three surfaces that print OUTSIDE the panel box — the ``ok``
+    headline, ``success_panel``'s detail lines, and the ``choose_profile``
+    picker. The box wraps its own content, so these three were the whole
+    narrow-mode gap: measured at 46-53, 72 and 56 columns respectively against
+    a 40-column budget. Widths are measured with ``visible_len`` (ANSI-stripped
+    and East-Asian-width aware), never ``len``."""
+
+    def setUp(self) -> None:
+        for patcher in (
+            mock.patch.dict(os.environ, {"COLUMNS": str(_NARROW_COLUMNS)}),
+            # Pinned rather than read from disk: no test may depend on (or go
+            # near) the developer's real ~/.ai-accounts/config.json.
+            mock.patch.object(aw, "load_config", return_value={**aw.DEFAULTS, "layout": "auto"}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        present.reset_layout_cache()
+        self.addCleanup(present.reset_layout_cache)
+
+    def assertFitsNarrow(self, text: str) -> None:
+        for line in text.splitlines():
+            self.assertLessEqual(
+                present.visible_len(line), _NARROW_COLUMNS, f"overflowing line: {line!r}"
+            )
+
+    def test_narrow_mode_is_actually_active(self) -> None:
+        self.assertEqual(present.layout_mode(), "narrow")
+
+    def test_ok_headline_wraps_to_the_narrow_budget(self) -> None:
+        for action, name in (
+            ("Saved Codex profile", "work-laptop-secondary"),
+            ("Switched to Antigravity profile", "spare"),
+            ("All 3 profile(s) refreshed.", None),
+            ("已切換 Codex 設定檔", "測試設定檔"),
+        ):
+            with self.subTest(action=action):
+                self.assertFitsNarrow(_capture(present.ok, action, name))
+
+    def test_success_panel_details_fit_and_keep_the_filename(self) -> None:
+        text = _capture(
+            present.success_panel,
+            "Saved Codex profile",
+            "work",
+            ["Account       : user@example.com"],
+            title="Profile: work",
+            details=(f"→ {_LONG_STORE_PATH}", "(same account is active)"),
+        )
+        self.assertFitsNarrow(text)
+        clean = present.strip_ansi(text)
+        # The identifying tail survives the squeeze; the middle is elided.
+        self.assertIn("work-laptop.json", clean)
+        self.assertNotIn(_LONG_STORE_PATH, clean)
+        self.assertIn("(same account is active)", clean)
+
+    def test_choose_profile_header_and_entries_fit(self) -> None:
+        with mock.patch("builtins.input", side_effect=KeyboardInterrupt):
+            text = _capture(present.choose_profile, "an Antigravity", _PICKER_ITEMS)
+        self.assertFitsNarrow(text)
+        clean = present.strip_ansi(text)
+        self.assertIn("1)", clean)
+        self.assertIn("2)", clean)
+
+    def test_wide_mode_leaves_all_three_surfaces_untouched(self) -> None:
+        """Same three calls with the layout pinned wide still overflow 40
+        columns — proving the narrow assertions above measure the new
+        behaviour, not a change that silently applies everywhere."""
+        with mock.patch.object(aw, "load_config", return_value={**aw.DEFAULTS, "layout": "wide"}):
+            present.reset_layout_cache()
+            headline = _capture(present.ok, "Saved Codex profile", "work-laptop-secondary")
+            with mock.patch("builtins.input", side_effect=KeyboardInterrupt):
+                picker = _capture(present.choose_profile, "an Antigravity", _PICKER_ITEMS)
+        for text in (headline, picker):
+            widest = max(present.visible_len(line) for line in text.splitlines())
+            self.assertGreater(widest, _NARROW_COLUMNS)
