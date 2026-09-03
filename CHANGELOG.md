@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### 🚀 Features
+
+- **config:** Add layout setting for narrow-terminal output
+
 ## [0.4.0] - 2026-09-01
 
 ### 🚀 Features

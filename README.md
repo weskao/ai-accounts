@@ -129,6 +129,7 @@ interactive sessions.
 ai-accounts config
 ai-accounts config get
 ai-accounts config set enabled true
+ai-accounts config set layout narrow
 ai-accounts autoswitch
 ai-accounts autoswitch setup
 ai-accounts timer-status
@@ -208,6 +209,64 @@ the same set stays quiet for an hour, while a newly revoked profile alerts on
 the next tick instead of waiting out the previous alert's cooldown. Transient
 failures (a 5xx, a timeout, an unreachable token endpoint) are retried on the
 next tick and never reported here.
+
+## Output layout
+
+Every table and panel — `list`, `who`, the save/switch/refresh success
+panels, the re-login report, and the interactive `ai-accounts config` menu
+itself — adapts to how wide the terminal is. The `layout` setting controls
+it:
+
+```sh
+ai-accounts config set layout auto     # default: follow terminal width
+ai-accounts config set layout wide     # always the desktop table
+ai-accounts config set layout narrow   # always the stacked, phone-width layout
+```
+
+`auto` renders the `wide` box-drawing table at 60 columns or wider, and
+switches to stacked `narrow` cards — one per profile, no column dropped —
+below that, which is the layout a phone-width SSH session or a narrow split
+pane needs. `COLUMNS` overrides the detected width, so either mode can be
+previewed from a full-size terminal:
+
+```sh
+COLUMNS=200 codex-accounts list
+```
+
+```text
+Saved Codex profiles  (2)
+┌──────────┬───────────────────┬──────┬────────────────┬──────────────┬─────────────────┬─────────┬───────┬────────┐
+│ PROFILE  │ ACCOUNT           │ PLAN │ ID             │ 5H USED      │ 1W USED         │ UPDATED │ AUTH  │ STATE  │
+├──────────┼───────────────────┼──────┼────────────────┼──────────────┼─────────────────┼─────────┼───────┼────────┤
+│ work     │ user@example.com  │ Plus │ acct_ab12cd345 │ 42% · 3h 12m │ 68% · 2d 4h 15m │ 14:32   │ 18:00 │ ACTIVE │
+│ personal │ user2@example.com │ Free │ acct_9f8…5b4a  │ 10% · 4h 50m │ 15% · 6d 2h 45m │ 09:02   │ 20:15 │ —      │
+└──────────┴───────────────────┴──────┴────────────────┴──────────────┴─────────────────┴─────────┴───────┴────────┘
+```
+
+```sh
+COLUMNS=40 codex-accounts list
+```
+
+```text
+Saved Codex profiles  (2)
+work                              ACTIVE
+  ACCOUNT  user@example.com
+  PLAN     Plus
+  ID       acct_ab12cd345
+  5H USED  42% · 3h 12m
+  1W USED  68% · 2d 4h 15m
+  UPDATED  14:32
+  AUTH     18:00
+────────────────────────────────────────
+personal                               —
+  ACCOUNT  user2@example.com
+  PLAN     Free
+  ID       acct_9f8…5b4a
+  5H USED  10% · 4h 50m
+  1W USED  15% · 6d 2h 45m
+  UPDATED  09:02
+  AUTH     20:15
+```
 
 ## Platform notes
 
