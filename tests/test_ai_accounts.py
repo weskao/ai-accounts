@@ -139,6 +139,38 @@ class AiAccountsTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(aa.main(["bogus"]), 1)
 
+    def test_run_list_forwards_the_parents_detected_width_as_columns(self) -> None:
+        # `_run_list` captures each provider's stdout via a pipe, so the child
+        # cannot detect its own terminal width — the parent forwards its own
+        # detected width via COLUMNS instead, extending the same mock pattern
+        # the other tests in this class already use for `aa.subprocess.run`.
+        captured: dict = {}
+
+        def run(cmd, **kwargs):
+            captured["env"] = kwargs.get("env")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(aa.subprocess, "run", side_effect=run), \
+                mock.patch.object(aa._present, "terminal_width", return_value=123):
+            aa._run_list("ai_accounts.codex_accounts")
+
+        self.assertEqual(captured["env"]["COLUMNS"], "123")
+
+    def test_run_list_invents_no_columns_when_width_is_undetectable(self) -> None:
+        captured: dict = {}
+
+        def run(cmd, **kwargs):
+            captured["env"] = kwargs.get("env")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("COLUMNS", None)
+            with mock.patch.object(aa.subprocess, "run", side_effect=run), \
+                    mock.patch.object(aa._present, "terminal_width", return_value=None):
+                aa._run_list("ai_accounts.codex_accounts")
+
+        self.assertNotIn("COLUMNS", captured["env"])
+
     def test_no_args_prints_help_without_running_providers(self) -> None:
         buf = io.StringIO()
         with mock.patch.object(aa.subprocess, "run") as run:
@@ -348,6 +380,27 @@ class AiAccountsConfigTest(_ConfigMixin, unittest.TestCase):
             rc = aa.main(["config", "set", "switch_when_used_pct", "80"])
         self.assertEqual(rc, 0)
         self.assertEqual(autoswitch.load_config()["switch_when_used_pct"], 80)
+
+    def test_config_set_and_get_round_trip_the_layout_key(self) -> None:
+        for value in ("wide", "narrow", "auto"):
+            with self.subTest(value=value):
+                with redirect_stdout(io.StringIO()):
+                    rc = aa.main(["config", "set", "layout", value])
+                self.assertEqual(rc, 0)
+                self.assertEqual(autoswitch.load_config()["layout"], value)
+
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = aa.main(["config", "get", "layout"])
+                self.assertEqual(rc, 0)
+                self.assertIn(value, buf.getvalue())
+
+    def test_config_set_rejects_an_invalid_layout_value(self) -> None:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = aa.main(["config", "set", "layout", "phone-sized"])
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.config_path.exists())
 
 
 class AiAccountsTimerTest(_ConfigMixin, unittest.TestCase):

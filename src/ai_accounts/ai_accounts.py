@@ -11,11 +11,13 @@ TTY-gated color keep working.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config_menu as cm
+from . import _present
 from ._utils import BOLD, CYAN, RESET, Spinner, log_red
 
 # (display label, importable module). Each module is `python -m`-runnable and
@@ -96,10 +98,19 @@ def _header(label: str) -> None:
 def _run_list(module: str) -> subprocess.CompletedProcess[str]:
     # ponytail: subprocess (not in-process) so each provider's stdout stays
     # isolated for parallel capture; `-m` avoids depending on PATH entry points.
+    # capture_output=True gives the child a pipe instead of a real terminal, so
+    # its own width detection would find nothing — forward our detected width
+    # via COLUMNS (undetectable stays unset; the child applies its own wide
+    # fallback).
+    env = {**os.environ}
+    width = _present.terminal_width()
+    if width is not None:
+        env["COLUMNS"] = str(width)
     return subprocess.run(
         [sys.executable, "-m", module, "list"],
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
