@@ -275,6 +275,14 @@ FIELDS: tuple[Field, ...] = (
         help="Language of notifications and of this menu. Follows the OS locale until you pick one.",
         group="General",
     ),
+    Field(
+        key="layout",
+        type=str,
+        default="auto",
+        choices=("auto", "wide", "narrow"),
+        label="Output layout",
+        help="How command output is laid out: auto follows the terminal width, wide is the full desktop table, narrow is a stacked layout for phone-width terminals.",
+    ),
 )
 
 

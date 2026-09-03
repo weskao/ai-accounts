@@ -286,6 +286,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.language.help": {
         "zh-TW": "通知訊息與本選單的語言。未指定前跟隨系統語系。"
     },
+    "config.layout.label": {"zh-TW": "輸出版面"},
+    "config.layout.help": {
+        "zh-TW": "指令輸出的排版方式：auto 依終端機寬度自動判斷、wide 為完整桌面表格、narrow 為適合手機寬度終端機的堆疊版面。"
+    },
     # Booleans keep their JSON spelling on purpose: `true`/`false` are what
     # `config set` accepts, so showing 開/關 would name a value nobody can type.
     # Group headings, keyed by the English heading itself — Field.group holds

@@ -256,6 +256,40 @@ class MaskingTests(unittest.TestCase):
         self.assertEqual(cs.format_value("telegram_chat_id", "12345"), "12345")
 
 
+class LayoutFieldTests(unittest.TestCase):
+    """The ``layout`` key (auto/wide/narrow output rendering) declared for
+    this change — the generic tests above already exercise it incidentally
+    (it iterates every field), but its own contract is spelled out here too,
+    same as ``notify``/``switch_when_used_pct`` get their own class."""
+
+    KEY = "layout"
+
+    def test_declares_the_three_choices_defaulting_to_auto(self) -> None:
+        field = cs.field(self.KEY)
+        self.assertIsNotNone(field)
+        self.assertEqual(field.choices, ("auto", "wide", "narrow"))
+        self.assertEqual(field.default, "auto")
+        self.assertFalse(field.masked)
+
+    def test_every_declared_choice_parses_back_to_itself(self) -> None:
+        for choice in ("auto", "wide", "narrow"):
+            with self.subTest(choice=choice):
+                self.assertEqual(cs.parse_value(self.KEY, choice), choice)
+                self.assertEqual(cs.format_value(self.KEY, choice), choice)
+
+    def test_an_invalid_layout_value_is_rejected_with_the_cli_message(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            cs.parse_value(self.KEY, "phone-sized")
+        self.assertEqual(
+            str(ctx.exception),
+            "layout must be one of auto, wide, narrow, got 'phone-sized'",
+        )
+
+    def test_default_is_part_of_the_schema_wide_defaults_mapping(self) -> None:
+        self.assertEqual(cs.defaults()[self.KEY], "auto")
+        self.assertEqual(aw.DEFAULTS[self.KEY], "auto")
+
+
 class GrowthTests(unittest.TestCase):
     """Adding a key must be one declarative entry and nothing else."""
 
