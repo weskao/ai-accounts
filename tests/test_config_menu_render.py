@@ -18,8 +18,12 @@ Run with ``uv run pytest tests/test_config_menu_render.py -q``.
 
 from __future__ import annotations
 
+import os
 import unittest
+from unittest import mock
 
+from ai_accounts import _present
+from ai_accounts import autoswitch
 from ai_accounts import config_menu
 from ai_accounts import config_schema as cs
 from ai_accounts._present import _ANSI_RE, visible_len
@@ -308,6 +312,50 @@ class ValidationErrorTests(unittest.TestCase):
         self.assertIn("must be an integer 0-100", joined)
 
 
+class NarrowEditCursorBoundaryTests(unittest.TestCase):
+    """Regression for a real off-by-one ``code-reviewer`` caught: in narrow
+    mode, ``editing=True`` used to append the edit cursor's trailing ``_``
+    AFTER wrapping the buffer to the row width, instead of reserving its
+    column first. At an edit-buffer length that is an exact multiple of the
+    row's wrap width, the last wrapped chunk already filled the budget, so
+    appending ``_`` ran that one row a column past every other row's border.
+
+    A 720-frame sweep of this same code path passed while the bug was live
+    because it only ever exercised 0- or 1-character buffers — never long
+    enough to reach a wrap boundary. This sweeps buffer lengths through
+    several such boundaries (and their neighbors) instead, on a free-text
+    field with no length limit of its own, so nothing but the renderer's own
+    wrapping can produce the mismatch.
+    """
+
+    KEY = "telegram_chat_id"
+    WIDTH = 40  # render()'s fixed narrow box width for this test
+
+    def test_all_returned_lines_share_one_visible_width_across_a_wrap_sweep(self) -> None:
+        cursor = [f.key for f in cs.FIELDS].index(self.KEY)
+        values = _default_values()
+        # 0..100 sweeps well past several wrap-boundary multiples for a
+        # 40-column narrow box, catching the bug regardless of the exact
+        # internal margin arithmetic (label width, marker column, etc.).
+        for length in range(0, 101):
+            edit_buffer = "x" * length
+            with self.subTest(edit_buffer_length=length):
+                lines = config_menu.render(
+                    "t",
+                    cs.FIELDS,
+                    values,
+                    cursor=cursor,
+                    editing=True,
+                    edit_buffer=edit_buffer,
+                    mode="narrow",
+                    width=self.WIDTH,
+                )
+                widths = {visible_len(line) for line in lines}
+                self.assertEqual(
+                    len(widths), 1, f"inconsistent widths at buffer length {length}: {widths}"
+                )
+
+
 class FooterTests(unittest.TestCase):
     def test_footer_lists_supported_keys(self) -> None:
         lines = _clean(config_menu.render("t", cs.FIELDS, _default_values(), cursor=0))
@@ -345,6 +393,91 @@ class TitleParamTests(unittest.TestCase):
     def test_default_ai_accounts_title_is_not_baked_into_lower_layer(self) -> None:
         lines = _clean(config_menu.render("codex-accounts config", cs.FIELDS, _default_values(), cursor=0))
         self.assertNotIn("ai-accounts config", "\n".join(lines))
+
+
+class LivePreviewLayoutTests(unittest.TestCase):
+    """The ``layout`` row live-previews like ``language`` does: cycling it in
+    the (uncommitted) ``values`` dict reflows the box immediately, and an
+    explicit ``mode=`` argument (what tests and a forced override use) always
+    wins over whatever ``values["layout"]`` says."""
+
+    def test_uncommitted_layout_value_narrow_vs_wide_produce_different_widths(self) -> None:
+        narrow_values = {**_default_values(), "layout": "narrow"}
+        wide_values = {**_default_values(), "layout": "wide"}
+        narrow_width = visible_len(config_menu.render("t", cs.FIELDS, narrow_values, cursor=0)[0])
+        wide_width = visible_len(config_menu.render("t", cs.FIELDS, wide_values, cursor=0)[0])
+        self.assertNotEqual(narrow_width, wide_width)
+        self.assertLess(narrow_width, wide_width)
+
+    def test_explicit_mode_argument_overrides_the_uncommitted_layout_value(self) -> None:
+        # values says narrow, but an explicit mode="wide" wins
+        values = {**_default_values(), "layout": "narrow"}
+        forced_wide = config_menu.render("t", cs.FIELDS, values, cursor=0, mode="wide")
+        plain_wide = config_menu.render(
+            "t", cs.FIELDS, {**_default_values(), "layout": "wide"}, cursor=0
+        )
+        self.assertEqual(
+            visible_len(forced_wide[0]), visible_len(plain_wide[0])
+        )
+
+        # values says wide, but an explicit mode="narrow" wins
+        values = {**_default_values(), "layout": "wide"}
+        forced_narrow = config_menu.render("t", cs.FIELDS, values, cursor=0, mode="narrow")
+        plain_narrow = config_menu.render(
+            "t", cs.FIELDS, {**_default_values(), "layout": "narrow"}, cursor=0
+        )
+        self.assertEqual(
+            visible_len(forced_narrow[0]), visible_len(plain_narrow[0])
+        )
+
+
+class LivePreviewAutoLayoutTests(unittest.TestCase):
+    """Cycling the layout row to ``auto`` must live-preview the width-derived
+    answer, in both directions. It did not: ``layout_mode`` used to cache the
+    RESOLVED mode and only honour ``wide``/``narrow`` as an override, so
+    ``auto`` fell through to whatever the first call had frozen — on-disk
+    ``narrow`` + a 200-column terminal still previewed a 40-column box, and
+    on-disk ``wide`` + a 40-column terminal still previewed 155."""
+
+    def _box_width(self, layout: str, columns: str) -> int:
+        with mock.patch.dict(os.environ, {"COLUMNS": columns}):
+            _present.reset_layout_cache()
+            values = {**_default_values(), "layout": layout}
+            return visible_len(config_menu.render("t", cs.FIELDS, values, cursor=0)[0])
+
+    def test_auto_follows_the_terminal_width_in_both_directions(self) -> None:
+        wide_reference = self._box_width("wide", columns="40")
+        narrow_reference = self._box_width("narrow", columns="200")
+        self.assertLess(narrow_reference, wide_reference)
+
+        self.assertEqual(self._box_width("auto", columns="200"), wide_reference)
+        self.assertEqual(self._box_width("auto", columns="40"), narrow_reference)
+
+    def test_auto_ignores_the_committed_on_disk_value(self) -> None:
+        """``values`` is what the user is editing; disk is stale by definition
+        mid-cycle. ``auto`` in ``values`` must beat either on-disk answer."""
+        for on_disk in ("narrow", "wide"):
+            with self.subTest(on_disk=on_disk), mock.patch.object(
+                autoswitch, "load_config", return_value={"layout": on_disk}
+            ):
+                self.assertEqual(
+                    self._box_width("auto", columns="200"), self._box_width("wide", columns="200")
+                )
+                self.assertEqual(
+                    self._box_width("auto", columns="40"), self._box_width("narrow", columns="40")
+                )
+
+    def test_a_resize_between_two_renders_changes_the_box(self) -> None:
+        """``run_menu`` calls ``render`` once per keystroke for the life of the
+        session — two renders at two widths, one process, no cache reset."""
+        with mock.patch.object(autoswitch, "load_config", return_value={"layout": "auto"}):
+            values = _default_values()
+            with mock.patch.dict(os.environ, {"COLUMNS": "200"}):
+                _present.reset_layout_cache()
+                first = visible_len(config_menu.render("t", cs.FIELDS, values, cursor=0)[0])
+            with mock.patch.dict(os.environ, {"COLUMNS": "30"}):
+                second = visible_len(config_menu.render("t", cs.FIELDS, values, cursor=0)[0])
+        self.assertGreater(first, second)
 
 
 class PurityTests(unittest.TestCase):

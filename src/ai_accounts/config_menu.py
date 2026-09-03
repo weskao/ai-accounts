@@ -2,10 +2,15 @@
 
 Canonical here (rendering half): :func:`render`, turning menu state (a schema-driven
 field list, current values, cursor position, and optional edit/error state)
-into a bordered ``list[str]`` of display lines. **Pure** — no ``print``, no
-``sys.stdout``, no ``isatty`` checks, no cursor-movement escapes. That purity
-is the entire point: every behavior here is a plain ``render(...) -> list``
-call a test can assert on directly, with zero mocking of a terminal.
+into a bordered ``list[str]`` of display lines. **Output-pure** — no
+``print``, no ``sys.stdout``, no ``isatty`` checks, no cursor-movement
+escapes: every behavior here is a plain ``render(...) -> list`` call a test can
+assert on directly. It does *read* the terminal width (via
+:func:`ai_accounts._present.layout_mode`, which under ``auto`` calls
+``os.get_terminal_size`` — or just ``COLUMNS``) to pick wide vs narrow, so a
+test that wants a specific layout either passes ``mode=`` (which always wins,
+no terminal involved) or sets ``COLUMNS``; nothing else needs a terminal
+mocked.
 
 Schema-driven, not key-driven: :func:`render` iterates whatever ``Field``
 tuple it is given (normally :data:`ai_accounts.config_schema.FIELDS`) — there is
@@ -124,7 +129,8 @@ from dataclasses import dataclass, replace
 
 from . import autoswitch, config_schema, i18n
 from . import _keyreader as kr
-from ._present import visible_len
+from . import _present
+from ._present import elide, visible_len, wrap
 from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW
 from ._utils import log_red, package_version
 
@@ -208,24 +214,39 @@ class _Saver:
         return self.take_error()
 
 
-def _format_value(
+def _value_parts(
     field: config_schema.Field, value: object, lang: str | None = None
-) -> str:
-    """*value* rendered for display, honouring the field's masked flag and
-    turning an empty string into a visibly-dimmed ``(unset)`` rather than a
-    blank cell that reads as a rendering bug."""
+) -> tuple[str, str]:
+    """*value* as ``(plain text, color)`` — the split :func:`_format_value`
+    glues back together.
+
+    Kept apart because ``_present.wrap`` measures ANSI escapes but does not
+    re-emit the active one on the line it breaks onto: the narrow renderer
+    therefore wraps the *text* and re-applies the *color* per line, instead of
+    wrapping an already-colored string and losing the color halfway down.
+    """
     if value == "":
-        return f'{DIM}{i18n.t("menu.unset", lang=lang, default=_UNSET_EN)}{RESET}'
+        return i18n.t("menu.unset", lang=lang, default=_UNSET_EN), DIM
     # ``field.format`` directly (not ``config_schema.format_value(key, ...)``)
     # since *field* may not be registered in the global FIELDS tuple — the
     # renderer is schema-driven off whatever tuple it's handed, not a lookup
     # keyed on the canonical registry.
     rendered = field.display_value(value, lang)
     if field.masked:
-        return f"{YELLOW}{rendered}{RESET}"
+        return rendered, YELLOW
     if isinstance(value, bool):
-        return f"{GREEN}{rendered}{RESET}" if value else f"{DIM}{rendered}{RESET}"
-    return f"{CYAN}{rendered}{RESET}"
+        return rendered, GREEN if value else DIM
+    return rendered, CYAN
+
+
+def _format_value(
+    field: config_schema.Field, value: object, lang: str | None = None
+) -> str:
+    """*value* rendered for display, honouring the field's masked flag and
+    turning an empty string into a visibly-dimmed ``(unset)`` rather than a
+    blank cell that reads as a rendering bug."""
+    text, color = _value_parts(field, value, lang)
+    return f"{color}{text}{RESET}"
 
 
 def _empty_buffer_value(field: config_schema.Field) -> object | None:
@@ -243,6 +264,21 @@ def _empty_buffer_value(field: config_schema.Field) -> object | None:
     return None
 
 
+def _shown_buffer(field: config_schema.Field, edit_buffer: str) -> str:
+    """The in-progress edit buffer as displayed — cleartext, see the module
+    docstring's "Deliberate decision".
+
+    An emptied numeric buffer displays the value it stands for (0) instead of
+    an empty cell, so the row agrees with the help line and with what Enter
+    commits. The buffer itself stays empty, so the next digit typed replaces
+    this 0 rather than following it.
+    """
+    if edit_buffer:
+        return edit_buffer
+    empty_value = _empty_buffer_value(field)
+    return "" if empty_value is None else field.format(empty_value)
+
+
 def _field_row(
     field: config_schema.Field,
     value: object,
@@ -253,25 +289,59 @@ def _field_row(
     edit_buffer: str,
     lang: str | None = None,
 ) -> str:
+    """The wide row: ``label`` padded to a shared column, then its value."""
     marker = f"{CYAN}{_CURSOR_MARK}{RESET}" if is_cursor else _NO_CURSOR_MARK
     label = field.display_label(lang)
     pad = " " * (label_width - visible_len(label))
     if is_cursor and editing:
-        # Cleartext while typing — see module docstring "Deliberate decision".
-        shown = edit_buffer
-        if not shown:
-            # An emptied numeric buffer displays the value it stands for (0)
-            # instead of an empty cell, so the row agrees with the help line
-            # and with what Enter commits. The buffer itself stays empty, so
-            # the next digit typed replaces this 0 rather than following it.
-            empty_value = _empty_buffer_value(field)
-            if empty_value is not None:
-                shown = field.format(empty_value)
-        value_text = f"{MAGENTA}{shown}{RESET}_"
+        value_text = f"{MAGENTA}{_shown_buffer(field, edit_buffer)}{RESET}_"
     else:
         value_text = _format_value(field, value, lang=lang)
     label_text = f"{CYAN}{BOLD}{label}{RESET}" if is_cursor else label
     return f"{marker}{label_text}{pad}  {value_text}"
+
+
+def _wrapped(text: str, color: str, width: int) -> list[str]:
+    """*text* wrapped to *width* visible columns, each part re-colored — the
+    narrow counterpart of a single colored body line."""
+    return [f"{color}{part}{RESET}" if part else "" for part in wrap(text, width)]
+
+
+def _field_rows_narrow(
+    field: config_schema.Field,
+    value: object,
+    *,
+    is_cursor: bool,
+    editing: bool,
+    edit_buffer: str,
+    lang: str | None,
+    width: int,
+) -> list[str]:
+    """The narrow row: label on its own line, value indented beneath it.
+
+    ``_field_row`` pads every label out to the widest one so the values line
+    up in a column; at phone width that column alone can outrun the whole
+    budget, so here the two halves stack and each wraps to *width*.
+    """
+    label = field.display_label(lang)
+    if is_cursor and editing:
+        text, color, suffix = _shown_buffer(field, edit_buffer), MAGENTA, "_"
+    else:
+        text, color = _value_parts(field, value, lang)
+        suffix = ""
+
+    rows: list[str] = []
+    for index, part in enumerate(wrap(label, width - 2)):
+        marker = f"{CYAN}{_CURSOR_MARK}{RESET}" if is_cursor and not index else _NO_CURSOR_MARK
+        rows.append(f"{marker}{CYAN}{BOLD}{part}{RESET}" if is_cursor else f"{marker}{part}")
+    # The edit cursor is appended AFTER wrapping, so its column has to be
+    # reserved BEFORE: a chunk that exactly filled the budget would otherwise
+    # push that one row a column past the border every other row respects.
+    chunks = wrap(text, width - 4 - visible_len(suffix))
+    for index, part in enumerate(chunks):
+        tail = suffix if index == len(chunks) - 1 else ""
+        rows.append(f"    {color}{part}{RESET}{tail}")
+    return rows
 
 
 def render(
@@ -285,6 +355,7 @@ def render(
     error: str | None = None,
     confirm_reset: bool = False,
     width: int | None = None,
+    mode: str | None = None,
 ) -> list[str]:
     """Render one frame of the config menu as a ``list[str]`` — no I/O.
 
@@ -297,7 +368,37 @@ def render(
     displaying a ``config_schema.parse_value`` ``ValueError`` message.
     ``confirm_reset`` adds the yellow "reset everything?" prompt line, so the
     ``r`` key visibly waits for a ``y`` instead of acting on the spot.
+
+    ``mode`` picks the layout and defaults to :func:`_present.layout_mode`
+    seeded with ``values.get("layout")`` — an in-progress, uncommitted cycle of
+    the layout row reflows the box immediately, same as ``lang`` below; an
+    explicit ``mode`` still overrides both. That lookup is the one thing this
+    function reads from outside its arguments, and under ``auto`` it measures
+    the terminal width — so ``render`` follows a resize, and cycling the layout
+    row to ``auto`` previews the width-derived answer. It still writes nothing:
+    no ``print``, no stdout, no cursor escapes.
+
+    ``width`` means the opposite thing in each mode, because the two modes
+    have opposite problems. Wide grows to fit its content, so ``width`` is a
+    *minimum* there (its long-standing behaviour, unchanged). Narrow's whole
+    job is to not exceed the screen, so ``width`` is the *exact* box width
+    there, overriding :func:`_present.narrow_width`.
     """
+    # Read the layout off the values being EDITED, not off disk: cycling the
+    # layout row has to reflow the box right away, before the user commits it
+    # with `s` — same reasoning as `lang` below. An explicit `mode` (tests
+    # pinning "wide"/"narrow") still wins outright, same as `_present`'s own
+    # `mode or layout_mode()` call sites.
+    narrow = (mode or _present.layout_mode(values.get("layout"))) == "narrow"
+    inner = text_width = 0
+    if narrow:
+        # `_MIN_WIDTH` is a floor that only ever grows the box; the terminals
+        # this mode targets are ~30-45 columns, so here the budget replaces it
+        # outright rather than being max()-ed against it.
+        total = max(width if width is not None else _present.narrow_width(), 12)
+        inner = total - 2
+        text_width = inner - 2
+        title = elide(title, inner - 3)
     # Read the language off the values being EDITED, not off disk: cycling the
     # language row has to repaint the menu in that language right away, before
     # the user commits it with `s`.
@@ -307,21 +408,42 @@ def render(
     previous_group: str | None = None
     for index, field in enumerate(fields):
         if field.group != previous_group and field.group is not None:
-            field_rows.append(f"{MAGENTA}{BOLD}{field.display_group(lang)}{RESET}")
-        field_rows.append(
-            _field_row(
-                field,
-                values.get(field.key, field.default),
-                is_cursor=(index == cursor),
-                label_width=label_width,
-                editing=editing,
-                edit_buffer=edit_buffer,
-                lang=lang,
+            group = field.display_group(lang)
+            if narrow:
+                field_rows.extend(_wrapped(group, f"{MAGENTA}{BOLD}", text_width))
+            else:
+                field_rows.append(f"{MAGENTA}{BOLD}{group}{RESET}")
+        value = values.get(field.key, field.default)
+        if narrow:
+            field_rows.extend(
+                _field_rows_narrow(
+                    field,
+                    value,
+                    is_cursor=(index == cursor),
+                    editing=editing,
+                    edit_buffer=edit_buffer,
+                    lang=lang,
+                    width=text_width,
+                )
             )
-        )
+        else:
+            field_rows.append(
+                _field_row(
+                    field,
+                    value,
+                    is_cursor=(index == cursor),
+                    label_width=label_width,
+                    editing=editing,
+                    edit_buffer=edit_buffer,
+                    lang=lang,
+                )
+            )
         previous_group = field.group
 
     body = ["", *field_rows]
+    # Trailing lines as (text, color) rather than pre-colored strings: narrow
+    # has to wrap the text and re-apply the color per line (see ``_wrapped``).
+    notes: list[tuple[str, str]] = []
     if fields:
         cursor_field = fields[cursor]
         cursor_value = values.get(cursor_field.key, cursor_field.default)
@@ -340,30 +462,43 @@ def render(
                 empty_value = _empty_buffer_value(cursor_field)
                 if not edit_buffer and empty_value is not None:
                     cursor_value = empty_value
-        body.append(f"{DIM}{cursor_field.display_help(lang, value=cursor_value)}{RESET}")
+        notes.append((cursor_field.display_help(lang, value=cursor_value), DIM))
     if confirm_reset:
         prompt = i18n.t("menu.reset_confirm", lang=lang, default=_RESET_CONFIRM_EN)
-        body.append(f"{YELLOW}⚠ {prompt}{RESET}")
+        notes.append((f"⚠ {prompt}", YELLOW))
     if error is not None:
-        body.append(f"{RED}⚠ {error}{RESET}")
-    body.append("")
-    body.append(f'{DIM}{i18n.t("menu.keys", lang=lang, default=_FOOTER_HINT_EN)}{RESET}')
+        notes.append((f"⚠ {error}", RED))
+    notes.append(("", ""))
+    notes.append((i18n.t("menu.keys", lang=lang, default=_FOOTER_HINT_EN), DIM))
+    for text, color in notes:
+        if not text:
+            body.append("")
+        elif narrow:
+            # Wrapped to the budget instead of setting the box width — the
+            # footer hint alone is ~75 columns and would otherwise decide it.
+            body.extend(_wrapped(text, color, text_width))
+        else:
+            body.append(f"{color}{text}{RESET}")
 
-    # ``inner`` is the visible width of everything between the two vertical
-    # borders (both the top/bottom dash rule and every content row) — kept
-    # to a single number so every returned line has identical visible width.
-    # Reserve for every help message so moving the cursor never resizes the box.
-    max_line = max(
-        *(visible_len(line) for line in body),
-        *(
-            visible_len(field.display_help(lang, value=values.get(field.key, field.default)))
-            for field in fields
-        ),
-        0,
-    )
-    inner = max(max_line + 3, visible_len(title) + 4, _MIN_WIDTH - 2)
-    if width is not None:
-        inner = max(inner, width - 2)
+    if not narrow:
+        # ``inner`` is the visible width of everything between the two vertical
+        # borders (both the top/bottom dash rule and every content row) — kept
+        # to a single number so every returned line has identical visible width.
+        # Reserve for every help message so moving the cursor never resizes the
+        # box. (Narrow fixed ``inner`` from its budget up front instead: there
+        # the box does not grow to fit the content, the content wraps to fit
+        # the box.)
+        max_line = max(
+            *(visible_len(line) for line in body),
+            *(
+                visible_len(field.display_help(lang, value=values.get(field.key, field.default)))
+                for field in fields
+            ),
+            0,
+        )
+        inner = max(max_line + 3, visible_len(title) + 4, _MIN_WIDTH - 2)
+        if width is not None:
+            inner = max(inner, width - 2)
 
     dashes = inner - visible_len(title) - 3
     top = f"{CYAN}┌─ {BOLD}{title}{RESET}{CYAN} {'─' * dashes}┐{RESET}"
@@ -669,7 +804,23 @@ def _save(state: MenuState, saver: _Saver) -> MenuState:
 
 
 def _ask(prompt: str) -> str | None:
-    """``input()`` that answers ``None`` instead of exploding on EOF/Ctrl-C."""
+    """``input()`` that answers ``None`` instead of exploding on EOF/Ctrl-C.
+
+    In narrow mode a long prompt is wrapped to the budget here rather than at
+    each call site: all three prompts (pick a setting, type a new value,
+    install auto-switch) are full sentences well over 40 columns, and they all
+    route through this one function. Everything but the last wrapped line is
+    printed, so the cursor still sits directly after the prompt text.
+    """
+    if _present.layout_mode() == "narrow":
+        # ``wrap`` rstrips each part, which would eat the space a prompt ends
+        # on and jam the cursor against the colon — so it is split off, the
+        # text wrapped inside the remaining budget, and the space put back.
+        tail = prompt[len(prompt.rstrip()) :]
+        *leading, prompt = wrap(prompt.rstrip(), _present.narrow_width() - visible_len(tail))
+        for line in leading:
+            print(line)
+        prompt += tail
     try:
         return input(prompt).strip()
     except (EOFError, KeyboardInterrupt):
@@ -680,12 +831,30 @@ def _ask(prompt: str) -> str | None:
 def fallback_menu(title: str, fields: Sequence[config_schema.Field] = config_schema.FIELDS) -> int:
     """Numbered picker for when a keyboard menu is impossible (piped stdin,
     CI, `| cat`). Prints the whole config first, so an immediate EOF has
-    already been answered — see the module docstring for the exit-0 contract."""
+    already been answered — see the module docstring for the exit-0 contract.
+
+    In narrow mode the listing stacks and wraps to the same budget
+    :func:`render` uses, so a `` N) label: value`` line cannot run off a
+    phone-width screen. The number keeps its own column either way — it is
+    what the user has to type back."""
     cfg = autoswitch.load_config()
+    narrow = _present.layout_mode() == "narrow"
+    budget = _present.narrow_width() if narrow else 0
     print(f"{BOLD}{title}{RESET}")
     for index, field in enumerate(fields, start=1):
-        value = _format_value(field, cfg.get(field.key, field.default))
-        print(f"  {index}) {field.display_label()}: {value}")
+        label = field.display_label()
+        if not narrow:
+            print(f"  {index}) {label}: {_format_value(field, cfg.get(field.key, field.default))}")
+            continue
+        # One shared number column, so every value lines up at the same indent
+        # instead of shifting right when the list reaches 10 entries.
+        prefix = f"  {index:>{len(str(len(fields)))}}) "
+        indent = visible_len(prefix)
+        for part_index, part in enumerate(wrap(label, budget - indent)):
+            print(f"{prefix if not part_index else ' ' * indent}{part}")
+        text, color = _value_parts(field, cfg.get(field.key, field.default))
+        for part in wrap(text, budget - indent - 2):
+            print(f"{' ' * (indent + 2)}{color}{part}{RESET}")
 
     selection = _ask(i18n.t("menu.select", default="Select a setting to change (blank to exit): "))
     if selection is None or not selection:
