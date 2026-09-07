@@ -30,10 +30,10 @@ each account manager must also support your operating system.
 
 ## Install
 
-Install the first standalone release:
+Install the latest release:
 
 ```sh
-uv tool install --from git+https://github.com/weskao/ai-accounts.git@v0.1.0 ai-accounts
+uv tool install --from git+https://github.com/weskao/ai-accounts.git@v0.6.0 ai-accounts
 ```
 
 Or install the latest `main`:
@@ -68,6 +68,7 @@ ai-accounts who
 ai-accounts usage
 ai-accounts refresh --all
 ai-accounts sync
+ai-accounts login-switch work
 ai-accounts --help
 ```
 
@@ -82,9 +83,14 @@ codex-accounts save work
 codex-accounts list
 codex-accounts switch work
 codex-accounts refresh --all
+codex-accounts login-switch work
 codex-accounts remove work
 codex-accounts --help
 ```
+
+`who` also answers to `current`. `login-switch <name>` runs a fresh provider
+login and saves the result as `<name>` — it is what the re-login report below
+tells you to run.
 
 `list` gives a compact, provider-by-provider view of every saved profile and
 marks the active one.
@@ -191,11 +197,15 @@ ai-accounts config set enabled true
 ai-accounts config set layout narrow
 ai-accounts autoswitch
 ai-accounts autoswitch setup
+ai-accounts install-timer --interval 1800
 ai-accounts timer-status
 ```
 
 `ai-accounts config` opens the interactive menu for configuring auto-switch
-behavior and notifications.
+behavior and notifications. Arrow keys select and change values, `r` resets
+every setting to its default after a `y` confirmation, and each change is
+saved as you make it — there is no separate save step. When stdin is not a
+TTY the menu falls back to a numbered prompt.
 
 The Antigravity blind-switch and inactive-account cache options appear only in
 `ai-accounts config` and `agy-accounts config` (including their `config get`
@@ -223,7 +233,8 @@ with the repository, branch, short commit ID, and a clickable workflow URL.
 Repository secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` must be
 configured before the alert can be delivered.
 
-Remove only the timer with:
+`ai-accounts install-timer` registers only the OS timer, without the provider
+hooks, and takes `--interval <seconds>` (default 1800). Remove it with:
 
 ```sh
 ai-accounts uninstall-timer
@@ -288,6 +299,20 @@ the same set stays quiet for an hour, while a newly revoked profile alerts on
 the next tick instead of waiting out the previous alert's cooldown. Transient
 failures (a 5xx, a timeout, an unreachable token endpoint) are retried on the
 next tick and never reported here.
+
+## Language
+
+Notifications and the interactive config menu are localized. English (`en`)
+and Traditional Chinese (`zh-TW`) are available; the default follows the OS
+locale and falls back to English for a locale with no translation:
+
+```sh
+ai-accounts config set language zh-TW
+ai-accounts config set language en
+```
+
+The setting only affects display text. Config keys, values, and command names
+stay in English so scripts keep working across languages.
 
 ## Output layout
 
