@@ -268,13 +268,6 @@ FIELDS: tuple[Field, ...] = (
         group="Provider behavior",
     ),
     Field(
-        key="token_refresh",
-        type=bool,
-        default=True,
-        label="Automatic token refresh",
-        help="Refresh OAuth tokens on the scheduled timer, independent of auto-switch.",
-    ),
-    Field(
         key="language",
         type=str,
         # Resolved once, at import — the OS locale of this process's own start,
@@ -294,6 +287,15 @@ FIELDS: tuple[Field, ...] = (
         choices=("auto", "wide", "narrow"),
         label="Output layout",
         help="How command output is laid out: auto follows the terminal width, wide is the full desktop table, narrow is a stacked layout for phone-width terminals.",
+        group="General",
+    ),
+    Field(
+        key="token_refresh",
+        type=bool,
+        default=True,
+        label="Automatic token refresh",
+        help="Refresh OAuth tokens on the scheduled timer, independent of auto-switch.",
+        group="General",
     ),
 )
 

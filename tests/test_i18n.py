@@ -268,11 +268,21 @@ class LanguageChoiceDisplayTests(_ConfigMixin):
         self.assertNotIn("secret", shown)
         self.assertTrue(shown.startswith("*"))
 
-    def test_language_stands_alone_in_its_own_group(self) -> None:
+    def test_language_is_filed_under_general(self) -> None:
         # Given: the schema. Then: `language` is not filed under a feature group
         field = cs._require("language")
         self.assertEqual(field.group, "General")
-        self.assertEqual([f.key for f in cs.FIELDS if f.group == "General"], ["language"])
+        self.assertEqual(
+            [f.key for f in cs.FIELDS if f.group == "General"],
+            ["language", "layout", "token_refresh"],
+        )
+
+    def test_every_field_declares_a_group(self) -> None:
+        # The menu only prints a heading when `group` changes AND is not None,
+        # so an ungrouped field silently renders under whichever heading
+        # precedes it — and under a *different* one per program, once
+        # `programs` filters the field above it out.
+        self.assertEqual([f.key for f in cs.FIELDS if f.group is None], [])
 
 
 class MenuPreviewTests(_ConfigMixin):
