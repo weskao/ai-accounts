@@ -21,6 +21,7 @@ from ._present import (
     choose_and_run,
     choose_profile,
     format_help,
+    highlight_cmd,
     ok,
     panel,
     success_panel,
@@ -922,6 +923,13 @@ def _validated_usage(
     return usage
 
 
+# Colorized once — every `list` footer note quotes one of these two commands,
+# and the color never depends on runtime state.
+_REFRESH_CMD = highlight_cmd("agy-accounts list --refresh")
+_CACHE_TOGGLE_OFF_CMD = highlight_cmd("ai-accounts config set agy_list_cached_usage false")
+_CACHE_TOGGLE_ON_CMD = highlight_cmd("ai-accounts config set agy_list_cached_usage true")
+
+
 def cmd_list(
     *, fetch_usage: bool = True, only_active: bool = False, refresh: bool = False
 ) -> int:
@@ -1071,15 +1079,20 @@ def cmd_list(
                     "list.agy.cached_usage",
                     count=count,
                     missing_note=missing_note,
+                    cmd=_REFRESH_CMD,
                 )
                 + RESET
             )
         elif inactive_count:
-            print(f"{DIM}" + i18n.t("list.agy.cached_empty") + RESET)
+            print(f"{DIM}" + i18n.t("list.agy.cached_empty", cmd=_REFRESH_CMD) + RESET)
         if inactive_count:
-            print(f"{DIM}" + i18n.t("list.agy.cached_toggle_off") + RESET)
+            print(
+                f"{DIM}"
+                + i18n.t("list.agy.cached_toggle_off", cmd=_CACHE_TOGGLE_OFF_CMD)
+                + RESET
+            )
     elif fetch_usage and not only_active:
-        print(f"{DIM}" + i18n.t("list.agy.live_usage_hint") + RESET)
+        print(f"{DIM}" + i18n.t("list.agy.live_usage_hint", cmd=_CACHE_TOGGLE_ON_CMD) + RESET)
     return 0
 
 

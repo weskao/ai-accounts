@@ -405,6 +405,13 @@ def _dim_help_placeholders(text: str) -> str:
     return _HELP_PLACEHOLDER_RE.sub(lambda m: f"{DIM}{m.group(0)}{RESET}{CYAN}", text)
 
 
+def highlight_cmd(text: str) -> str:
+    """*text* (a literal CLI command quoted inline in prose — a footer hint,
+    a config help string) in the same cyan as a USAGE/EXAMPLES entry, so a
+    runnable command reads as one thing wherever it appears."""
+    return f"{CYAN}{text}{RESET}"
+
+
 def usage_color(percentage: int) -> str:
     """Threshold color for a usage percentage: ≥80% red+bold, ≥50% yellow, else
     green. Shared so every tool draws the same lines in the same places."""

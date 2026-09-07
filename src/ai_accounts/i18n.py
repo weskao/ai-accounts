@@ -346,30 +346,28 @@ MESSAGES: dict[str, dict[str, str]] = {
     "list.agy.cached_usage": {
         "en": "ℹ️ {count} inactive account(s) show the reading saved at the time "
         "in UPDATED, not their usage right now.{missing_note} "
-        "Refresh all: agy-accounts list --refresh",
+        "Refresh all: {cmd}",
         "zh-TW": "ℹ️ {count} 個非作用中帳號顯示的是 UPDATED 欄那個時間點存下的數值，"
         "不是現在的用量。{missing_note} "
-        "全部重新查詢：agy-accounts list --refresh",
+        "全部重新查詢：{cmd}",
     },
     "list.agy.cached_empty": {
-        "en": "ℹ️ No saved usage yet for inactive profiles. Fetch it once: "
-        "agy-accounts list --refresh",
-        "zh-TW": "ℹ️ 非作用中帳號尚無用量紀錄。更新一次：agy-accounts list --refresh",
+        "en": "ℹ️ No saved usage yet for inactive profiles. Fetch it once: {cmd}",
+        "zh-TW": "ℹ️ 非作用中帳號尚無用量紀錄。更新一次：{cmd}",
     },
     "list.agy.cached_toggle_off": {
         "en": "ℹ️ To query every account live on each list instead (slower, one agy "
-        "launch per account): ai-accounts config set agy_list_cached_usage false",
+        "launch per account): {cmd}",
         "zh-TW": "ℹ️ 想改成每次 list 都即時查詢所有帳號（較慢，每個帳號各啟動一次 agy）："
-        "ai-accounts config set agy_list_cached_usage false",
+        "{cmd}",
     },
     "list.agy.live_usage_hint": {
         "en": "ℹ️ Live mode: every account is checked one by one via agy, which is "
         "slow. Turn this on to make list much faster - inactive accounts show "
-        "their last-known usage instead of being checked live: "
-        "ai-accounts config set agy_list_cached_usage true",
+        "their last-known usage instead of being checked live: {cmd}",
         "zh-TW": "ℹ️ 目前是即時模式：每個帳號都要逐一啟動 agy 查詢，較耗時。"
         "開啟後可讓 list 快很多——非作用中帳號改顯示上次查到的用量，不用逐一即時查詢："
-        "ai-accounts config set agy_list_cached_usage true",
+        "{cmd}",
     },
     # ── validation errors (shown inline in the menu and by `config set`) ─────
     "error.bool": {"zh-TW": "需要布林值（true/false），得到 {raw}"},
