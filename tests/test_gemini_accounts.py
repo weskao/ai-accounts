@@ -442,7 +442,7 @@ class ProfileCommandTests(_HomeMixin):
                 spinner.return_value.__enter__.assert_not_called()
             self.assertEqual(profile.read_bytes(), before)
             self.assertIn("25%", output)
-            self.assertIn("last-known", output)
+            self.assertIn("not their usage right now", output)
             self.set_active(auth)
             self.mark_current("work")
             for command in (["list", "--refresh"], ["usage"]):
@@ -478,9 +478,9 @@ class ProfileCommandTests(_HomeMixin):
         fetch.assert_called_once_with(timeout=8)
         self.assertIn("81%", output)
         self.assertIn("25%", output)
-        self.assertIn("ℹ️ Showing last-known", output)
+        self.assertIn("show the reading saved at the time in UPDATED", output)
         self.assertIn("1/1 inactive", output)
-        self.assertIn("Current account queried live", output)
+        self.assertIn("Only the account in use was queried live", output)
         self.assertEqual(self.active["refresh_token"], "current-token")
 
     def test_replaced_profile_does_not_inherit_previous_accounts_quota(self):
@@ -576,7 +576,7 @@ class ProfileCommandTests(_HomeMixin):
         ):
             _, cached, _ = self.capture(ga.cmd_list)
         fetcher.assert_not_called()
-        self.assertIn("Showing last-known usage for 1/1 inactive profile(s)", cached)
+        self.assertIn("1/1 inactive account(s) show the reading saved", cached)
         self.assertIn("agy-accounts list --refresh", cached)
 
     def test_cached_list_without_a_reading_explains_how_to_populate_it(self) -> None:

@@ -332,23 +332,24 @@ MESSAGES: dict[str, dict[str, str]] = {
     "menu.unknown_key": {"zh-TW": "未知的設定 {key}。可用的設定："},
     # ── agy-accounts `list` footer notes ──────────────────────────────────────
     "list.agy.live_queried": {
-        "en": "ℹ️ Current account queried live; errors appear in UPDATED.",
-        "zh-TW": "ℹ️ 目前帳號為即時查詢；若有錯誤會顯示在「UPDATED」欄",
+        "en": "ℹ️ Only the account in use was queried live; any error shows in UPDATED.",
+        "zh-TW": "ℹ️ 只有目前使用中的這個帳號是即時查詢；若有錯誤會顯示在「UPDATED」欄",
     },
     "list.agy.cached_missing.one": {
-        "en": " {missing} has no saved reading.",
-        "zh-TW": " {missing} 筆尚無用量紀錄。",
+        "en": " {missing} more has no saved reading yet.",
+        "zh-TW": " 另外 {missing} 個尚無任何紀錄。",
     },
     "list.agy.cached_missing.many": {
-        "en": " {missing} have no saved readings.",
-        "zh-TW": " {missing} 筆尚無用量紀錄。",
+        "en": " {missing} more have no saved reading yet.",
+        "zh-TW": " 另外 {missing} 個尚無任何紀錄。",
     },
     "list.agy.cached_usage": {
-        "en": "ℹ️ Showing last-known usage for {cached_rows}/{inactive_count} "
-        "inactive profile(s); it may be stale.{missing_note} "
-        "Refresh: agy-accounts list --refresh",
-        "zh-TW": "ℹ️ 顯示 {cached_rows}/{inactive_count} 個非作用中帳號的上次已知用量，"
-        "可能已過期。{missing_note} 更新：agy-accounts list --refresh",
+        "en": "ℹ️ {cached_rows}/{inactive_count} inactive account(s) show the reading "
+        "saved at the time in UPDATED, not their usage right now.{missing_note} "
+        "Refresh all: agy-accounts list --refresh",
+        "zh-TW": "ℹ️ {cached_rows}/{inactive_count} 個非作用中帳號顯示的是 UPDATED 欄"
+        "那個時間點存下的數值，不是現在的用量。{missing_note} "
+        "全部重新查詢：agy-accounts list --refresh",
     },
     "list.agy.cached_empty": {
         "en": "ℹ️ No saved usage yet for inactive profiles. Fetch it once: "
@@ -356,8 +357,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "ℹ️ 非作用中帳號尚無用量紀錄。更新一次：agy-accounts list --refresh",
     },
     "list.agy.cached_toggle_off": {
-        "en": "ℹ️ Adjust in config: ai-accounts config set agy_list_cached_usage false",
-        "zh-TW": "ℹ️ 可於設定中調整：ai-accounts config set agy_list_cached_usage false",
+        "en": "ℹ️ To query every account live on each list instead (slower, one agy "
+        "launch per account): ai-accounts config set agy_list_cached_usage false",
+        "zh-TW": "ℹ️ 想改成每次 list 都即時查詢所有帳號（較慢，每個帳號各啟動一次 agy）："
+        "ai-accounts config set agy_list_cached_usage false",
     },
     "list.agy.live_usage_hint": {
         "en": "ℹ️ Showing live usage; each profile may start agy and take a while. "
