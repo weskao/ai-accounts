@@ -518,6 +518,29 @@ class FieldPreviewTests(unittest.TestCase):
                     widths = {visible_len(line) for line in lines}
                     self.assertEqual(len(widths), 1, f"inconsistent widths: {widths}")
 
+    def test_demo_fills_the_gutter_without_resizing_the_box(self) -> None:
+        """It is drawn in space the box already had: same line count, same
+        width as any other row's frame."""
+        plain = config_menu.render("t", cs.FIELDS, _default_values(), cursor=0, mode="wide")
+        cursor = next(i for i, f in enumerate(cs.FIELDS) if f.key == "table_style")
+        with_demo = config_menu.render(
+            "t", cs.FIELDS, _default_values(), cursor=cursor, mode="wide"
+        )
+        self.assertEqual(len(plain), len(with_demo))
+        self.assertEqual(visible_len(plain[0]), visible_len(with_demo[0]))
+        self.assertTrue(any("ACCOUNT" in line for line in _clean(with_demo)))
+
+    def test_narrow_stacks_the_demo_under_the_rows(self) -> None:
+        """No gutter at phone width — the fallback placement is the only one
+        narrow mode can take, so it must still show the demo."""
+        cursor = next(i for i, f in enumerate(cs.FIELDS) if f.key == "table_style")
+        lines = _clean(
+            config_menu.render("t", cs.FIELDS, _default_values(), cursor=cursor, mode="narrow")
+        )
+        demo_row = next(i for i, line in enumerate(lines) if "ACCOUNT" in line)
+        style_row = next(i for i, line in enumerate(lines) if "Table style" in line)
+        self.assertGreater(demo_row, style_row)
+
     def test_a_field_without_a_preview_renders_nothing_extra(self) -> None:
         field = cs.Field(key="plain", type=str, default="", label="Plain", help="no demo")
         self.assertEqual(field.display_preview("x"), [])

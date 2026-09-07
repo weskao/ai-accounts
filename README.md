@@ -435,10 +435,13 @@ Saved Codex profiles  (2)
 ```
 
 In the interactive menu (`ai-accounts config`) the **Table style** row previews
-itself: while it is selected, a three-row sample table is drawn under the
-settings list in whatever style is currently cycled onto the row — and the
-menu's own frame re-rounds with it — so the choice is made by looking at it
-rather than by saving, quitting and running a listing.
+itself: while it is selected, a three-row sample table is drawn in the empty
+gutter to the right of the settings list, in whatever style is currently cycled
+onto the row — and the menu's own frame re-rounds with it — so the choice is
+made by looking at it rather than by saving, quitting and running a listing.
+The demo fills space the box already had, so nothing moves as you arrow onto
+that row; at phone width, where there is no gutter, it stacks under the rows
+instead.
 
 `table_style` also stripes every `--help` output's `USAGE`/`EXAMPLES` command
 list under `modern` — every other command entry (its wrapped description

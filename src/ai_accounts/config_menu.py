@@ -356,6 +356,48 @@ def _field_rows_narrow(
     return rows
 
 
+_DEMO_GUTTER = 3
+
+
+def _with_demo(
+    body: list[str],
+    field_rows: list[str],
+    demo: list[str],
+    *,
+    inner: int,
+    narrow: bool,
+) -> list[str]:
+    """*body* with *demo* placed beside the field rows, or beneath them.
+
+    The settings list is a narrow column of ``label  value`` rows inside a box
+    whose width is set by the longest help text, so there is a tall empty
+    gutter to its right — the demo goes THERE whenever it fits, which keeps the
+    box exactly the size it already was: moving the cursor onto a previewing
+    row then adds nothing to the frame, it only fills space that was blank.
+
+    It falls back to stacking the demo under the rows when the gutter cannot
+    host it — narrow mode (there is no gutter at phone width), a demo taller
+    than the list, or one too wide for the room left over. Both placements are
+    load-bearing: the fallback is the only one narrow mode ever takes.
+
+    ``inner`` is the already-decided content width, so neither placement can
+    change it: this function only ever writes into space the box already has.
+    """
+    widest = max(visible_len(line) for line in demo)
+    column = max((visible_len(line) for line in field_rows), default=0) + _DEMO_GUTTER
+    if not narrow and len(demo) <= len(field_rows) and column + widest <= inner - 2:
+        merged = list(body)
+        for offset, line in enumerate(demo):
+            index = 1 + offset  # body[0] is the blank line above the first row
+            merged[index] += " " * (column - visible_len(merged[index])) + line
+        return merged
+    if widest > inner - 2:
+        return body  # no room in either placement; the help text still explains it
+    stacked = list(body)
+    stacked[1 + len(field_rows) : 1 + len(field_rows)] = ["", *demo]
+    return stacked
+
+
 def render(
     title: str,
     fields: Sequence[config_schema.Field],
@@ -453,6 +495,7 @@ def render(
         previous_group = field.group
 
     body = ["", *field_rows]
+    demo: list[str] = []
     # Trailing lines as (text, color) rather than pre-colored strings: narrow
     # has to wrap the text and re-apply the color per line (see ``_wrapped``).
     notes: list[tuple[str, str]] = []
@@ -476,14 +519,12 @@ def render(
                     cursor_value = empty_value
         notes.append((cursor_field.display_help(lang, value=cursor_value), DIM))
         # A visual setting is judged by looking, not by reading: the selected
-        # field's own demo (schema-declared, see `Field.preview`) is painted in
-        # the empty space under the rows, in the value being CYCLED rather than
-        # the one on disk — same live-preview rule as `layout` and `lang`. The
-        # lines are already-rendered table output, so narrow mode drops a demo
-        # too wide for its budget rather than bursting the box.
+        # field's own demo (schema-declared, see `Field.preview`) is drawn in
+        # the value being CYCLED rather than the one on disk — same live-preview
+        # rule as `layout` and `lang`. Placed only after `inner` is known (see
+        # `_with_demo`), so the demo fills existing space instead of setting the
+        # box width from a sample table.
         demo = cursor_field.display_preview(cursor_value)
-        if demo and not (narrow and max(visible_len(line) for line in demo) > text_width):
-            body.extend(["", *demo])
     if confirm_reset:
         prompt = i18n.t("menu.reset_confirm", lang=lang, default=_RESET_CONFIRM_EN)
         notes.append((f"⚠ {prompt}", YELLOW))
@@ -520,6 +561,9 @@ def render(
         inner = max(max_line + 3, visible_len(title) + 4, _MIN_WIDTH - 2)
         if width is not None:
             inner = max(inner, width - 2)
+
+    if demo:
+        body = _with_demo(body, field_rows, demo, inner=inner, narrow=narrow)
 
     dashes = inner - visible_len(title) - 3
     # Corners off the value being EDITED, like `layout` and `lang` above, so
