@@ -195,6 +195,8 @@ ai-accounts config
 ai-accounts config get
 ai-accounts config set enabled true
 ai-accounts config set layout narrow
+ai-accounts config export settings.json
+ai-accounts config import settings.json
 ai-accounts autoswitch
 ai-accounts autoswitch setup
 ai-accounts install-timer --interval 1800
@@ -206,6 +208,29 @@ behavior and notifications. Arrow keys select and change values, `r` resets
 every setting to its default after a `y` confirmation, and each change is
 saved as you make it — there is no separate save step. When stdin is not a
 TTY the menu falls back to a numbered prompt.
+
+`config export [file]` writes the current settings as JSON — to the given
+file (owner-only, mode `600`), or to standard output when no file is given so
+`config export | …` pipes cleanly. **Secrets are never exported**:
+`telegram_bot_token` is left out of the file entirely, and the command says so
+every time, because a restored backup with no token is why notifications would
+otherwise go quiet. Export is a full backup and is not filtered per CLI — the
+Antigravity keys are included even when it runs from `codex-accounts`.
+
+`config import <file>` applies those settings back, all or nothing, and reports
+what it did:
+
+- A **secret** in the file is skipped, never written — a hand-written or
+  mask-shaped (`********WXYZ`) value would destroy the real token stored on
+  this machine.
+- An **unknown key** (from a newer ai-accounts) is left alone rather than
+  written back unvalidated.
+- One **invalid value** aborts the whole import before the first write, so a
+  half-applied config is never the outcome. The exit code is 1 and the config
+  on disk is untouched.
+
+Both directions work from every CLI (`codex-accounts config export`, …) and
+print their notice on stderr.
 
 The Antigravity blind-switch and inactive-account cache options appear only in
 `ai-accounts config` and `agy-accounts config` (including their `config get`

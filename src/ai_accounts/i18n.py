@@ -311,7 +311,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     "menu.select": {"zh-TW": "選擇要修改的項目（留空離開）："},
     "menu.bad_number": {"zh-TW": "請輸入上面列出的項目編號。"},
     "menu.install_prompt": {"zh-TW": "尚未安裝自動切換設定，要現在安裝嗎？[y/N]："},
-    "menu.usage": {"zh-TW": "用法：{prog} config get [key] | config set <key> <value>"},
+    "menu.usage": {
+        "zh-TW": "用法：{prog} config get [key] | config set <key> <value>"
+        " | config export [檔案] | config import <檔案>"
+    },
+    "menu.export_stdout": {"zh-TW": "標準輸出"},
+    "menu.export_done": {"zh-TW": "已匯出 {count} 項設定到 {target}"},
+    "menu.export_secrets": {"zh-TW": "機密資料一律不會匯出，請在另一台機器重新設定：{keys}"},
+    "menu.import_done": {"zh-TW": "已從 {path} 匯入 {count} 項設定"},
+    "menu.import_skipped": {"zh-TW": "已略過（機密資料一律不匯入，未知的設定保持原樣）：{keys}"},
+    "menu.import_not_object": {"zh-TW": "{path} 不是設定的 JSON 物件"},
     "menu.unknown_key": {"zh-TW": "未知的設定 {key}。可用的設定："},
     # ── validation errors (shown inline in the menu and by `config set`) ─────
     "error.bool": {"zh-TW": "需要布林值（true/false），得到 {raw}"},

@@ -78,7 +78,17 @@ Canonical here (behavioural half): :class:`MenuState` + :func:`step`, the
 from a fake key iterator; :func:`run_menu`, the thin terminal shell around it
 (raw mode, in-place redraw, autosave through :class:`_Saver`); the non-TTY numbered
 fallback; and :func:`cmd_config`, the ONE entry point all six CLIs delegate
-to for both the menu and the scriptable ``config get`` / ``config set`` forms.
+to for the menu, the scriptable ``config get`` / ``config set`` forms, and the
+``config export`` / ``config import`` pair that moves settings between
+machines (:func:`cmd_config_export` / :func:`cmd_config_import`).
+
+**Secrets never travel.** An export omits every ``masked`` field and an import
+refuses to write one, both read off the schema rather than a key list here —
+and both say so on every run, since a silently secret-less backup is how
+someone restores settings and wonders why notifications stopped. An import is
+all-or-nothing (one invalid value aborts before the first write) for the same
+data-loss reason the menu's masked rows never round-trip: a half-applied
+config is worse than a rejected one.
 
 Delegated elsewhere: key decoding, raw mode and the "is a menu even possible"
 check (:mod:`ai_accounts._keyreader`); reading/writing the config file
@@ -122,17 +132,19 @@ validation is ``Field.parse``. Appending a 7th field to
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from . import autoswitch, config_schema, i18n
 from . import _keyreader as kr
 from . import _present
 from ._present import elide, visible_len, wrap
 from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW
-from ._utils import log_red, package_version
+from ._utils import log_green, log_red, log_yellow, package_version
 
 _CURSOR_MARK = "❯ "
 _NO_CURSOR_MARK = "  "
@@ -974,6 +986,145 @@ def cmd_config_set(key: str, raw_value: str) -> int:
     return 0
 
 
+# ── config export / import: settings between machines, secrets left behind ──
+
+
+def _portable_fields() -> tuple[config_schema.Field, ...]:
+    """Every declared field an export may carry — i.e. every non-secret one.
+
+    Read off ``masked``, never a hand-kept key list: a secret added to
+    ``config_schema.FIELDS`` must not start leaking into export files just
+    because this module was never updated (same rule as
+    ``autoswitch.masked_config``). Deliberately NOT filtered by *prog*: an
+    export is a backup, and dropping the Antigravity keys just because it ran
+    from ``codex-accounts config export`` would silently lose settings the
+    importing machine still has.
+    """
+    return tuple(f for f in config_schema.FIELDS if not f.masked)
+
+
+def _secret_keys() -> tuple[str, ...]:
+    return tuple(f.key for f in config_schema.FIELDS if f.masked)
+
+
+def cmd_config_export(path: str | None) -> int:
+    """Write the non-secret settings as JSON to *path* (stdout when ``None``).
+
+    Written owner-only through the same helper as the config file itself: the
+    payload holds no secret, but a settings backup is still nobody else's
+    business. Stdout keeps the JSON on stdout and the notice on stderr, so
+    ``config export | …`` pipes cleanly.
+    """
+    cfg = autoswitch.load_config()
+    payload = {f.key: cfg.get(f.key, f.default) for f in _portable_fields()}
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if path is None:
+        print(text, end="")
+        target = i18n.t("menu.export_stdout", default="standard output")
+    else:
+        try:
+            autoswitch._write_private(Path(path), text)
+        except (OSError, ValueError) as exc:
+            # ValueError, not just OSError: an embedded null byte in the path
+            # raises it from pathlib rather than the OS, and a crash traceback
+            # is a worse answer than "❌ that path is unusable".
+            log_red(f"❌ {exc}")
+            return 1
+        target = path
+    log_green(
+        "✅ "
+        + i18n.t(
+            "menu.export_done",
+            default="Exported {count} settings to {target}",
+            count=len(payload),
+            target=target,
+        )
+    )
+    log_yellow(
+        "⚠️  "
+        + i18n.t(
+            "menu.export_secrets",
+            default="Secrets are never exported — set these again on the other machine: {keys}",
+            keys=", ".join(_secret_keys()),
+        )
+    )
+    return 0
+
+
+def cmd_config_import(path: str) -> int:
+    """Apply the settings in the JSON file at *path*, all or nothing.
+
+    Three things are deliberately never written, and each is reported rather
+    than dropped in silence:
+
+    * **Secrets.** A masked key in the file is skipped, not applied — an
+      exported file has none, so a value here is either hand-written or a
+      mask (``********WXYZ``) someone pasted, and writing either destroys the
+      real token already stored on this machine.
+    * **Unknown keys.** A key from a newer ai-accounts is left alone instead
+      of being written back as an unvalidated blob.
+    * **Anything invalid.** One bad value aborts the whole import before the
+      first write, so a half-applied config can never be the outcome.
+    """
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        log_red(f"❌ {exc}")
+        return 1
+    if not isinstance(raw, dict):
+        log_red(
+            "❌ "
+            + i18n.t(
+                "menu.import_not_object",
+                default="{path} is not a JSON object of settings",
+                path=path,
+            )
+        )
+        return 1
+
+    secrets = _secret_keys()
+    updates: dict[str, object] = {}
+    skipped: list[str] = []
+    for key, value in raw.items():
+        if key in secrets or key not in _valid_keys():
+            skipped.append(key)
+            continue
+        field = _descriptor(key)
+        try:
+            # Values arrive JSON-typed (bool/int/str); route them through the
+            # schema anyway so a range, choice or type mistake is caught here
+            # rather than stored — `parse` speaks strings, and `format` is the
+            # round-trippable form for every non-masked field.
+            updates[key] = field.parse(field.format(value))
+        except ValueError as exc:
+            log_red(f"❌ {exc}")
+            return 1
+    try:
+        _save_config(updates)
+    except ValueError as exc:
+        log_red(f"❌ {exc}")
+        return 1
+    log_green(
+        "✅ "
+        + i18n.t(
+            "menu.import_done",
+            default="Imported {count} settings from {path}",
+            count=len(updates),
+            path=path,
+        )
+    )
+    if skipped:
+        log_yellow(
+            "⚠️  "
+            + i18n.t(
+                "menu.import_skipped",
+                default="Skipped (secrets are never imported, unknown keys are left alone): {keys}",
+                keys=", ".join(skipped),
+            )
+        )
+    return 0
+
+
 def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
     """``<prog> config [...]`` — the shared implementation for all six CLIs.
 
@@ -1011,11 +1162,18 @@ def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
         return cmd_config_get(rest[1] if len(rest) > 1 else None, hidden=hidden)
     if rest[0] == "set" and len(rest) == 3:
         return cmd_config_set(rest[1], rest[2])
+    if rest[0] == "export" and len(rest) <= 2:
+        return cmd_config_export(rest[1] if len(rest) > 1 else None)
+    if rest[0] == "import" and len(rest) == 2:
+        return cmd_config_import(rest[1])
     log_red(
         "❌ "
         + i18n.t(
             "menu.usage",
-            default="Usage: {prog} config get [key] | config set <key> <value>",
+            default=(
+                "Usage: {prog} config get [key] | config set <key> <value>"
+                " | config export [file] | config import <file>"
+            ),
             prog=prog,
         )
     )
