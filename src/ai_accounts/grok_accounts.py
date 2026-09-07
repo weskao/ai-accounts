@@ -675,11 +675,18 @@ def _refresh_profile(profile: Path) -> int:
     direct grant cannot resolve it (client secret required, unknown credential
     shape, transient failure). A revoked refresh token stops here — spawning
     the CLI cannot revive it."""
-    payload = _read_json(profile)
+    is_active = _active_profile() == profile
+    # x.ai rotates the refresh token on every grant and kills the one it
+    # replaced. While a profile is the active login, the Grok CLI's own
+    # refreshes rotate ~/.grok/auth.json without touching the saved copy, so
+    # the copy is left holding a spent token and refreshing from it returns
+    # invalid_grant forever — a live account reported as permanently revoked.
+    # `_active_profile` has already matched the auth file's identity to this
+    # profile, and the live file is never staler than the copy, so it wins.
+    payload = (_read_json(_auth_file()) if is_active else None) or _read_json(profile)
     if payload is None:
         log_red(f"❌ Profile is unreadable: {profile.stem}")
         return 1
-    is_active = _active_profile() == profile
     updated, error = _direct_refresh(payload)
     if updated is not None:
         if not _write_json(profile, updated):

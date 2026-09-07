@@ -481,6 +481,33 @@ class GrokDirectRefreshTests(unittest.TestCase):
         cli.assert_not_called()
         self.assertEqual(ga._record(ga._read_json(profile))["key"], "fresh-access-token")
 
+    def test_active_profile_refreshes_from_the_live_auth_file(self) -> None:
+        """x.ai rotates the refresh token on use and kills the old one, so a
+        Grok CLI refresh leaves the saved copy holding a spent token. The
+        active profile must present the live file's token, not the stale copy,
+        or the account reports itself permanently revoked while still valid."""
+        profile = self.account_dir / "personal.json"
+        stale = _oidc_auth()
+        stale["https://auth.x.ai::client"]["refresh_token"] = "spent-refresh-token"
+        self.assertTrue(ga._write_json(profile, stale))
+        live = _oidc_auth()
+        live["https://auth.x.ai::client"]["refresh_token"] = "rotated-refresh-token"
+        self.assertTrue(ga._write_json(ga._auth_file(), live))
+        ga._marker_file().write_text("personal", encoding="utf-8")
+
+        with (
+            mock.patch.object(ga, "_token_endpoint", return_value="https://auth.example.test/t"),
+            mock.patch.object(
+                ga,
+                "oauth_token_refresh",
+                return_value=({"access_token": "fresh-access-token"}, None),
+            ) as posted,
+        ):
+            self.assertEqual(ga._refresh_profile(profile), 0)
+
+        self.assertEqual(posted.call_args.args[1]["refresh_token"], "rotated-refresh-token")
+        self.assertEqual(ga._record(ga._read_json(profile))["key"], "fresh-access-token")
+
     def test_client_secret_requirement_falls_back_to_the_grok_cli(self) -> None:
         profile = self.account_dir / "personal.json"
         self.assertTrue(ga._write_json(profile, _oidc_auth()))
