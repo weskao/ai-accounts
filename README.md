@@ -197,11 +197,26 @@ ai-accounts timer-status
 `ai-accounts config` opens the interactive menu for configuring auto-switch
 behavior and notifications.
 
+The Antigravity blind-switch and inactive-account cache options appear only in
+`ai-accounts config` and `agy-accounts config` (including their `config get`
+listings). Other provider menus omit them, and resetting those menus preserves
+the hidden settings. Explicit `config get <key>` and `config set <key> <value>`
+remain shared across all CLIs.
+
 ![Interactive ai-accounts configuration](ai-accounts%20config%20demo.gif)
 
 `ai-accounts autoswitch setup` installs provider event hooks plus a low-frequency
 OS timer fallback. Re-run it after reinstalling the package so hooks point at
 the current Python environment.
+
+Status checks are read-only: `enabled` reads the shared config,
+`autoswitch_setup.is_installed()` checks both timer registration and relevant
+hooks, and `ai-accounts timer-status` checks the platform's timer registration.
+macOS checks the LaunchAgent file; Linux checks the systemd timer file or reads
+crontab; Windows queries Task Scheduler with `schtasks /Query`. An `installed`
+result confirms registration, not successful execution or quota availability.
+Windows hook commands quote interpreter paths containing spaces; re-run setup
+to update hooks installed by an older version.
 
 Remove only the timer with:
 

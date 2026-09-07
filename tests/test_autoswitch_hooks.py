@@ -18,6 +18,14 @@ from ai_accounts import _utils as u
 
 
 class HookConfigTests(unittest.TestCase):
+    def test_windows_command_quotes_interpreter_for_windows_shell(self) -> None:
+        executable = r"C:\Program Files\Python\python.exe"
+        with mock.patch.object(u, "IS_WINDOWS", True), mock.patch.object(sys, "executable", executable):
+            self.assertEqual(
+                hooks.command("codex"),
+                f'"{executable}" -m ai_accounts.autoswitch_hooks run codex',
+            )
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

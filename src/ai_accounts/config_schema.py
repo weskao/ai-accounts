@@ -65,6 +65,8 @@ class Field:
     clamp: bool = False
     masked: bool = False
     group: str | None = None
+    # None means shared; otherwise only these CLI menus/listings show the field.
+    programs: tuple[str, ...] | None = None
     # Optional display names for `choices`, as a callable so a label can depend
     # on the active language (or on what "auto" currently resolves to). The
     # STORED value is always the choice itself — this only affects rendering.
@@ -249,6 +251,7 @@ FIELDS: tuple[Field, ...] = (
     ),
     Field(
         key="agy_blind_switch",
+        programs=("ai-accounts", "agy-accounts"),
         type=bool,
         default=False,
         label="Antigravity blind switch",
@@ -257,6 +260,7 @@ FIELDS: tuple[Field, ...] = (
     ),
     Field(
         key="agy_list_cached_usage",
+        programs=("ai-accounts", "agy-accounts"),
         type=bool,
         default=False,
         label="Cache inactive Antigravity accounts",

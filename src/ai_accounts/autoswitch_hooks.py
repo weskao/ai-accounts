@@ -28,7 +28,8 @@ _MODULES = {
 
 def command(provider: str) -> str:
     """The stable, shell-safe command installed in a provider's Stop hook."""
-    return shlex.join([sys.executable, "-m", "ai_accounts.autoswitch_hooks", "run", provider])
+    args = [sys.executable, "-m", "ai_accounts.autoswitch_hooks", "run", provider]
+    return subprocess.list2cmdline(args) if u.IS_WINDOWS else shlex.join(args)
 
 
 def module(provider: str) -> str:

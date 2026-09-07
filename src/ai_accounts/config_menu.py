@@ -937,11 +937,12 @@ def _unknown_key(key: str) -> int:
     return 1
 
 
-def cmd_config_get(key: str | None) -> int:
+def cmd_config_get(key: str | None, *, hidden: frozenset[str] = frozenset()) -> int:
     cfg = autoswitch.masked_config()
     if key is None:
         for name, value in cfg.items():
-            print(f"{name} = {value}")
+            if name not in hidden:
+                print(f"{name} = {value}")
         return 0
     if key not in cfg:
         return _unknown_key(key)
@@ -978,12 +979,17 @@ def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
 
     No args → interactive menu, or the numbered fallback when a keyboard menu
     is impossible. ``get [key]`` / ``set <key> <value>`` keep the legacy
-    scriptable behaviour. *prog* only labels output (panel title, usage line).
+    scriptable behaviour. *prog* labels output and selects visible fields.
     """
+    hidden = frozenset(
+        f.key for f in config_schema.FIELDS
+        if f.programs is not None and prog not in f.programs
+    )
+    fields = tuple(f for f in config_schema.FIELDS if f.key not in hidden)
     if not rest:
         title = f"{prog} config (v{package_version()})"
         if kr.is_interactive_tty():
-            result = run_menu(title)
+            result = run_menu(title, fields)
             if result == 0 and autoswitch.config_flag("enabled"):
                 from . import autoswitch_setup
 
@@ -1000,9 +1006,9 @@ def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
                 if answer is not None and answer.lower() in {"y", "yes"}:
                     autoswitch_setup.install()
             return result
-        return fallback_menu(title)
+        return fallback_menu(title, fields)
     if rest[0] == "get":
-        return cmd_config_get(rest[1] if len(rest) > 1 else None)
+        return cmd_config_get(rest[1] if len(rest) > 1 else None, hidden=hidden)
     if rest[0] == "set" and len(rest) == 3:
         return cmd_config_set(rest[1], rest[2])
     log_red(

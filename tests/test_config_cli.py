@@ -113,6 +113,23 @@ class AllFiveToolsConfigDispatchTest(_ConfigFileMixin):
                 if self.config_path.exists():
                     self.config_path.unlink()
 
+    def test_antigravity_options_are_listed_only_by_agy_and_the_umbrella_cli(self) -> None:
+        keys = ("agy_blind_switch", "agy_list_cached_usage")
+        labels = ("Antigravity blind switch", "Cache inactive Antigravity accounts")
+        for module, prog in _MODULES:
+            with self.subTest(prog=prog):
+                rc, out, _ = self._main(module, ["config", "get"])
+                self.assertEqual(rc, 0)
+                for key in keys:
+                    self.assertEqual(key in out, prog in ("ai-accounts", "agy-accounts"))
+                with mock.patch("builtins.input", side_effect=EOFError), mock.patch.object(
+                    _keyreader, "is_interactive_tty", return_value=False
+                ):
+                    rc, out, _ = self._main(module, ["config"])
+                self.assertEqual(rc, 0)
+                for label in labels:
+                    self.assertEqual(label in out, prog in ("ai-accounts", "agy-accounts"))
+
     def test_config_get_single_key(self) -> None:
         for module, prog in _MODULES:
             with self.subTest(prog=prog):
@@ -120,6 +137,33 @@ class AllFiveToolsConfigDispatchTest(_ConfigFileMixin):
                 rc, out, _ = self._main(module, ["config", "get", "switch_when_used_pct"])
                 self.assertEqual((rc, out), (0, "switch_when_used_pct = 42\n"))
                 self.config_path.unlink()
+
+    def test_interactive_menu_filters_options_and_reset_preserves_hidden_values(self):
+        from ai_accounts import config_menu as cm
+
+        original = cm.run_menu
+        keys = ("agy_blind_switch", "agy_list_cached_usage")
+        for module, prog in _MODULES:
+            with self.subTest(prog=prog):
+                autoswitch.save_config({"enabled": False, **dict.fromkeys(keys, True)})
+                events = iter([
+                    _keyreader.KeyEvent(_keyreader.Key.CHAR, "r"),
+                    _keyreader.KeyEvent(_keyreader.Key.CHAR, "y"),
+                    _keyreader.KeyEvent(_keyreader.Key.CHAR, "q"),
+                ])
+
+                def run(title, fields):
+                    visible = {f.key for f in fields}
+                    for key in keys:
+                        self.assertEqual(key in visible, prog in ("ai-accounts", "agy-accounts"))
+                    return original(title, fields, read=lambda: next(events))
+
+                with mock.patch.object(cm, "run_menu", side_effect=run), mock.patch.object(
+                    _keyreader, "is_interactive_tty", return_value=True
+                ), mock.patch.object(_keyreader, "raw_mode"):
+                    self.assertEqual(self._main(module, ["config"])[0], 0)
+                for key in keys:
+                    self.assertEqual(autoswitch.load_config()[key], prog not in ("ai-accounts", "agy-accounts"))
 
     def test_config_set_writes_and_echoes_unchanged(self) -> None:
         for module, prog in _MODULES:
