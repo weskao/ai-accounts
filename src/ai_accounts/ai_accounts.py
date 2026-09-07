@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config_menu as cm
 from . import _present, i18n
-from ._utils import BLUE, BOLD, CYAN, GREEN, MAGENTA, RESET, YELLOW, Spinner, log_red
+from ._utils import BLUE, BOLD, CYAN, GREEN, ORANGE, RESET, YELLOW, Spinner, log_red
 
 # (display label, importable module). Each module is `python -m`-runnable and
 # understands the same subcommand set as the others.
@@ -91,20 +91,20 @@ only the local `setup` action and otherwise rejects extra arguments.
 """
 
 
-# One icon + accent color per provider, so five stacked `list`/`switch`/etc.
-# blocks stay visually distinct instead of five identical cyan rules.
-_PROVIDER_STYLE = {
-    "codex-accounts": ("🤖", CYAN),
-    "claude-accounts": ("✨", MAGENTA),
-    "agy-accounts": ("🌌", BLUE),
-    "grok-accounts": ("⚡", YELLOW),
-    "vibe-accounts": ("🎨", GREEN),
+# One accent color per provider, so five stacked `list`/`switch`/etc. blocks
+# stay visually distinct instead of five identical cyan rules.
+_PROVIDER_COLOR = {
+    "codex-accounts": CYAN,
+    "claude-accounts": ORANGE,
+    "agy-accounts": BLUE,
+    "grok-accounts": YELLOW,
+    "vibe-accounts": GREEN,
 }
 
 
 def _header(label: str) -> None:
-    icon, accent = _PROVIDER_STYLE.get(label, ("▶", CYAN))
-    print(f"{BOLD}{accent}━━━ {icon} {label} ━━━{RESET}")
+    accent = _PROVIDER_COLOR.get(label, CYAN)
+    print(f"{BOLD}{accent}━━━ {label} ━━━{RESET}")
 
 
 def _run_list(module: str) -> subprocess.CompletedProcess[str]:

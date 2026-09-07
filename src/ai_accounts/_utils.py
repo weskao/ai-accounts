@@ -28,6 +28,8 @@ RED = "\033[1;31m"
 CYAN = "\033[1;36m"
 BLUE = "\033[1;34m"
 MAGENTA = "\033[1;35m"
+# 256-color: the 8-color palette has no orange, and 1;33 is already YELLOW.
+ORANGE = "\033[1;38;5;208m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
 RESET = "\033[0m"
