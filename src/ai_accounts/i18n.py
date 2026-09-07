@@ -278,9 +278,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.agy_blind_switch.help": {
         "zh-TW": "agy 只回報當前 session 的配額：即使無法先確認目標帳號的配額也照切。"
     },
-    "config.agy_list_cached_usage.label": {"zh-TW": "Antigravity 快取列表"},
+    "config.agy_list_cached_usage.label": {"zh-TW": "Antigravity 非當前帳號使用快取"},
     "config.agy_list_cached_usage.help": {
-        "zh-TW": "立即顯示上次成功取得的配額。資料可能已過期；以 agy-accounts list --refresh 更新。"
+        "zh-TW": "當前帳號即時查詢，其他帳號顯示上次成功取得的配額。快取可能已過期；以 agy-accounts list --refresh 更新全部。"
     },
     "config.token_refresh.label": {"zh-TW": "自動更新 token"},
     "config.token_refresh.help": {

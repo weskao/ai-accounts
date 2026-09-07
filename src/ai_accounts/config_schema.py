@@ -259,8 +259,8 @@ FIELDS: tuple[Field, ...] = (
         key="agy_list_cached_usage",
         type=bool,
         default=False,
-        label="Antigravity cached list",
-        help="Show the last successful quota readings for an immediate list. They may be stale; refresh them with agy-accounts list --refresh.",
+        label="Cache inactive Antigravity accounts",
+        help="Query the current account live; use last-known quota for other accounts. Cached data may be stale. Refresh all: agy-accounts list --refresh.",
         group="Provider behavior",
     ),
     Field(

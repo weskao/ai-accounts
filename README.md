@@ -136,17 +136,19 @@ agy-accounts usage
 ### Fast Antigravity lists
 
 Antigravity can only report quota for the live credential session, so a live
-`agy-accounts list` must check profiles one at a time. To show the last
-successful readings immediately, enable cached-list mode:
+`agy-accounts list` must check profiles one at a time. Enable cached-list mode
+to query the current account live and use saved readings for other accounts:
 
 ```sh
 ai-accounts config set agy_list_cached_usage true
 agy-accounts list --refresh  # populate or update the saved readings
-agy-accounts list            # immediate; shows when the readings were fetched
+agy-accounts list            # current account live; other accounts from cache
 ```
 
 Cached readings can be stale. The list labels this mode and repeats the refresh
 command; leave the setting off when every listing must fetch live quota.
+The current account is always queried live, so listing still waits for that
+one query. If it fails, UPDATED shows the error instead of stale quota.
 
 ## Profile storage
 

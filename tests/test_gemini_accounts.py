@@ -424,8 +424,6 @@ class ProfileCommandTests(_HomeMixin):
     def test_cached_cli_is_read_only_and_config_refresh_override_works(self):
         auth = _creds("test-id", "user@example.com")
         profile = self.write_profile("work", auth)
-        self.set_active(auth)
-        self.mark_current("work")
         with mock.patch.object(ga, "go_keyring_available", return_value=(True, "")):
             self.assertEqual(self.quiet(ga.main, ["config", "set", "agy_list_cached_usage", "true"]), 0)
             ga._cache_snapshot("work", _usage("user@example.com"))
@@ -444,6 +442,8 @@ class ProfileCommandTests(_HomeMixin):
             self.assertEqual(profile.read_bytes(), before)
             self.assertIn("25%", output)
             self.assertIn("last-known", output)
+            self.set_active(auth)
+            self.mark_current("work")
             for command in (["list", "--refresh"], ["usage"]):
                 with mock.patch.object(gu, "fetch_usage", return_value=_usage("user@example.com")) as fetch:
                     self.assertEqual(self.quiet(ga.main, command), 0)
@@ -462,6 +462,25 @@ class ProfileCommandTests(_HomeMixin):
         self.assertEqual(ga._cached_used_pct("work", ga._read_usage_cache()), 80)
         ga._cache_snapshot("work", _usage("user@example.com", error="unavailable"))
         self.assertEqual(ga._cached_snapshot("work", ga._read_usage_cache()), snapshot)
+
+    def test_cached_mode_fetches_only_active_and_keeps_other_cached(self):
+        auth = _creds("current-id", "current@example.com", refresh_token="current-token")
+        self.write_profile("current", auth)
+        self.write_profile("other", _creds("other-id", "other@example.com", refresh_token="other-token"))
+        self.set_active(auth)
+        self.mark_current("current")
+        ga.autoswitch.save_config({"agy_list_cached_usage": True})
+        ga._cache_snapshot("other", _usage("other@example.com"))
+        fresh = gu.UsageSnapshot(UsageWindow(81, 2_000_000_000, 10080), None, None, None, "current@example.com", "Pro", 2_000_000_000, None)
+        with mock.patch.object(gu, "fetch_usage", return_value=fresh) as fetch:
+            _, output, _ = self.capture(ga.cmd_list)
+        fetch.assert_called_once_with(timeout=8)
+        self.assertIn("81%", output)
+        self.assertIn("25%", output)
+        self.assertIn("ℹ️ Showing last-known", output)
+        self.assertIn("1/1 inactive", output)
+        self.assertIn("Current account queried live", output)
+        self.assertEqual(self.active["refresh_token"], "current-token")
 
     def test_replaced_profile_does_not_inherit_previous_accounts_quota(self):
         self.write_profile("work", _creds("old-id", "old@example.com"))
@@ -548,13 +567,15 @@ class ProfileCommandTests(_HomeMixin):
         self.assertIn("Showing live usage", live)
         self.assertIn("agy_list_cached_usage true", live)
 
+        self.active = None
+
         with (
             mock.patch.object(ga.autoswitch, "config_flag", return_value=True),
             mock.patch.object(ga.gemini_usage, "fetch_usage") as fetcher,
         ):
             _, cached, _ = self.capture(ga.cmd_list)
         fetcher.assert_not_called()
-        self.assertIn("Showing last-known usage for 1/1 profile(s)", cached)
+        self.assertIn("Showing last-known usage for 1/1 inactive profile(s)", cached)
         self.assertIn("agy-accounts list --refresh", cached)
 
     def test_cached_list_without_a_reading_explains_how_to_populate_it(self) -> None:

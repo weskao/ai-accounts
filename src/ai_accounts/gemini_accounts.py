@@ -963,6 +963,7 @@ def cmd_list(
         and autoswitch.config_flag("agy_list_cached_usage")
     )
     usage_cache = _read_usage_cache() if cached_list else {}
+    live_query = fetch_usage and (not cached_list or active_profile is not None)
     cached_rows = 0
     empty_usage = gemini_usage.UsageSnapshot(
         None, None, None, None, None, None, None, None
@@ -974,7 +975,7 @@ def cmd_list(
     restore_text = active_text
     spinner = Spinner("Fetching Antigravity usage…")
     try:
-        with spinner if fetch_usage and not cached_list else nullcontext():
+        with spinner if live_query else nullcontext():
             for index, (profile_path, claims) in enumerate(profile_claims, 1):
                 name = profile_path.stem
                 is_active = profile_path == active_profile
@@ -986,7 +987,7 @@ def cmd_list(
                     else f"{DIM}—{RESET}"
                 )
                 usage = empty_usage
-                if cached_list:
+                if cached_list and not is_active:
                     usage = _cached_snapshot(name, usage_cache) or empty_usage
                     cached_rows += usage is not empty_usage
                 elif fetch_usage:
@@ -1039,7 +1040,7 @@ def cmd_list(
                     }
                 )
     finally:
-        if fetch_usage and not cached_list:
+        if live_query:
             _restore_cli_auth(restore_text)
 
     if only_active:
@@ -1048,25 +1049,28 @@ def cmd_list(
         print(f"{BOLD}Saved Antigravity profiles{RESET}  {DIM}({len(rows)}){RESET}")
     _print_accounts_table(rows)
     if cached_list:
+        inactive_count = sum(p != active_profile for p, _ in profile_claims)
+        if active_profile is not None:
+            print(f"{DIM}ℹ️ Current account queried live; errors appear in UPDATED.{RESET}")
         if cached_rows:
-            missing = len(rows) - cached_rows
-            known = f"{cached_rows}/{len(rows)} profile(s)"
+            missing = inactive_count - cached_rows
+            known = f"{cached_rows}/{inactive_count} inactive profile(s)"
             suffix = f" {missing} has no saved reading." if missing == 1 else (
                 f" {missing} have no saved readings." if missing else ""
             )
             print(
-                f"{DIM}ⓘ Showing last-known usage for {known}; it may be stale.{suffix} "
+                f"{DIM}ℹ️ Showing last-known usage for {known}; it may be stale.{suffix} "
                 f"Refresh: agy-accounts list --refresh{RESET}"
             )
-        else:
+        elif inactive_count:
             print(
-                f"{DIM}ⓘ No saved usage yet. Fetch it once: "
+                f"{DIM}ℹ️ No saved usage yet for inactive profiles. Fetch it once: "
                 f"agy-accounts list --refresh{RESET}"
             )
     elif fetch_usage and not only_active:
         print(
-            f"{DIM}ⓘ Showing live usage; each profile may start agy and take a while. "
-            f"For instant last-known usage: ai-accounts config set "
+            f"{DIM}ℹ️ Showing live usage; each profile may start agy and take a while. "
+            f"To cache inactive accounts: ai-accounts config set "
             f"agy_list_cached_usage true{RESET}"
         )
     return 0
