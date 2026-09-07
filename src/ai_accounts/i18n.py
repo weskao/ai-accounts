@@ -346,6 +346,21 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "ℹ️ 顯示 {cached_rows}/{inactive_count} 個非作用中帳號的上次已知用量，"
         "可能已過期。{missing_note} 更新：agy-accounts list --refresh",
     },
+    "list.agy.cached_empty": {
+        "en": "ℹ️ No saved usage yet for inactive profiles. Fetch it once: "
+        "agy-accounts list --refresh",
+        "zh-TW": "ℹ️ 非作用中帳號尚無用量紀錄。更新一次：agy-accounts list --refresh",
+    },
+    "list.agy.cached_toggle_off": {
+        "en": "Adjust in config: ai-accounts config set agy_list_cached_usage false",
+        "zh-TW": "可於設定中調整：ai-accounts config set agy_list_cached_usage false",
+    },
+    "list.agy.live_usage_hint": {
+        "en": "ℹ️ Showing live usage; each profile may start agy and take a while. "
+        "To cache inactive accounts: ai-accounts config set agy_list_cached_usage true",
+        "zh-TW": "ℹ️ 顯示即時用量；每個帳號可能需要啟動 agy，較耗時。"
+        "若要快取非作用中帳號：ai-accounts config set agy_list_cached_usage true",
+    },
     # ── validation errors (shown inline in the menu and by `config set`) ─────
     "error.bool": {"zh-TW": "需要布林值（true/false），得到 {raw}"},
     "error.int": {"zh-TW": "{key} 必須是整數{bounds}，得到 {raw}"},

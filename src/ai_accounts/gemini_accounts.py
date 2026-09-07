@@ -1093,14 +1093,32 @@ def cmd_list(
             )
         elif inactive_count:
             print(
-                f"{DIM}ℹ️ No saved usage yet for inactive profiles. Fetch it once: "
-                f"agy-accounts list --refresh{RESET}"
+                f"{DIM}"
+                + i18n.t(
+                    "list.agy.cached_empty",
+                    default="ℹ️ No saved usage yet for inactive profiles. Fetch it once: "
+                    "agy-accounts list --refresh",
+                )
+                + RESET
+            )
+        if inactive_count:
+            print(
+                f"{DIM}"
+                + i18n.t(
+                    "list.agy.cached_toggle_off",
+                    default="Adjust in config: ai-accounts config set agy_list_cached_usage false",
+                )
+                + RESET
             )
     elif fetch_usage and not only_active:
         print(
-            f"{DIM}ℹ️ Showing live usage; each profile may start agy and take a while. "
-            f"To cache inactive accounts: ai-accounts config set "
-            f"agy_list_cached_usage true{RESET}"
+            f"{DIM}"
+            + i18n.t(
+                "list.agy.live_usage_hint",
+                default="ℹ️ Showing live usage; each profile may start agy and take a while. "
+                "To cache inactive accounts: ai-accounts config set agy_list_cached_usage true",
+            )
+            + RESET
         )
     return 0
 
