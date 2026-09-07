@@ -133,6 +133,21 @@ To query only the selected Antigravity account, use:
 agy-accounts usage
 ```
 
+### Fast Antigravity lists
+
+Antigravity can only report quota for the live credential session, so a live
+`agy-accounts list` must check profiles one at a time. To show the last
+successful readings immediately, enable cached-list mode:
+
+```sh
+ai-accounts config set agy_list_cached_usage true
+agy-accounts list --refresh  # populate or update the saved readings
+agy-accounts list            # immediate; shows when the readings were fetched
+```
+
+Cached readings can be stale. The list labels this mode and repeats the refresh
+command; leave the setting off when every listing must fetch live quota.
+
 ## Profile storage
 
 Saved profiles and shared settings live under `~/.ai-accounts`:
@@ -150,10 +165,10 @@ Saved profiles and shared settings live under `~/.ai-accounts`:
 ```
 
 `antigravity/usage-cache.json` holds the last quota reading seen for each agy
-profile — percentages and reset times, no credentials (see below for why it is
-kept). Profile JSON files do contain live credentials: do not commit, publish,
-or share this directory. Writes use owner-only permissions and atomic replacement where
-the provider format allows it.
+profile — quota windows, plan and timestamp, but no credentials (see below for
+why it is kept). Profile JSON files do contain live credentials: do not commit,
+publish, or share this directory. Writes use owner-only permissions and atomic
+replacement where the provider format allows it.
 
 Provider-native legacy stores such as `~/.codex/accounts` and
 `~/.claude/accounts` are moved into the central directory on first use. Override

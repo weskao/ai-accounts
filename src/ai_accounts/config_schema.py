@@ -256,6 +256,14 @@ FIELDS: tuple[Field, ...] = (
         group="Provider behavior",
     ),
     Field(
+        key="agy_list_cached_usage",
+        type=bool,
+        default=False,
+        label="Antigravity cached list",
+        help="Show the last successful quota readings for an immediate list. They may be stale; refresh them with agy-accounts list --refresh.",
+        group="Provider behavior",
+    ),
+    Field(
         key="token_refresh",
         type=bool,
         default=True,

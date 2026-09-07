@@ -66,6 +66,23 @@ class _ConfigFileMixin(unittest.TestCase):
 class AllFiveToolsConfigDispatchTest(_ConfigFileMixin):
     """AC2: every tool accepts config / config get / config set."""
 
+    def test_cached_list_setting_is_shared_and_menu_explains_refresh(self):
+        from ai_accounts import config_menu, config_schema
+
+        key = "agy_list_cached_usage"
+        self.assertFalse(autoswitch.load_config()[key])
+        self.assertEqual(self._main(ai_accounts, ["config", "set", key, "true"])[0], 0)
+        self.assertTrue(autoswitch.config_flag(key))
+        self.assertIn("True", self._main(gemini_accounts, ["config", "get", key])[1])
+        self.assertEqual(self._main(ai_accounts, ["config", "set", key, "invalid"])[0], 1)
+        self.assertTrue(autoswitch.config_flag(key))
+        cursor = next(i for i, field in enumerate(config_schema.FIELDS) if field.key == key)
+        for language in ("en", "zh-TW"):
+            values = {**config_schema.defaults(), key: True, "language": language}
+            output = "\n".join(config_menu.render("config", config_schema.FIELDS, values, cursor))
+            self.assertIn("agy-accounts list --refresh", output)
+            self.assertIn(config_schema.field(key).display_label(language), output)
+
     def _main(self, module, argv):
         buf_out, buf_err = io.StringIO(), io.StringIO()
         with redirect_stdout(buf_out), redirect_stderr(buf_err):

@@ -81,7 +81,8 @@ USAGE
   agy-accounts save [<name>]         Save the current login as a reusable profile;
                                      no name = derive it from the active account's
                                      email (needs one quota lookup)
-  agy-accounts list                  List saved profiles (table view)
+  agy-accounts list [--refresh]      List saved profiles (table view); --refresh
+                                     fetches live quota when cached-list mode is on
   agy-accounts usage                 Show only the active account's quota row
   agy-accounts switch [<name>]       Switch by name; no name = interactive picker
   agy-accounts remove [<name>]       Delete by name; no name = interactive picker
@@ -920,7 +921,9 @@ def _validated_usage(
     return usage
 
 
-def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
+def cmd_list(
+    *, fetch_usage: bool = True, only_active: bool = False, refresh: bool = False
+) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
@@ -953,6 +956,14 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
             primary = active_profile if active_profile in group else group[0]
             same_account_profiles.update(p for p in group if p != primary)
 
+    cached_list = (
+        fetch_usage
+        and not only_active
+        and not refresh
+        and autoswitch.config_flag("agy_list_cached_usage")
+    )
+    usage_cache = _read_usage_cache() if cached_list else {}
+    cached_rows = 0
     empty_usage = gemini_usage.UsageSnapshot(
         None, None, None, None, None, None, None, None
     )
@@ -963,7 +974,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
     restore_text = active_text
     spinner = Spinner("Fetching Antigravity usage…")
     try:
-        with spinner if fetch_usage else nullcontext():
+        with spinner if fetch_usage and not cached_list else nullcontext():
             for index, (profile_path, claims) in enumerate(profile_claims, 1):
                 name = profile_path.stem
                 is_active = profile_path == active_profile
@@ -975,7 +986,10 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
                     else f"{DIM}—{RESET}"
                 )
                 usage = empty_usage
-                if fetch_usage:
+                if cached_list:
+                    usage = _cached_snapshot(name, usage_cache) or empty_usage
+                    cached_rows += usage is not empty_usage
+                elif fetch_usage:
                     spinner.update(
                         f"Fetching Antigravity usage… {DIM}({index}/{len(profile_claims)}){RESET} {MAGENTA}{name}{RESET}"
                     )
@@ -993,7 +1007,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
                     # Keep autoswitch readings for aliases too, without another
                     # agy launch or writing their stale tokens into the keyring.
                     if usage is not empty_usage and usage.error is None:
-                        _cache_usage(name, _worst_window(usage))
+                        _cache_snapshot(name, usage)
                     if refreshed_text is not None:
                         refreshed = json.loads(refreshed_text)
                         saved = json.loads(profile_text)
@@ -1025,13 +1039,36 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
                     }
                 )
     finally:
-        _restore_cli_auth(restore_text)
+        if fetch_usage and not cached_list:
+            _restore_cli_auth(restore_text)
 
     if only_active:
         print(f"{BOLD}Current Antigravity account{RESET}")
     else:
         print(f"{BOLD}Saved Antigravity profiles{RESET}  {DIM}({len(rows)}){RESET}")
     _print_accounts_table(rows)
+    if cached_list:
+        if cached_rows:
+            missing = len(rows) - cached_rows
+            known = f"{cached_rows}/{len(rows)} profile(s)"
+            suffix = f" {missing} has no saved reading." if missing == 1 else (
+                f" {missing} have no saved readings." if missing else ""
+            )
+            print(
+                f"{DIM}ⓘ Showing last-known usage for {known}; it may be stale.{suffix} "
+                f"Refresh: agy-accounts list --refresh{RESET}"
+            )
+        else:
+            print(
+                f"{DIM}ⓘ No saved usage yet. Fetch it once: "
+                f"agy-accounts list --refresh{RESET}"
+            )
+    elif fetch_usage and not only_active:
+        print(
+            f"{DIM}ⓘ Showing live usage; each profile may start agy and take a while. "
+            f"For instant last-known usage: ai-accounts config set "
+            f"agy_list_cached_usage true{RESET}"
+        )
     return 0
 
 
@@ -1428,7 +1465,9 @@ def _cache_usage(name: str, window: UsageWindow | None) -> None:
     if window is None:
         return
     cache = _read_usage_cache()
+    previous = cache.get(name)
     cache[name] = {
+        **(previous if isinstance(previous, dict) else {}),
         "used": window.percentage,
         "reset_time": window.reset_time,
         "at": int(time.time()),
@@ -1437,6 +1476,88 @@ def _cache_usage(name: str, window: UsageWindow | None) -> None:
         atomic_write_json(_usage_cache_file(), cache)
     except OSError:
         pass
+
+
+def _cache_snapshot(name: str, snapshot: gemini_usage.UsageSnapshot) -> None:
+    """Store a successful list result without putting credentials on disk."""
+    if snapshot.error is not None:
+        return
+
+    def pack(window: UsageWindow | None) -> JsonDict | None:
+        if window is None:
+            return None
+        return {
+            "percentage": window.percentage,
+            "reset_time": window.reset_time,
+            "window_minutes": window.window_minutes,
+        }
+
+    cache = _read_usage_cache()
+    window = _worst_window(snapshot)
+    profile = _profile_file(name)
+    cache[name] = {
+        "identity": _identity_key(_read_claims(profile)) if profile is not None else None,
+        "used": None if window is None else window.percentage,
+        "reset_time": None if window is None else window.reset_time,
+        "at": int(time.time()),
+        "snapshot": {
+            "gemini_weekly": pack(snapshot.gemini_weekly),
+            "gemini_session": pack(snapshot.gemini_session),
+            "other_weekly": pack(snapshot.other_weekly),
+            "other_session": pack(snapshot.other_session),
+            "email": snapshot.email,
+            "plan": snapshot.plan,
+            "refreshed_at": snapshot.refreshed_at,
+        },
+    }
+    try:
+        atomic_write_json(_usage_cache_file(), cache)
+    except OSError:
+        pass
+
+
+def _cached_snapshot(
+    name: str, cache: JsonDict
+) -> gemini_usage.UsageSnapshot | None:
+    """A saved list result, or ``None`` when it is missing or malformed."""
+    entry = cache.get(name)
+    saved = entry.get("snapshot") if isinstance(entry, dict) else None
+    if not isinstance(saved, dict):
+        return None
+    profile = _profile_file(name)
+    identity = _identity_key(_read_claims(profile)) if profile is not None else None
+    if identity is None or entry.get("identity") != identity:
+        return None
+
+    def unpack(value: object) -> UsageWindow | None:
+        if not isinstance(value, dict):
+            return None
+        percentage = value.get("percentage")
+        reset_time = value.get("reset_time")
+        minutes = value.get("window_minutes")
+        if (
+            not isinstance(percentage, int)
+            or isinstance(percentage, bool)
+            or not 0 <= percentage <= 100
+            or (reset_time is not None and not isinstance(reset_time, int))
+            or (minutes is not None and not isinstance(minutes, int))
+        ):
+            return None
+        return UsageWindow(percentage, reset_time, minutes)
+
+    refreshed_at = saved.get("refreshed_at")
+    if not isinstance(refreshed_at, int) or isinstance(refreshed_at, bool):
+        return None
+    return gemini_usage.UsageSnapshot(
+        unpack(saved.get("gemini_weekly")),
+        unpack(saved.get("gemini_session")),
+        unpack(saved.get("other_weekly")),
+        unpack(saved.get("other_session")),
+        _string(saved.get("email")),
+        _string(saved.get("plan")),
+        refreshed_at,
+        None,
+    )
 
 
 def _cached_used_pct(name: str, cache: JsonDict) -> int | None:
@@ -1776,7 +1897,10 @@ def main(argv: list[str] | None = None) -> int:
     if command == "save":
         return cmd_save(rest[0] if rest else None)
     if command == "list":
-        return cmd_list()
+        if rest and rest != ["--refresh"]:
+            log_red("Usage: agy-accounts list [--refresh]")
+            return 1
+        return cmd_list(refresh=bool(rest))
     if command == "usage":
         return cmd_list(only_active=True)
     if command == "switch":

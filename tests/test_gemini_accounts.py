@@ -421,6 +421,65 @@ class UsageTests(unittest.TestCase):
 
 
 class ProfileCommandTests(_HomeMixin):
+    def test_cached_cli_is_read_only_and_config_refresh_override_works(self):
+        auth = _creds("test-id", "user@example.com")
+        profile = self.write_profile("work", auth)
+        self.set_active(auth)
+        self.mark_current("work")
+        with mock.patch.object(ga, "go_keyring_available", return_value=(True, "")):
+            self.assertEqual(self.quiet(ga.main, ["config", "set", "agy_list_cached_usage", "true"]), 0)
+            ga._cache_snapshot("work", _usage("user@example.com"))
+            before = profile.read_bytes()
+            with (
+                mock.patch.object(gu, "fetch_usage") as fetch,
+                mock.patch.object(ga, "_write_cli_auth_text") as write,
+                mock.patch.object(ga, "_delete_cli_auth") as delete,
+                mock.patch.object(ga, "Spinner") as spinner,
+            ):
+                _, output, _ = self.capture(ga.main, ["list"])
+                fetch.assert_not_called()
+                write.assert_not_called()
+                delete.assert_not_called()
+                spinner.return_value.__enter__.assert_not_called()
+            self.assertEqual(profile.read_bytes(), before)
+            self.assertIn("25%", output)
+            self.assertIn("last-known", output)
+            for command in (["list", "--refresh"], ["usage"]):
+                with mock.patch.object(gu, "fetch_usage", return_value=_usage("user@example.com")) as fetch:
+                    self.assertEqual(self.quiet(ga.main, command), 0)
+                    fetch.assert_called_once()
+            self.quiet(ga.main, ["config", "set", "agy_list_cached_usage", "false"])
+            with mock.patch.object(gu, "fetch_usage", return_value=_usage("user@example.com")) as fetch:
+                self.quiet(ga.main, ["list"])
+                fetch.assert_called_once()
+
+    def test_summary_update_preserves_list_snapshot_and_failed_refresh_keeps_it(self):
+        self.write_profile("work", _creds("test-id", "user@example.com"))
+        snapshot = _usage("user@example.com")
+        ga._cache_snapshot("work", snapshot)
+        ga._cache_usage("work", UsageWindow(80, 2_000_000_000, 300))
+        self.assertEqual(ga._cached_snapshot("work", ga._read_usage_cache()), snapshot)
+        self.assertEqual(ga._cached_used_pct("work", ga._read_usage_cache()), 80)
+        ga._cache_snapshot("work", _usage("user@example.com", error="unavailable"))
+        self.assertEqual(ga._cached_snapshot("work", ga._read_usage_cache()), snapshot)
+
+    def test_replaced_profile_does_not_inherit_previous_accounts_quota(self):
+        self.write_profile("work", _creds("old-id", "old@example.com"))
+        ga._cache_snapshot("work", _usage("old@example.com"))
+        self.write_profile("work", _creds("new-id", "new@example.com"))
+        self.assertIsNone(ga._cached_snapshot("work", ga._read_usage_cache()))
+
+    def test_corrupt_or_legacy_cache_is_treated_as_missing(self):
+        self.write_profile("work", _creds("test-id", "user@example.com"))
+        ga.autoswitch.save_config({"agy_list_cached_usage": True})
+        for content in ("invalid json", "[]", '{"work":{"used":50}}'):
+            with self.subTest(content=content):
+                ga._usage_cache_file().write_text(content)
+                with mock.patch.object(gu, "fetch_usage") as fetch:
+                    _, output, _ = self.capture(ga.cmd_list)
+                fetch.assert_not_called()
+                self.assertIn("No saved usage yet", output)
+
     def test_save_persists_active_keyring_session(self) -> None:
         self.set_active(_creds("sub-w", "w@x.com", refresh_token="rt-live"))
         with mock.patch.object(
@@ -475,6 +534,51 @@ class ProfileCommandTests(_HomeMixin):
         self.assertIn("refreshable", text)
         self.assertNotIn("soon", text)
         self.assertEqual(text.count("ACTIVE"), 1)
+
+    def test_list_explains_live_and_cached_usage_modes(self) -> None:
+        auth = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        self.write_profile("active", auth)
+        self.set_active(auth)
+        self.mark_current("active")
+        with (
+            mock.patch.object(ga.autoswitch, "config_flag", return_value=False),
+            mock.patch.object(ga.gemini_usage, "fetch_usage", return_value=_usage()),
+        ):
+            _, live, _ = self.capture(ga.cmd_list)
+        self.assertIn("Showing live usage", live)
+        self.assertIn("agy_list_cached_usage true", live)
+
+        with (
+            mock.patch.object(ga.autoswitch, "config_flag", return_value=True),
+            mock.patch.object(ga.gemini_usage, "fetch_usage") as fetcher,
+        ):
+            _, cached, _ = self.capture(ga.cmd_list)
+        fetcher.assert_not_called()
+        self.assertIn("Showing last-known usage for 1/1 profile(s)", cached)
+        self.assertIn("agy-accounts list --refresh", cached)
+
+    def test_cached_list_without_a_reading_explains_how_to_populate_it(self) -> None:
+        auth = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        self.write_profile("active", auth)
+        with (
+            mock.patch.object(ga.autoswitch, "config_flag", return_value=True),
+            mock.patch.object(ga.gemini_usage, "fetch_usage") as fetcher,
+        ):
+            _, output, _ = self.capture(ga.cmd_list)
+        fetcher.assert_not_called()
+        self.assertIn("No saved usage yet", output)
+        self.assertIn("agy-accounts list --refresh", output)
+
+    def test_list_refresh_forces_a_live_read_when_cached_mode_is_on(self) -> None:
+        auth = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        self.write_profile("active", auth)
+        self.set_active(auth)
+        with (
+            mock.patch.object(ga.autoswitch, "config_flag", return_value=True),
+            mock.patch.object(ga.gemini_usage, "fetch_usage", return_value=_usage()) as fetcher,
+        ):
+            self.assertEqual(self.quiet(lambda: ga.cmd_list(refresh=True)), 0)
+        fetcher.assert_called_once_with(timeout=8)
 
     def test_list_hides_columns_unavailable_from_agy(self) -> None:
         auth = _creds("sub-a", "a@x.com", refresh_token="rt-a")

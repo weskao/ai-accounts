@@ -863,6 +863,7 @@ def fallback_menu(title: str, fields: Sequence[config_schema.Field] = config_sch
         log_red(f'❌ {i18n.t("menu.bad_number", default="Enter one of the setting numbers shown above.")}')
         return 1
     field = fields[int(selection) - 1]
+    print(f"{DIM}   {field.display_help()}{RESET}")
 
     hint = f" ({'/'.join(field.choices)})" if field.choices else ""
     if field.masked:
