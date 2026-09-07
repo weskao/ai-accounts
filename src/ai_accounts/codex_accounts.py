@@ -29,6 +29,7 @@ from ._present import (
     accounts_table,
     choose_and_run,
     choose_profile,
+    format_help,
     ok,
     panel,
     success_panel,
@@ -1282,7 +1283,7 @@ def cmd_login_switch(name: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
-        print(i18n.t("help.codex", default=HELP))
+        print(format_help(i18n.t("help.codex", default=HELP)))
         return 0
 
     command, *rest = argv
@@ -1318,7 +1319,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_login_switch(rest[0])
 
     log_red(f"❌ Unknown command: {command}")
-    print(i18n.t("help.codex", default=HELP))
+    print(format_help(i18n.t("help.codex", default=HELP)))
     return 1
 
 

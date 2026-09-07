@@ -20,6 +20,7 @@ from ._present import (
     accounts_table,
     choose_and_run,
     choose_profile,
+    format_help,
     ok,
     panel,
     success_panel,
@@ -1904,7 +1905,7 @@ def _render_autoswitch(
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
-        print(i18n.t("help.agy", default=HELP))
+        print(format_help(i18n.t("help.agy", default=HELP)))
         return 0
 
     # `config` edits the shared ~/.ai-accounts/config.json, not anything
@@ -1954,7 +1955,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_login_switch(rest[0])
 
     log_red(f"❌ Unknown command: {command}")
-    print(i18n.t("help.agy", default=HELP))
+    print(format_help(i18n.t("help.agy", default=HELP)))
     return 1
 
 

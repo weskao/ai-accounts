@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config_menu as cm
 from . import _present, i18n
-from ._utils import BOLD, CYAN, RESET, Spinner, log_red
+from ._utils import BLUE, BOLD, CYAN, GREEN, MAGENTA, RESET, YELLOW, Spinner, log_red
 
 # (display label, importable module). Each module is `python -m`-runnable and
 # understands the same subcommand set as the others.
@@ -91,8 +91,20 @@ only the local `setup` action and otherwise rejects extra arguments.
 """
 
 
+# One icon + accent color per provider, so five stacked `list`/`switch`/etc.
+# blocks stay visually distinct instead of five identical cyan rules.
+_PROVIDER_STYLE = {
+    "codex-accounts": ("🤖", CYAN),
+    "claude-accounts": ("✨", MAGENTA),
+    "agy-accounts": ("🌌", BLUE),
+    "grok-accounts": ("⚡", YELLOW),
+    "vibe-accounts": ("🎨", GREEN),
+}
+
+
 def _header(label: str) -> None:
-    print(f"{BOLD}{CYAN}━━━ {label} ━━━{RESET}")
+    icon, accent = _PROVIDER_STYLE.get(label, ("▶", CYAN))
+    print(f"{BOLD}{accent}━━━ {icon} {label} ━━━{RESET}")
 
 
 def _run_list(module: str) -> subprocess.CompletedProcess[str]:
@@ -211,7 +223,7 @@ def cmd_autoswitch_setup() -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
-        print(i18n.t("help.ai_accounts", default=HELP))
+        print(_present.format_help(i18n.t("help.ai_accounts", default=HELP)))
         return 0
 
     command = argv[0]
@@ -242,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if command not in _COMMANDS:
         log_red(f"❌ Unknown command: {command}")
-        print(i18n.t("help.ai_accounts", default=HELP))
+        print(_present.format_help(i18n.t("help.ai_accounts", default=HELP)))
         return 1
 
     if command == "list":

@@ -292,8 +292,9 @@ class GrokAccountsTests(unittest.TestCase):
             rc = ga.main(["help"])
 
         self.assertEqual(rc, 0)
-        self.assertIn("grok-accounts save [<name>]", out.getvalue())
-        self.assertIn("-h | --help | help", out.getvalue())
+        text = _ANSI_RE.sub("", out.getvalue())
+        self.assertIn("grok-accounts save [<name>]", text)
+        self.assertIn("-h | --help | help", text)
 
     def test_unknown_command_still_rejected_after_reshape(self) -> None:
         out, err = io.StringIO(), io.StringIO()

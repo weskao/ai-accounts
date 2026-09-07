@@ -16,6 +16,7 @@ from unittest import mock
 from ai_accounts import _utils as u
 from ai_accounts import gemini_accounts as ga
 from ai_accounts import gemini_usage as gu
+from ai_accounts._present import _ANSI_RE
 from ai_accounts.usage_format import UsageWindow
 
 
@@ -816,9 +817,10 @@ class ProfileCommandTests(_HomeMixin):
     def test_help_alias_prints_help(self) -> None:
         result, output, _ = self.capture(lambda: ga.main(["help"]))
         self.assertEqual(result, 0)
-        self.assertIn("agy-accounts save [<name>]", output)
-        self.assertIn("agy-accounts remove [<name>]", output)
-        self.assertIn("-h | --help | help", output)
+        text = _ANSI_RE.sub("", output)
+        self.assertIn("agy-accounts save [<name>]", text)
+        self.assertIn("agy-accounts remove [<name>]", text)
+        self.assertIn("-h | --help | help", text)
 
     def test_remove_current_profile_clears_marker(self) -> None:
         self.write_profile("work", _creds("sub", "a@x.com"))

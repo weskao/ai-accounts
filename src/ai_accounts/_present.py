@@ -29,7 +29,7 @@ import unicodedata
 from typing import Callable, Sequence
 
 from . import usage_format
-from ._utils import BOLD, CYAN, DIM, GREEN, RESET, RED, YELLOW, log_red, log_yellow
+from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RESET, RED, YELLOW, log_red, log_yellow
 
 # ANSI escape stripper — the single source of truth for measuring the visible
 # width of a colored cell. Sibling tools that still keep a local copy migrate
@@ -227,6 +227,99 @@ def panel(
     for line in lines or [f"{DIM}(none){RESET}"]:
         print(f"{accent}│{RESET}  {line}")
     print(f"{accent}└{'─' * (width - 1)}┘{RESET}")
+
+
+# Section-header words across every module's HELP, English and zh-TW alike —
+# a closed set (six modules, two languages) rather than a structural guess.
+# Only USAGE/EXAMPLES hold command entries; PLATFORM/MODEL hold hand-wrapped
+# prose at the same 2-space indent, so command-line coloring is gated to the
+# first two sections specifically rather than to "any 2-space-indent line".
+_HELP_COMMAND_SECTIONS = frozenset({"USAGE", "EXAMPLES", "用法", "範例"})
+_HELP_SECTION_WORDS = _HELP_COMMAND_SECTIONS | {"PLATFORM", "MODEL", "平台", "模型"}
+_HELP_PLACEHOLDER_RE = re.compile(r"(\[[^\]]*\]|<[^>]*>)")
+
+
+def format_help(text: str) -> str:
+    """Color a ``HELP`` block for a friendlier ``--help``.
+
+    A pure text transform over the fixed layout every module's ``HELP``
+    constant already uses — title line, section headers, and (within
+    USAGE/EXAMPLES only) two-space-indented command entries. ANSI escapes add
+    no visible width, so the existing hand-aligned padding still lines up
+    untouched; everything else (prose sections, wrapped continuation lines)
+    is left exactly as written.
+    """
+    lines = []
+    section: str | None = None
+    for index, line in enumerate(text.split("\n")):
+        stripped = line.strip()
+        if index == 0 and " — " in line:
+            prog, _, tagline = line.partition(" — ")
+            lines.append(f"{BOLD}{MAGENTA}{prog}{RESET} — {tagline}")
+        elif stripped in _HELP_SECTION_WORDS:
+            section = stripped
+            lines.append(f"{BOLD}{YELLOW}{line}{RESET}")
+        elif (
+            section in _HELP_COMMAND_SECTIONS
+            and line.startswith("  ")
+            and not line.startswith("   ")
+            and stripped
+        ):
+            lines.append(_colorize_help_command(line))
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _colorize_help_command(line: str) -> str:
+    """One command entry from USAGE/EXAMPLES, command portion in cyan (any
+    ``<placeholder>``/``[optional]`` token dimmed within it), description
+    (if any trails on the same line) left as-is."""
+    indent, rest = line[:2], line[2:]
+    command, description = _split_help_command(rest)
+    return f"{indent}{CYAN}{_dim_help_placeholders(command)}{RESET}{description}"
+
+
+# Every character a command token is ever built from (prog/subcommand names,
+# flags, placeholder brackets, the `|` alternatives separator). Anything else
+# — a capital letter, backtick, CJK character, punctuation — only ever shows
+# up once the description has started.
+_HELP_COMMAND_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_.-<>[]|")
+
+
+def _split_help_command(rest: str) -> tuple[str, str]:
+    """``rest`` (a USAGE/EXAMPLES line past its 2-space indent) split into its
+    command portion and trailing description.
+
+    Some entries pad the description to a shared column with 2+ spaces
+    (``list                   List profiles``); others, where the command
+    already reaches that column, separate it with just one
+    (``refresh [<name>|--all] Refresh tokens...``) — so the split can't key
+    off gap width. Instead it walks left to right, tracking ``[...]``/``<...>``
+    bracket depth (so a placeholder's internal space, e.g. ``[--interval N]``,
+    is never mistaken for a word boundary), and cuts at the first depth-0
+    character outside :data:`_HELP_COMMAND_CHARS` — a shape no command token
+    in either language ever has, but every description's first word does
+    (capitalized in English, a CJK glyph in zh-TW, or occasionally a backtick
+    quoting a command name, as in `` `who` 的別名``). No such character means
+    the whole line is command (it wraps its description onto the next,
+    deeper-indented line instead).
+    """
+    depth = 0
+    for i, ch in enumerate(rest):
+        if ch == " ":
+            continue
+        if depth == 0 and ch not in _HELP_COMMAND_CHARS:
+            return rest[:i], rest[i:]
+        if ch in "[<":
+            depth += 1
+        elif ch in "]>":
+            depth = max(depth - 1, 0)
+    return rest, ""
+
+
+def _dim_help_placeholders(text: str) -> str:
+    return _HELP_PLACEHOLDER_RE.sub(lambda m: f"{DIM}{m.group(0)}{RESET}{CYAN}", text)
 
 
 def usage_color(percentage: int) -> str:
