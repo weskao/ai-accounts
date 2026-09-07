@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -408,6 +409,27 @@ class ProfileCommandTests(_HomeMixin):
         self.assertIn("5H USED", text)
         self.assertIn("1W USED", text)
         self.assertEqual(text.count("ACTIVE"), 1)
+
+    def test_list_fetches_concurrently_without_swapping_rows(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        self.write_profile("b", _oauth(access="at-b", refresh="rt-b"))
+        both_started = threading.Barrier(2)
+
+        def fetch(token, **kwargs):
+            both_started.wait(timeout=2)
+            return cu.UsageSnapshot(
+                cu.UsageWindow(12 if token == "at-a" else 73, 2_000_000_000, 300),
+                None, None, 2_000_000_000, None,
+            )
+
+        with mock.patch.object(cu, "fetch_usage", side_effect=fetch), mock.patch.object(
+            ca, "_print_accounts_table"
+        ) as table:
+            self.assertEqual(self.quiet(ca.cmd_list), 0)
+        rows = table.call_args.args[0]
+        self.assertEqual([row["profile"] for row in rows], ["a", "b"])
+        self.assertIn("12%", rows[0]["usage_5h"])
+        self.assertIn("73%", rows[1]["usage_5h"])
 
     def test_list_hides_usage_columns_when_all_empty(self) -> None:
         self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))

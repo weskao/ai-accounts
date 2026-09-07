@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -1120,6 +1121,28 @@ class UsageRequestTests(_CodexHomeMixin):
         self.assertIn("34%", text)
         fetch_usage.assert_called_once()
         oauth_refresh.assert_not_called()
+
+    def test_list_fetches_concurrently_without_swapping_rows(self):
+        self.write_profile("a", _auth_payload("acct-a", "a@x.com"))
+        self.write_profile("b", _auth_payload("acct-b", "b@x.com"))
+        both_started = threading.Barrier(2)
+
+        def fetch(path):
+            both_started.wait(timeout=2)
+            return usage_format.UsageSnapshot(
+                usage_format.UsageWindow(12 if path.stem == "a" else 73, 2_000_000_000, 300),
+                None, 2_000_000_000, None,
+            )
+
+        with mock.patch.object(usage_format, "fetch_usage", side_effect=fetch), mock.patch.object(
+            ca, "_print_accounts_table"
+        ) as table:
+            result, _, _ = self.run_capture(ca.cmd_list)
+        self.assertEqual(result, 0)
+        rows = table.call_args.args[0]
+        self.assertEqual([row["profile"] for row in rows], ["a", "b"])
+        self.assertIn("12%", rows[0]["usage_5h"])
+        self.assertIn("73%", rows[1]["usage_5h"])
 
     def test_list_shows_chatgpt_plan_type(self):
         # chatgpt_plan_type from the namespaced JWT claim surfaces as a PLAN
