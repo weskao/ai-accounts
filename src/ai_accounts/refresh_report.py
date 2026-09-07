@@ -98,10 +98,7 @@ def parse(output: str) -> list[Revoked]:
                     records[key] = Revoked(
                         provider,
                         profile,
-                        i18n.t(
-                            "notify.revoked.reason.missing",
-                            default="refresh token missing or rejected",
-                        ),
+                        i18n.t("notify.revoked.reason.missing"),
                     )
             pending = None
             continue

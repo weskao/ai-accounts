@@ -1052,39 +1052,19 @@ def cmd_list(
     if cached_list:
         inactive_count = sum(p != active_profile for p, _ in profile_claims)
         if active_profile is not None:
-            print(
-                f"{DIM}"
-                + i18n.t(
-                    "list.agy.live_queried",
-                    default="ℹ️ Current account queried live; errors appear in UPDATED.",
-                )
-                + RESET
-            )
+            print(f"{DIM}" + i18n.t("list.agy.live_queried") + RESET)
         if cached_rows:
             missing = inactive_count - cached_rows
             if missing == 1:
-                missing_note = i18n.t(
-                    "list.agy.cached_missing.one",
-                    default=" {missing} has no saved reading.",
-                    missing=missing,
-                )
+                missing_note = i18n.t("list.agy.cached_missing.one", missing=missing)
             elif missing:
-                missing_note = i18n.t(
-                    "list.agy.cached_missing.many",
-                    default=" {missing} have no saved readings.",
-                    missing=missing,
-                )
+                missing_note = i18n.t("list.agy.cached_missing.many", missing=missing)
             else:
                 missing_note = ""
             print(
                 f"{DIM}"
                 + i18n.t(
                     "list.agy.cached_usage",
-                    default=(
-                        "ℹ️ Showing last-known usage for {cached_rows}/{inactive_count} "
-                        "inactive profile(s); it may be stale.{missing_note} "
-                        "Refresh: agy-accounts list --refresh"
-                    ),
                     cached_rows=cached_rows,
                     inactive_count=inactive_count,
                     missing_note=missing_note,
@@ -1092,34 +1072,11 @@ def cmd_list(
                 + RESET
             )
         elif inactive_count:
-            print(
-                f"{DIM}"
-                + i18n.t(
-                    "list.agy.cached_empty",
-                    default="ℹ️ No saved usage yet for inactive profiles. Fetch it once: "
-                    "agy-accounts list --refresh",
-                )
-                + RESET
-            )
+            print(f"{DIM}" + i18n.t("list.agy.cached_empty") + RESET)
         if inactive_count:
-            print(
-                f"{DIM}"
-                + i18n.t(
-                    "list.agy.cached_toggle_off",
-                    default="Adjust in config: ai-accounts config set agy_list_cached_usage false",
-                )
-                + RESET
-            )
+            print(f"{DIM}" + i18n.t("list.agy.cached_toggle_off") + RESET)
     elif fetch_usage and not only_active:
-        print(
-            f"{DIM}"
-            + i18n.t(
-                "list.agy.live_usage_hint",
-                default="ℹ️ Showing live usage; each profile may start agy and take a while. "
-                "To cache inactive accounts: ai-accounts config set agy_list_cached_usage true",
-            )
-            + RESET
-        )
+        print(f"{DIM}" + i18n.t("list.agy.live_usage_hint") + RESET)
     return 0
 
 
