@@ -68,3 +68,28 @@ jobs:
                   "vibe-accounts",
               ):
                   subprocess.run([scripts / f"{command}{suffix}", "--help"], check=True)
+
+  notify-telegram:
+    needs: test
+    if: ${{ failure() && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Telegram
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          ci_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          message="🚨 <b>CI failed</b>
+
+          <b>Repository:</b> <code>$GITHUB_REPOSITORY</code>
+          <b>Branch:</b> <code>$GITHUB_REF_NAME</code>
+          <b>Commit:</b> <code>${GITHUB_SHA::7}</code>
+
+          <a href=\"$ci_url\">Open failed CI run</a>"
+          curl --fail --silent --show-error \
+            --data-urlencode "chat_id=$CHAT_ID" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "disable_web_page_preview=true" \
+            --data-urlencode "text=$message" \
+            "https://api.telegram.org/bot$TOKEN/sendMessage"

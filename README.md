@@ -218,6 +218,11 @@ result confirms registration, not successful execution or quota availability.
 Windows hook commands quote interpreter paths containing spaces; re-run setup
 to update hooks installed by an older version.
 
+When CI fails after a push, GitHub Actions sends a formatted Telegram alert
+with the repository, branch, short commit ID, and a clickable workflow URL.
+Repository secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` must be
+configured before the alert can be delivered.
+
 Remove only the timer with:
 
 ```sh
