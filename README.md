@@ -327,10 +327,11 @@ next tick and never reported here.
 
 ## Language
 
-Notifications, the interactive config menu, and `agy-accounts list`'s
-usage-freshness footer notes are localized. English (`en`)
-and Traditional Chinese (`zh-TW`) are available; the default follows the OS
-locale and falls back to English for a locale with no translation:
+Notifications, the interactive config menu, `agy-accounts list`'s
+usage-freshness footer notes, and every tool's `help`/`-h`/`--help` output are
+localized. English (`en`) and Traditional Chinese (`zh-TW`) are available; the
+default follows the OS locale and falls back to English for a locale with no
+translation:
 
 ```sh
 ai-accounts config set language zh-TW

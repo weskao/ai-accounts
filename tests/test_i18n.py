@@ -106,6 +106,8 @@ class CatalogueTests(unittest.TestCase):
         for msgid, table in i18n.MESSAGES.items():
             if msgid.split(".", 1)[0] in ("config", "group", "menu", "error", "value"):
                 continue  # English for these lives in config_schema.FIELDS
+            if msgid.split(".", 1)[0] == "help":
+                continue  # English for these lives in each module's HELP constant
             with self.subTest(msgid=msgid):
                 self.assertIn(i18n.FALLBACK, table)
 

@@ -22,7 +22,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import autoswitch, usage_format
+from . import autoswitch, i18n, usage_format
 from . import config_menu as cm
 from ._present import (
     _ANSI_RE as _ANSI_RE,
@@ -1282,7 +1282,7 @@ def cmd_login_switch(name: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
-        print(HELP)
+        print(i18n.t("help.codex", default=HELP))
         return 0
 
     command, *rest = argv
@@ -1318,7 +1318,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_login_switch(rest[0])
 
     log_red(f"❌ Unknown command: {command}")
-    print(HELP)
+    print(i18n.t("help.codex", default=HELP))
     return 1
 
 

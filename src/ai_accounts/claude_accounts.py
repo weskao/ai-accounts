@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final
 
-from . import autoswitch, claude_usage
+from . import autoswitch, claude_usage, i18n
 from . import config_menu as cm
 from .usage_format import (
     capitalize_first,
@@ -1207,7 +1207,7 @@ def _restore_active_oauth(oauth: dict | None) -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
-        print(HELP)
+        print(i18n.t("help.claude", default=HELP))
         return 0
 
     command, *rest = argv
@@ -1243,7 +1243,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_login_switch(rest[0])
 
     log_red(f"❌ Unknown command: {command}")
-    print(HELP)
+    print(i18n.t("help.claude", default=HELP))
     return 1
 
 

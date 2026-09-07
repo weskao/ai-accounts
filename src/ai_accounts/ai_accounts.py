@@ -17,7 +17,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config_menu as cm
-from . import _present
+from . import _present, i18n
 from ._utils import BOLD, CYAN, RESET, Spinner, log_red
 
 # (display label, importable module). Each module is `python -m`-runnable and
@@ -211,7 +211,7 @@ def cmd_autoswitch_setup() -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
-        print(HELP)
+        print(i18n.t("help.ai_accounts", default=HELP))
         return 0
 
     command = argv[0]
@@ -242,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if command not in _COMMANDS:
         log_red(f"❌ Unknown command: {command}")
-        print(HELP)
+        print(i18n.t("help.ai_accounts", default=HELP))
         return 1
 
     if command == "list":

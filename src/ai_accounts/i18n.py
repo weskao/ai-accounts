@@ -347,6 +347,258 @@ MESSAGES: dict[str, dict[str, str]] = {
     "error.int": {"zh-TW": "{key} 必須是整數{bounds}，得到 {raw}"},
     "error.choice": {"zh-TW": "{key} 必須是 {choices} 之一，得到 {raw}"},
     "error.notify_channel": {"zh-TW": "無效的通知方式 {channel}：必須是 {channels} 之一"},
+    # ── CLI help text (translations only; English lives in each module's
+    # HELP constant — same asymmetric convention as the config labels above:
+    # `t(msgid, default=HELP)` falls back to that English text untouched) ────
+    "help.ai_accounts": {
+        "zh-TW": """ai-accounts — 一次驅動所有 AI 帳號工具
+
+用法
+  ai-accounts                        顯示這份說明（可用的指令）
+  ai-accounts list                   列出所有提供者的帳號（各提供者並行執行）
+  ai-accounts who | current          顯示每個提供者目前作用中的帳號
+  ai-accounts usage                  只顯示每個提供者作用中帳號的用量列
+  ai-accounts refresh [<name>|--all] 重新整理每個提供者的 token
+  ai-accounts sync                   把作用中的登入同步回其帳號檔案，每個提供者都做
+  ai-accounts save [<name>]          在每個提供者儲存目前的登入；
+                                      不給名稱 = 各提供者依自己作用中帳號的
+                                      email 決定名稱（若各提供者登入的帳號不同，
+                                      名稱可能不一樣 — 這是刻意的轉發行為，不是錯誤）
+  ai-accounts switch [<name>]        切換每個提供者的帳號（互動式，一次一個）
+  ai-accounts remove [<name>]        移除每個提供者的帳號；不給名稱 = 每個提供者
+                                      依序出現互動式選擇器
+  ai-accounts login-switch <name>    重新登入並存成 <name>，每個提供者都做（互動式）
+  ai-accounts autoswitch             立即對每個提供者執行低配額自動切換檢查
+  ai-accounts autoswitch setup       一次性安裝事件掛鉤與計時器備援
+  ai-accounts config                 互動式設定選單（方向鍵操作；若 stdin
+                                      不是 TTY 則改用編號選單）
+  ai-accounts config get [key]       印出自動切換設定（或指定單一項目）；
+                                      telegram bot token 一律遮蔽
+  ai-accounts config set <key> <val> 設定單一自動切換設定項目（拒絕未知項目）
+  ai-accounts install-timer [--interval N]
+                                      向作業系統排程自動切換檢查（預設：
+                                      每 1800 秒／30 分鐘一次）
+  ai-accounts uninstall-timer       移除已排程的自動切換檢查
+  ai-accounts timer-status          回報自動切換檢查是否已排程
+  ai-accounts -h | --help | help     顯示這份說明
+
+每個指令都會轉發給 codex-accounts、claude-accounts、agy-accounts、grok-accounts 與 vibe-accounts。
+`list` 會同時執行並在每個表格完成時立即印出（最快的提供者最先顯示），
+中間以進度指示器顯示還有幾個提供者在抓取；其他每個指令都會一次對一個
+提供者執行、保留即時輸出，讓互動式選擇器與登入流程正常運作、顏色也會保留。
+指令後的任何參數（例如帳號名稱或 `--all`）都會原樣轉發給每個提供者 —
+但 `autoswitch` 之後只接受本機的 `setup` 動作，其餘多餘參數一律拒絕。
+""",
+    },
+    "help.codex": {
+        "zh-TW": """codex-accounts — 管理多組 Codex CLI 登入帳號
+
+用法
+  codex-accounts who                   顯示目前登入的 Codex 帳號
+  codex-accounts current               `who` 的別名
+  codex-accounts save [<name>]         儲存目前的登入為可重複使用的帳號；
+                                       不給名稱 = 依作用中帳號的 email 決定
+  codex-accounts list                  列出帳號與用量（不會重新整理 token）
+  codex-accounts usage                 只顯示作用中帳號的用量列
+  codex-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
+  codex-accounts autoswitch            若作用中帳號配額偏低就切換
+                                       （見 ~/.ai-accounts/config.json）
+  codex-accounts remove [<name>]       刪除已存帳號；不給名稱 = 互動式選擇器
+  codex-accounts refresh [<name>]      透過 OAuth 重新整理 token（不開瀏覽器、不登出）；
+                                       不給名稱 = 重新整理作用中登入並同步回去
+  codex-accounts refresh --all         重新整理所有已存帳號
+  codex-accounts sync                  把作用中的登入複製回對應的帳號檔案
+  codex-accounts login-switch <name>   獨立的 codex 登入並存成 <name>
+  codex-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
+  codex-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
+  codex-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  codex-accounts -h | --help | help    顯示這份說明
+
+範例
+  codex-accounts login-switch personal
+  codex-accounts login-switch work
+  codex-accounts list
+  codex-accounts switch
+  codex-accounts switch personal
+  codex-accounts refresh --all
+  codex-accounts who
+
+帳號存放於 ~/.ai-accounts/codex/accounts/<name>.json（可用
+$CODEX_ACCOUNT_DIR 覆寫）；舊的 ~/.codex/accounts 位置會自動搬移過來。
+請把這個目錄當成機密資料 — 已存帳號內含 Codex 的驗證 token。
+""",
+    },
+    "help.claude": {
+        "zh-TW": """claude-accounts — 管理多組 Claude Code 登入帳號
+
+用法
+  claude-accounts who                   顯示目前登入的 Claude 帳號
+  claude-accounts current               `who` 的別名
+  claude-accounts save [<name>]         儲存目前的登入為可重複使用的帳號；
+                                        不給名稱 = 依作用中帳號的 email 決定
+  claude-accounts list                  列出帳號與用量（不會重新整理 token）
+  claude-accounts usage                 只顯示作用中帳號的用量列
+  claude-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
+  claude-accounts autoswitch            若作用中帳號配額偏低就切換
+                                        （見 ~/.ai-accounts/config.json）
+  claude-accounts remove [<name>]       依名稱刪除；不給名稱 = 互動式選擇器
+  claude-accounts refresh [<name>]      透過 OAuth 重新整理 token（不開瀏覽器、不登出）；
+                                        不給名稱 = 重新整理作用中登入並同步回去
+  claude-accounts refresh --all         重新整理所有已存帳號
+  claude-accounts sync                  把作用中的登入複製回對應的帳號檔案
+  claude-accounts login-switch <name>   執行 `claude auth login` 並存成 <name>
+  claude-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
+  claude-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
+  claude-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  claude-accounts -h | --help | help    顯示這份說明
+
+範例
+  claude-accounts login-switch personal
+  claude-accounts login-switch work
+  claude-accounts list
+  claude-accounts switch
+  claude-accounts switch personal
+  claude-accounts refresh --all
+  claude-accounts who
+
+帳號存放於 ~/.ai-accounts/claude/accounts/<name>.json（可用
+$CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移過來。
+請把這個目錄當成機密資料 — 已存帳號內含 Claude 的 OAuth token。
+""",
+    },
+    "help.agy": {
+        "zh-TW": """agy-accounts — 管理多組 Antigravity OAuth 帳號
+
+平台
+  macOS / Windows / Linux — 官方 agy session 存放在作業系統的憑證儲存區
+  （Keychain／Credential Manager／Secret Service）。Linux 另外需要
+  libsecret 提供的 `secret-tool`。
+
+用法
+  agy-accounts who                   顯示目前選用的 Antigravity 帳號
+  agy-accounts current               `who` 的別名
+  agy-accounts save [<name>]         儲存目前的登入為可重複使用的帳號；
+                                     不給名稱 = 依作用中帳號的 email 決定
+                                     （需要查一次配額）
+  agy-accounts list [--refresh]      列出已存帳號（表格檢視）；--refresh
+                                     會在快取模式下強制抓取即時配額
+  agy-accounts usage                 只顯示作用中帳號的配額列
+  agy-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
+  agy-accounts remove [<name>]       依名稱刪除；不給名稱 = 互動式選擇器
+  agy-accounts refresh [<name>]      透過 Google OAuth 更新授權更新 token
+                                     （不開瀏覽器、不啟動 agy；失敗則改用 agy）；
+                                     不給名稱 = 重新整理作用中 session 並同步回去
+  agy-accounts refresh --all         重新整理所有已存帳號
+  agy-accounts sync                  把作用中的登入複製回對應的帳號檔案
+  agy-accounts autoswitch            配額用盡時離開作用中帳號
+                                     （沒有 agy 或 Antigravity IDE 執行時會
+                                     實際量測候選帳號；否則依上次讀到的配額排序，
+                                     完全沒有讀數的候選需要 "agy_blind_switch": true）
+  agy-accounts login-switch <name>   Antigravity Google 登入並存成 <name>
+  agy-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
+                                     （即使憑證儲存區無法使用也能運作）
+  agy-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
+  agy-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  agy-accounts -h | --help | help    顯示這份說明
+
+範例
+  agy-accounts login-switch personal
+  agy-accounts login-switch work
+  agy-accounts list
+  agy-accounts switch
+  agy-accounts switch personal
+  agy-accounts save
+  agy-accounts remove
+  agy-accounts refresh --all
+  agy-accounts who
+
+帳號存放於 ~/.ai-accounts/antigravity/accounts/<name>.json。
+請把這個目錄當成機密資料 — 已存帳號內含 Google OAuth token。
+""",
+    },
+    "help.grok": {
+        "zh-TW": """grok-accounts — 管理多組 Grok Build CLI 登入帳號
+
+用法
+  grok-accounts who                   顯示目前登入的 Grok 帳號
+  grok-accounts current               `who` 的別名
+  grok-accounts save [<name>]         儲存目前的登入；不給名稱 = 依 email 決定
+  grok-accounts list                  列出已存帳號
+  grok-accounts usage                 只顯示作用中帳號（session 與到期時間）
+  grok-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
+  grok-accounts remove [<name>]       刪除已存帳號；不給名稱 = 互動式選擇器
+  grok-accounts refresh [<name>]      更新作用中／指定帳號的 session token
+  grok-accounts refresh --all         更新所有已存帳號的 token
+  grok-accounts sync                  把作用中的登入複製回對應的帳號檔案
+  grok-accounts autoswitch            回報 grok 沒有配額 API 可供切換
+  grok-accounts login-switch <name>   全新 Grok OAuth 登入並存成 <name>
+  grok-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
+  grok-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
+  grok-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  grok-accounts -h | --help | help    顯示這份說明
+
+範例
+  grok-accounts login-switch personal
+  grok-accounts login-switch work
+  grok-accounts list
+  grok-accounts switch
+  grok-accounts switch personal
+  grok-accounts refresh --all
+  grok-accounts who
+
+模型
+  grok-4.5（旗艦版，50 萬 token 上下文）— 具備 agentic 工具呼叫、幻覺極低、
+  可調整推理強度；xAI 用於程式與其他任務的首選。
+  API：每 100 萬輸入 token $2.00，每 100 萬輸出 token $6.00。
+  消費方案：Free（每月 $0）、SuperGrok（每月 $30，解鎖 Grok 4.5 與更高限額）。
+  Grok Build CLI 文件：docs.x.ai/build/
+
+帳號存放於 ~/.ai-accounts/grok/accounts/<name>.json（可用
+$GROK_ACCOUNT_DIR 覆寫）。請把這個目錄當成機密資料 — 帳號內含 OAuth token。
+`refresh` 會對憑證自身 issuer 探索到的 token 端點執行標準 OIDC 更新授權 —
+沒有任何內容是寫死的。當該授權需要 ai-accounts 沒有的 client secret 時，
+會改為執行 `grok models`（讓官方 CLI 自行輪替憑證）。
+`switch` 在還原的 token 已過期或即將於 5 分鐘內過期時會就地重新整理。
+""",
+    },
+    "help.vibe": {
+        "zh-TW": """vibe-accounts — 管理多組 Mistral Vibe CLI 登入帳號
+
+用法
+  vibe-accounts who                   顯示目前登入的 Vibe 帳號
+  vibe-accounts current               `who` 的別名
+  vibe-accounts save [<name>]         儲存目前的登入；不給名稱 = 依金鑰決定
+  vibe-accounts list                  列出已存帳號
+  vibe-accounts usage                 只顯示作用中帳號
+  vibe-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
+  vibe-accounts remove [<name>]       刪除已存帳號；不給名稱 = 互動式選擇器
+  vibe-accounts refresh [<name>]      驗證／更新作用中或指定帳號的 session
+                                       （靜態金鑰不需要）
+  vibe-accounts refresh --all         重新整理所有已存帳號（靜態金鑰不需要）
+  vibe-accounts sync                  把作用中的登入複製回對應的帳號檔案
+  vibe-accounts autoswitch            回報 vibe 沒有配額 API 可供切換
+  vibe-accounts login-switch <name>   全新 Vibe 設定／登入並存成 <name>
+  vibe-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
+  vibe-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
+  vibe-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  vibe-accounts -h | --help | help    顯示這份說明
+
+範例
+  vibe-accounts login-switch personal
+  vibe-accounts login-switch work
+  vibe-accounts list
+  vibe-accounts switch
+  vibe-accounts switch personal
+  vibe-accounts who
+
+帳號存放於 ~/.ai-accounts/vibe/accounts/<name>.json（可用
+$VIBE_ACCOUNT_DIR 覆寫）。請把這個目錄當成機密資料 — 帳號內含 API 金鑰。
+
+Vibe 會把即時金鑰存在作業系統鑰匙圈（macOS：login keychain，
+service 名稱 "ai.mistral.vibe"），若無則改用 $VIBE_HOME/.env；
+這些指令會讀寫 vibe 自己實際使用的那個儲存區。
+""",
+    },
 }
 
 

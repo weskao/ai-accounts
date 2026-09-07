@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config_menu as cm
+from . import i18n
 from ._present import accounts_table, choose_and_run, choose_profile, ok, panel, success_panel
 from ._utils import (
     BOLD,
@@ -841,7 +842,7 @@ def cmd_autoswitch() -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
-        print(HELP)
+        print(i18n.t("help.grok", default=HELP))
         return 0
     command, *rest = argv
     if command == "config":
@@ -867,7 +868,7 @@ def main(argv: list[str] | None = None) -> int:
     if command == "login-switch" and rest:
         return cmd_login_switch(rest[0])
     log_red(f"❌ Unknown or incomplete command: {command}")
-    print(HELP)
+    print(i18n.t("help.grok", default=HELP))
     return 1
 
 
