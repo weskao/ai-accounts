@@ -366,7 +366,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "slow. Turn this on to make list much faster - inactive accounts show "
         "their last-known usage instead of being checked live: {cmd}",
         "zh-TW": "ℹ️ 目前是即時模式：每個帳號都要逐一啟動 agy 查詢，較耗時。"
-        "開啟後可讓 list 快很多——非作用中帳號改顯示上次查到的用量，不用逐一即時查詢："
+        "開啟快取後 list 會快很多——非作用中帳號改顯示上次查到的用量，不必逐一即時查詢："
         "{cmd}",
     },
     # ── validation errors (shown inline in the menu and by `config set`) ─────
