@@ -13,7 +13,7 @@ from functools import cache
 from pathlib import Path
 from typing import TypeAlias
 
-from . import autoswitch, gemini_usage
+from . import autoswitch, gemini_usage, i18n
 from . import config_menu as cm
 from ._present import (
     _ANSI_RE as _ANSI_RE,
@@ -1051,16 +1051,44 @@ def cmd_list(
     if cached_list:
         inactive_count = sum(p != active_profile for p, _ in profile_claims)
         if active_profile is not None:
-            print(f"{DIM}ℹ️ Current account queried live; errors appear in UPDATED.{RESET}")
+            print(
+                f"{DIM}"
+                + i18n.t(
+                    "list.agy.live_queried",
+                    default="ℹ️ Current account queried live; errors appear in UPDATED.",
+                )
+                + RESET
+            )
         if cached_rows:
             missing = inactive_count - cached_rows
-            known = f"{cached_rows}/{inactive_count} inactive profile(s)"
-            suffix = f" {missing} has no saved reading." if missing == 1 else (
-                f" {missing} have no saved readings." if missing else ""
-            )
+            if missing == 1:
+                missing_note = i18n.t(
+                    "list.agy.cached_missing.one",
+                    default=" {missing} has no saved reading.",
+                    missing=missing,
+                )
+            elif missing:
+                missing_note = i18n.t(
+                    "list.agy.cached_missing.many",
+                    default=" {missing} have no saved readings.",
+                    missing=missing,
+                )
+            else:
+                missing_note = ""
             print(
-                f"{DIM}ℹ️ Showing last-known usage for {known}; it may be stale.{suffix} "
-                f"Refresh: agy-accounts list --refresh{RESET}"
+                f"{DIM}"
+                + i18n.t(
+                    "list.agy.cached_usage",
+                    default=(
+                        "ℹ️ Showing last-known usage for {cached_rows}/{inactive_count} "
+                        "inactive profile(s); it may be stale.{missing_note} "
+                        "Refresh: agy-accounts list --refresh"
+                    ),
+                    cached_rows=cached_rows,
+                    inactive_count=inactive_count,
+                    missing_note=missing_note,
+                )
+                + RESET
             )
         elif inactive_count:
             print(

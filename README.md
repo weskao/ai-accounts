@@ -327,7 +327,8 @@ next tick and never reported here.
 
 ## Language
 
-Notifications and the interactive config menu are localized. English (`en`)
+Notifications, the interactive config menu, and `agy-accounts list`'s
+usage-freshness footer notes are localized. English (`en`)
 and Traditional Chinese (`zh-TW`) are available; the default follows the OS
 locale and falls back to English for a locale with no translation:
 

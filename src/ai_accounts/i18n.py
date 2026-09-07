@@ -322,6 +322,26 @@ MESSAGES: dict[str, dict[str, str]] = {
     "menu.import_skipped": {"zh-TW": "已略過（機密資料一律不匯入，未知的設定保持原樣）：{keys}"},
     "menu.import_not_object": {"zh-TW": "{path} 不是設定的 JSON 物件"},
     "menu.unknown_key": {"zh-TW": "未知的設定 {key}。可用的設定："},
+    # ── agy-accounts `list` footer notes ──────────────────────────────────────
+    "list.agy.live_queried": {
+        "en": "ℹ️ Current account queried live; errors appear in UPDATED.",
+        "zh-TW": "ℹ️ 目前帳號為即時查詢；錯誤會顯示在「UPDATED」欄。",
+    },
+    "list.agy.cached_missing.one": {
+        "en": " {missing} has no saved reading.",
+        "zh-TW": " {missing} 筆尚無用量紀錄。",
+    },
+    "list.agy.cached_missing.many": {
+        "en": " {missing} have no saved readings.",
+        "zh-TW": " {missing} 筆尚無用量紀錄。",
+    },
+    "list.agy.cached_usage": {
+        "en": "ℹ️ Showing last-known usage for {cached_rows}/{inactive_count} "
+        "inactive profile(s); it may be stale.{missing_note} "
+        "Refresh: agy-accounts list --refresh",
+        "zh-TW": "ℹ️ 顯示 {cached_rows}/{inactive_count} 個非作用中帳號的上次已知用量，"
+        "可能已過期。{missing_note} 更新：agy-accounts list --refresh",
+    },
     # ── validation errors (shown inline in the menu and by `config set`) ─────
     "error.bool": {"zh-TW": "需要布林值（true/false），得到 {raw}"},
     "error.int": {"zh-TW": "{key} 必須是整數{bounds}，得到 {raw}"},
