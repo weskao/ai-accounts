@@ -308,35 +308,49 @@ _HELP_SECTION_WORDS = _HELP_COMMAND_SECTIONS | {"PLATFORM", "MODEL", "平台", "
 _HELP_PLACEHOLDER_RE = re.compile(r"(\[[^\]]*\]|<[^>]*>)")
 
 
-def format_help(text: str) -> str:
+def format_help(text: str, style: str | None = None) -> str:
     """Color a ``HELP`` block for a friendlier ``--help``.
 
     A pure text transform over the fixed layout every module's ``HELP``
     constant already uses — title line, section headers, and (within
-    USAGE/EXAMPLES only) two-space-indented command entries. ANSI escapes add
-    no visible width, so the existing hand-aligned padding still lines up
-    untouched; everything else (prose sections, wrapped continuation lines)
-    is left exactly as written.
+    USAGE/EXAMPLES only) two-space-indented command entries, each optionally
+    followed by deeper-indented continuation lines wrapping its description.
+    ANSI escapes add no visible width, so the existing hand-aligned padding
+    still lines up untouched; everything else (prose sections) is left
+    exactly as written.
+
+    ``style`` defaults to :func:`table_style`, same as every other styled
+    renderer. Under ``modern`` every other command entry — its top line plus
+    any continuation lines, since those still describe the same command — is
+    given :data:`STRIPE_BAND`, the same zebra-stripe :func:`accounts_table`
+    uses: a plain list of similarly-shaped lines is as easy to lose your place
+    in as a table row is. ``classic`` leaves the list unbanded, same as it
+    leaves tables unbanded.
     """
+    modern = table_style(style) == "modern"
     lines = []
     section: str | None = None
+    entry_index = -1
     for index, line in enumerate(text.split("\n")):
         stripped = line.strip()
         if index == 0 and " — " in line:
             prog, _, tagline = line.partition(" — ")
             lines.append(f"{BOLD}{MAGENTA}{prog}{RESET} — {tagline}")
-        elif stripped in _HELP_SECTION_WORDS:
+            continue
+        if stripped in _HELP_SECTION_WORDS:
             section = stripped
+            entry_index = -1
             lines.append(f"{BOLD}{YELLOW}{line}{RESET}")
-        elif (
-            section in _HELP_COMMAND_SECTIONS
-            and line.startswith("  ")
-            and not line.startswith("   ")
-            and stripped
-        ):
-            lines.append(_colorize_help_command(line))
-        else:
+            continue
+        if section not in _HELP_COMMAND_SECTIONS or not stripped:
             lines.append(line)
+            continue
+        is_entry_start = line.startswith("  ") and not line.startswith("   ")
+        rendered = _colorize_help_command(line) if is_entry_start else line
+        if is_entry_start:
+            entry_index += 1
+        band = STRIPE_BAND if modern and entry_index % 2 else ""
+        lines.append(f"{band}{_reband(rendered, band)}{RESET}" if band else rendered)
     return "\n".join(lines)
 
 
@@ -463,12 +477,19 @@ def accounts_table(
         ]
         if not modern:
             return "│" + "│".join(parts) + "│"
-        # The bar dims only the foreground, so a band armed at the start of the
-        # line (and re-armed by `_reband` after each cell's own reset) runs
-        # unbroken through every separator instead of gapping at each column;
-        # `band or RESET` hands an unbanded row its plain bar.
-        bar = f"{FRAME}│{band or RESET}"
-        return f"{band}{bar}{bar.join(parts)}{FRAME}│{RESET}"
+        # Both edge bars are drawn on the DEFAULT background — the band is armed
+        # only after the left edge and reset before the right one. tmux and
+        # several terminals extend the last drawn cell's background to the end
+        # of the line, so a band still active on the closing `│` would bleed
+        # past the frame; on a default-background edge there is nothing to
+        # extend. Inside the frame the interior bars dim only the foreground,
+        # so the band (re-armed by `_reband` after each cell's own reset) runs
+        # unbroken through every separator instead of gapping at each column.
+        edge = f"{FRAME}│{RESET}"
+        if not band:
+            return edge + edge.join(parts) + edge
+        inner_bar = f"{FRAME}│{band}"
+        return f"{edge}{band}{inner_bar.join(parts)}{RESET}{edge}"
 
     print(rule(top_left, "┬", top_right))
     print(row([f"{BOLD}{h}{RESET}" for h in headers], HEADER_BAND if modern else ""))

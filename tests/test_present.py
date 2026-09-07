@@ -996,9 +996,72 @@ class ModernTableStyleTests(unittest.TestCase):
         self.assertNotIn(present.HEADER_BAND, text)
         self.assertNotIn(present.STRIPE_BAND, text)
 
+    def test_band_never_reaches_either_edge_bar(self) -> None:
+        # tmux and several terminals extend the last drawn cell's background to
+        # the end of the line, so a band still active on the closing `│` bleeds
+        # past the frame. Both edge bars must therefore sit on the default
+        # background: the band is armed only after the left edge and reset
+        # before the right one.
+        text = _capture(present.accounts_table, self.ROWS, self.COLUMNS, style="modern")
+        edge = f"{present.FRAME}│{present.RESET}"
+        for line in text.splitlines()[1:-1]:  # every row between the top and bottom rules
+            if line.startswith(present.FRAME) and "│" not in present.strip_ansi(line)[1:]:
+                continue  # the ├─┼─┤ rule: no cells, nothing to band
+            with self.subTest(line=present.strip_ansi(line)):
+                self.assertTrue(line.startswith(edge))
+                self.assertTrue(line.endswith(edge))
+                # ...and the band (if any) was switched off before that closing edge.
+                for band in (present.HEADER_BAND, present.STRIPE_BAND):
+                    if band in line:
+                        self.assertLess(line.rfind(band), line.rfind(present.RESET + edge))
+
     def test_panel_rounds_under_modern(self) -> None:
         panel_text = _capture(present.panel, "Title", ["line"], mode="wide", style="modern")
         first_line = present.strip_ansi(panel_text.splitlines()[0])
         self.assertTrue(first_line.startswith("╭"))
         self.assertEqual(present.corners("modern"), ("╭", "╮", "╰", "╯"))
         self.assertEqual(present.corners("classic"), ("┌", "┐", "└", "┘"))
+
+
+class HelpStripingTests(unittest.TestCase):
+    """``format_help``'s zebra-stripe over USAGE/EXAMPLES entries — mirrors
+    ``accounts_table``'s striping (same :data:`STRIPE_BAND`, same
+    :func:`table_style` gate), applied to a plain command list instead of a
+    table since that list is just as easy to lose your place in."""
+
+    HELP = (
+        "demo-tool — a fake help block for testing\n"
+        "\n"
+        "USAGE\n"
+        "  demo-tool first    First command\n"
+        "  demo-tool second   Second command;\n"
+        "                     continues here\n"
+        "  demo-tool third    Third command\n"
+        "\n"
+        "MODEL\n"
+        "  Prose that happens to sit at the same indent as a command entry.\n"
+    )
+
+    def _line_with(self, colored: str, needle: str) -> str:
+        return next(line for line in colored.split("\n") if needle in line)
+
+    def test_modern_stripes_every_other_entry_including_its_continuation(self) -> None:
+        colored = present.format_help(self.HELP, style="modern")
+        self.assertNotIn(present.STRIPE_BAND, self._line_with(colored, "First command"))
+        self.assertIn(present.STRIPE_BAND, self._line_with(colored, "Second command"))
+        self.assertIn(present.STRIPE_BAND, self._line_with(colored, "continues here"))
+        self.assertNotIn(present.STRIPE_BAND, self._line_with(colored, "Third command"))
+
+    def test_modern_never_stripes_a_prose_section(self) -> None:
+        colored = present.format_help(self.HELP, style="modern")
+        self.assertNotIn(present.STRIPE_BAND, self._line_with(colored, "Prose that happens"))
+
+    def test_classic_never_stripes(self) -> None:
+        colored = present.format_help(self.HELP, style="classic")
+        self.assertNotIn(present.STRIPE_BAND, colored)
+
+    def test_striping_never_changes_the_wording(self) -> None:
+        for style in ("modern", "classic"):
+            with self.subTest(style=style):
+                colored = present.format_help(self.HELP, style=style)
+                self.assertEqual(present.strip_ansi(colored), self.HELP)

@@ -427,6 +427,12 @@ Saved Codex profiles  (2)
 ╰──────────┴───────────────────┴──────┴────────╯
 ```
 
+`table_style` also stripes every `--help` output's `USAGE`/`EXAMPLES` command
+list under `modern` — every other command entry (its wrapped description
+lines included) gets the same zebra-stripe background as an odd table row, so
+a long command list stays easy to scan line by line; `classic` leaves it
+plain, same as it leaves tables unbanded.
+
 ## Platform notes
 
 | Provider | Credential source | Notes |
