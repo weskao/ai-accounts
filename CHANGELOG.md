@@ -1,3 +1,49 @@
+## [0.7.0] - 2026-09-07
+
+### 🚀 Features
+
+- **config:** Add config export/import for settings portability
+- **i18n:** Localize help output for every ai-accounts CLI
+- **cli:** Colorize help text and per-provider list headers
+- **config:** Add modern/classic table_style setting
+- **cli:** Stripe help command lists, fix band edge bleed
+- **config:** Show boolean settings as a localized On/Off toggle
+- **config:** Default agy_list_cached_usage to true
+- **config-menu:** Live-preview table_style in the config menu
+- **config-menu:** Draw the style demo in the right-hand gutter
+
+### 🐛 Bug Fixes
+
+- **config:** File token_refresh under General group
+- **ci:** Re-upload release assets if tag release exists
+- **ci:** Verify tag on remote before release asset upload too
+- **i18n:** Clarify agy list/config cache wording
+- **i18n:** Clarify agy list cache-footer wording
+- **i18n:** Clarify agy list cache-count and hint text
+- **i18n:** Reword awkward causative in cache hint
+
+### 💼 Other
+
+- **agy:** Localize list command's usage-freshness footers
+- **agy:** Localize list cache footer, add disable hint
+
+### 🚜 Refactor
+
+- **i18n:** Drop default= that duplicate the catalogue
+
+### 📚 Documentation
+
+- Sync README with login-switch, install-timer, language
+- Add todo list for copilot integration
+
+### 🎨 Styling
+
+- **cli:** Drop emoji from list headers, orange for claude
+- **cli:** Highlight commands in agy list footer notes
+
+### ⚙️ Miscellaneous Tasks
+
+- Notify telegram on failed pushes
 ## [0.6.0] - 2026-09-07
 
 ### 🚀 Features
@@ -23,6 +69,10 @@
 ### 🧪 Testing
 
 - Verify concurrent list usage stays aligned
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.6.0
 ## [0.5.0] - 2026-09-03
 
 ### 🚀 Features
