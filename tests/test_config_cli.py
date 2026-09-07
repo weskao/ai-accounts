@@ -70,12 +70,12 @@ class AllFiveToolsConfigDispatchTest(_ConfigFileMixin):
         from ai_accounts import config_menu, config_schema
 
         key = "agy_list_cached_usage"
-        self.assertFalse(autoswitch.load_config()[key])
-        self.assertEqual(self._main(ai_accounts, ["config", "set", key, "true"])[0], 0)
-        self.assertTrue(autoswitch.config_flag(key))
-        self.assertIn("True", self._main(gemini_accounts, ["config", "get", key])[1])
+        self.assertTrue(autoswitch.load_config()[key])
+        self.assertEqual(self._main(ai_accounts, ["config", "set", key, "false"])[0], 0)
+        self.assertFalse(autoswitch.config_flag(key))
+        self.assertIn("False", self._main(gemini_accounts, ["config", "get", key])[1])
         self.assertEqual(self._main(ai_accounts, ["config", "set", key, "invalid"])[0], 1)
-        self.assertTrue(autoswitch.config_flag(key))
+        self.assertFalse(autoswitch.config_flag(key))
         cursor = next(i for i, field in enumerate(config_schema.FIELDS) if field.key == key)
         for language in ("en", "zh-TW"):
             values = {**config_schema.defaults(), key: True, "language": language}
@@ -140,6 +140,7 @@ class AllFiveToolsConfigDispatchTest(_ConfigFileMixin):
 
     def test_interactive_menu_filters_options_and_reset_preserves_hidden_values(self):
         from ai_accounts import config_menu as cm
+        from ai_accounts import config_schema
 
         original = cm.run_menu
         keys = ("agy_blind_switch", "agy_list_cached_usage")
@@ -163,7 +164,15 @@ class AllFiveToolsConfigDispatchTest(_ConfigFileMixin):
                 ), mock.patch.object(_keyreader, "raw_mode"):
                     self.assertEqual(self._main(module, ["config"])[0], 0)
                 for key in keys:
-                    self.assertEqual(autoswitch.load_config()[key], prog not in ("ai-accounts", "agy-accounts"))
+                    # A prog that shows these fields resets them to the schema
+                    # default via "r"; a prog that hides them leaves the `True`
+                    # this test set above untouched.
+                    expected = (
+                        config_schema.field(key).default
+                        if prog in ("ai-accounts", "agy-accounts")
+                        else True
+                    )
+                    self.assertEqual(autoswitch.load_config()[key], expected)
 
     def test_config_set_writes_and_echoes_unchanged(self) -> None:
         for module, prog in _MODULES:

@@ -654,9 +654,13 @@ class ProfileCommandTests(_HomeMixin):
                 return _usage()
             return _usage("c@x.com")
 
-        with mock.patch.object(gu, "fetch_usage", side_effect=fetch) as fetcher, mock.patch.object(
-            ga, "_print_accounts_table"
-        ) as table:
+        # This test exercises the live-fetch path (rotation, dedup); force it
+        # regardless of `agy_list_cached_usage`'s default.
+        with (
+            mock.patch.object(ga.autoswitch, "config_flag", return_value=False),
+            mock.patch.object(gu, "fetch_usage", side_effect=fetch) as fetcher,
+            mock.patch.object(ga, "_print_accounts_table") as table,
+        ):
             self.quiet(ga.cmd_list)
         self.assertEqual(fetcher.call_count, 2)
         rows = table.call_args.args[0]
@@ -674,9 +678,13 @@ class ProfileCommandTests(_HomeMixin):
         self.write_profile("a", original)
         self.write_profile("b", original)
         self.set_active(original)
-        with mock.patch.object(gu, "fetch_usage", side_effect=[
-            _usage(error="agy unavailable"), _usage()
-        ]) as fetcher:
+        # Live-fetch path; force it regardless of the cached-list default.
+        with (
+            mock.patch.object(ga.autoswitch, "config_flag", return_value=False),
+            mock.patch.object(
+                gu, "fetch_usage", side_effect=[_usage(error="agy unavailable"), _usage()]
+            ) as fetcher,
+        ):
             _, output, _ = self.capture(ga.cmd_list)
         self.assertEqual(fetcher.call_count, 2)
         self.assertIn("ERR agy", output)
@@ -686,9 +694,13 @@ class ProfileCommandTests(_HomeMixin):
         self.write_profile("a", original)
         self.write_profile("b", _creds("sub-a", "a@x.com", refresh_token="rt-b"))
         self.set_active(original)
-        with mock.patch.object(gu, "fetch_usage", side_effect=[
-            _usage(), _usage(error="re-login required")
-        ]) as fetcher:
+        # Live-fetch path; force it regardless of the cached-list default.
+        with (
+            mock.patch.object(ga.autoswitch, "config_flag", return_value=False),
+            mock.patch.object(
+                gu, "fetch_usage", side_effect=[_usage(), _usage(error="re-login required")]
+            ) as fetcher,
+        ):
             _, output, _ = self.capture(ga.cmd_list)
         self.assertEqual(fetcher.call_count, 2)
         self.assertIn("RELOGIN", output)
@@ -698,7 +710,11 @@ class ProfileCommandTests(_HomeMixin):
         original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
         self.write_profile("b", _creds("sub-b", "b@x.com", refresh_token="rt-b"))
         self.set_active(original)
-        with mock.patch.object(gu, "fetch_usage", side_effect=RuntimeError("failed")):
+        # Live-fetch path; force it regardless of the cached-list default.
+        with (
+            mock.patch.object(ga.autoswitch, "config_flag", return_value=False),
+            mock.patch.object(gu, "fetch_usage", side_effect=RuntimeError("failed")),
+        ):
             with self.assertRaisesRegex(RuntimeError, "failed"):
                 self.quiet(ga.cmd_list)
         self.assertEqual(self.active["refresh_token"], "rt-a")
