@@ -481,6 +481,48 @@ class LivePreviewAutoLayoutTests(unittest.TestCase):
         self.assertGreater(first, second)
 
 
+class FieldPreviewTests(unittest.TestCase):
+    """A field declaring ``Field.preview`` gets its demo painted under the rows
+    while it is selected — the ``table_style`` row's live sample table."""
+
+    def _lines(self, key: str, value: object = None) -> list[str]:
+        values = _default_values()
+        cursor = next(i for i, f in enumerate(cs.FIELDS) if f.key == key)
+        if value is not None:
+            values[key] = value
+        return _clean(config_menu.render("t", cs.FIELDS, values, cursor=cursor))
+
+    def test_demo_shows_only_on_the_previewing_row(self) -> None:
+        self.assertTrue(any("ACCOUNT" in line for line in self._lines("table_style")))
+        self.assertFalse(any("ACCOUNT" in line for line in self._lines("layout")))
+
+    def test_demo_follows_the_value_being_cycled_not_the_one_on_disk(self) -> None:
+        with mock.patch.object(autoswitch, "load_config", return_value={"table_style": "modern"}):
+            _present.reset_layout_cache()
+            classic = "\n".join(self._lines("table_style", "classic"))
+        self.assertIn("┌──", classic)
+        self.assertNotIn("╭──", classic)
+        modern = "\n".join(self._lines("table_style", "modern"))
+        self.assertIn("╭──", modern)
+
+    def test_box_integrity_holds_with_the_demo(self) -> None:
+        for style in ("modern", "classic"):
+            for mode in ("wide", "narrow"):
+                with self.subTest(style=style, mode=mode):
+                    values = _default_values()
+                    values["table_style"] = style
+                    cursor = next(
+                        i for i, f in enumerate(cs.FIELDS) if f.key == "table_style"
+                    )
+                    lines = config_menu.render("t", cs.FIELDS, values, cursor, mode=mode)
+                    widths = {visible_len(line) for line in lines}
+                    self.assertEqual(len(widths), 1, f"inconsistent widths: {widths}")
+
+    def test_a_field_without_a_preview_renders_nothing_extra(self) -> None:
+        field = cs.Field(key="plain", type=str, default="", label="Plain", help="no demo")
+        self.assertEqual(field.display_preview("x"), [])
+
+
 class PurityTests(unittest.TestCase):
     def test_render_is_pure_no_stdout_no_tty_checks(self) -> None:
         import io

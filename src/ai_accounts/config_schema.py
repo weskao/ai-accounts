@@ -71,6 +71,12 @@ class Field:
     # on the active language (or on what "auto" currently resolves to). The
     # STORED value is always the choice itself — this only affects rendering.
     choice_labels: Callable[[str | None], dict[str, str]] | None = None
+    # Optional live demo of the CURRENT value, as pre-rendered display lines.
+    # The menu paints it under the rows while this field is selected, so a
+    # setting whose whole effect is visual (how a table is painted) can be
+    # judged by looking instead of by reading its help text. A field without
+    # one simply shows nothing — the menu stays schema-driven either way.
+    preview: Callable[[object], list[str]] | None = None
 
     def display_group(self, lang: str | None = None) -> str | None:
         """This field's group heading in *lang*, if it has one.
@@ -85,6 +91,10 @@ class Field:
     def display_label(self, lang: str | None = None) -> str:
         """This field's label in *lang*, English if untranslated."""
         return i18n.t(f"config.{self.key}.label", lang=lang, default=self.label)
+
+    def display_preview(self, value: object) -> list[str]:
+        """This field's demo of *value* as display lines, ``[]`` if it has none."""
+        return list(self.preview(value)) if self.preview is not None else []
 
     def display_help(self, lang: str | None = None, value: object = None) -> str:
         """This field's help text in *lang*, English if untranslated.
@@ -201,6 +211,30 @@ class Field:
         )
 
 
+def _table_style_demo(value: object) -> list[str]:
+    """A three-row sample table painted in *value*'s style — the ``table_style``
+    row's live demo, so the choice is made by looking at it.
+
+    Three rows because the zebra stripe only exists between them, and colored
+    usage cells because a banded row's re-arming (``_present._reband``) is
+    exactly what ``modern`` has to get right. ``_present`` is imported lazily
+    to keep this module's import graph the leaf its docstring promises.
+    """
+    from ai_accounts import _present
+    from ai_accounts._utils import RESET
+
+    def used(percentage: int) -> str:
+        return f"{_present.usage_color(percentage)}{percentage}%{RESET}"
+
+    rows = [
+        {"account": "work", "used": used(42)},
+        {"account": "personal", "used": used(88)},
+        {"account": "spare", "used": used(7)},
+    ]
+    style = value if isinstance(value, str) else None
+    return _present.table_lines(rows, (("ACCOUNT", "account"), ("USED", "used")), style=style)
+
+
 # ── the schema (append here to add a setting; nothing else to touch) ─────────
 
 FIELDS: tuple[Field, ...] = (
@@ -306,6 +340,7 @@ FIELDS: tuple[Field, ...] = (
         label="Table style",
         help="How tables and panels are painted: modern rounds and dims the frame, bands the header and stripes every second row; classic is the plain full-brightness grid (also the safer pick on a light terminal).",
         group="General",
+        preview=_table_style_demo,
     ),
     Field(
         key="token_refresh",

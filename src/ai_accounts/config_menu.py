@@ -475,6 +475,15 @@ def render(
                 if not edit_buffer and empty_value is not None:
                     cursor_value = empty_value
         notes.append((cursor_field.display_help(lang, value=cursor_value), DIM))
+        # A visual setting is judged by looking, not by reading: the selected
+        # field's own demo (schema-declared, see `Field.preview`) is painted in
+        # the empty space under the rows, in the value being CYCLED rather than
+        # the one on disk — same live-preview rule as `layout` and `lang`. The
+        # lines are already-rendered table output, so narrow mode drops a demo
+        # too wide for its budget rather than bursting the box.
+        demo = cursor_field.display_preview(cursor_value)
+        if demo and not (narrow and max(visible_len(line) for line in demo) > text_width):
+            body.extend(["", *demo])
     if confirm_reset:
         prompt = i18n.t("menu.reset_confirm", lang=lang, default=_RESET_CONFIRM_EN)
         notes.append((f"⚠ {prompt}", YELLOW))
@@ -513,7 +522,12 @@ def render(
             inner = max(inner, width - 2)
 
     dashes = inner - visible_len(title) - 3
-    top_left, top_right, bottom_left, bottom_right = _present.corners()
+    # Corners off the value being EDITED, like `layout` and `lang` above, so
+    # cycling the style row re-rounds this box on the spot instead of at the
+    # next launch.
+    top_left, top_right, bottom_left, bottom_right = _present.corners(
+        values.get("table_style")  # type: ignore[arg-type]
+    )
     top = f"{CYAN}{top_left}─ {BOLD}{title}{RESET}{CYAN} {'─' * dashes}{top_right}{RESET}"
     content_lines = [
         f"{CYAN}│{RESET}  {line}{' ' * (inner - 2 - visible_len(line))}{CYAN}│{RESET}"

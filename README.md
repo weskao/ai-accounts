@@ -434,6 +434,12 @@ Saved Codex profiles  (2)
 ╰──────────┴───────────────────┴──────┴────────╯
 ```
 
+In the interactive menu (`ai-accounts config`) the **Table style** row previews
+itself: while it is selected, a three-row sample table is drawn under the
+settings list in whatever style is currently cycled onto the row — and the
+menu's own frame re-rounds with it — so the choice is made by looking at it
+rather than by saving, quitting and running a listing.
+
 `table_style` also stripes every `--help` output's `USAGE`/`EXAMPLES` command
 list under `modern` — every other command entry (its wrapped description
 lines included) gets the same zebra-stripe background as an odd table row, so

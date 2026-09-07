@@ -456,6 +456,25 @@ def accounts_table(
         _accounts_cards(rows, columns)
         return
 
+    for line in table_lines(rows, columns, optional_columns=optional_columns, style=style):
+        print(line)
+
+
+def table_lines(
+    rows: list[dict[str, str]],
+    columns: Sequence[tuple[str, str]],
+    *,
+    optional_columns: frozenset[str] | set[str] = frozenset(),
+    style: str | None = None,
+) -> list[str]:
+    """The wide table of :func:`accounts_table` as lines instead of output.
+
+    Same grid, same style resolution — split out so a caller that cannot print
+    (the config menu, which renders a frame as a ``list[str]``) shows the very
+    table the listings draw rather than an imitation of it. Callers that print
+    go through :func:`accounts_table`, which also handles the narrow layout and
+    the usage-cell alignment.
+    """
     columns = [
         (header, key)
         for header, key in columns
@@ -463,7 +482,7 @@ def accounts_table(
         or any(_ANSI_RE.sub("", row[key]) != "—" for row in rows)
     ]
     if not columns:
-        return
+        return []
     headers, keys = zip(*columns, strict=True)
     widths = [
         max(visible_len(h), max((visible_len(r[k]) for r in rows), default=0))
@@ -498,12 +517,16 @@ def accounts_table(
         inner_bar = f"{FRAME}│{band}"
         return f"{edge}{band}{inner_bar.join(parts)}{RESET}{edge}"
 
-    print(rule(top_left, "┬", top_right))
-    print(row([f"{BOLD}{h}{RESET}" for h in headers], HEADER_BAND if modern else ""))
-    print(rule("├", "┼", "┤"))
-    for index, r in enumerate(rows):
-        print(row([r[k] for k in keys], STRIPE_BAND if modern and index % 2 else ""))
-    print(rule(bottom_left, "┴", bottom_right))
+    return [
+        rule(top_left, "┬", top_right),
+        row([f"{BOLD}{h}{RESET}" for h in headers], HEADER_BAND if modern else ""),
+        rule("├", "┼", "┤"),
+        *(
+            row([r[k] for k in keys], STRIPE_BAND if modern and index % 2 else "")
+            for index, r in enumerate(rows)
+        ),
+        rule(bottom_left, "┴", bottom_right),
+    ]
 
 
 def _accounts_cards(rows: list[dict[str, str]], columns: Sequence[tuple[str, str]]) -> None:
