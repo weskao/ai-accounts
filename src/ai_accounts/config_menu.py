@@ -878,7 +878,10 @@ def fallback_menu(title: str, fields: Sequence[config_schema.Field] = config_sch
     field = fields[int(selection) - 1]
     print(f"{DIM}   {field.display_help()}{RESET}")
 
-    hint = f" ({'/'.join(field.choices)})" if field.choices else ""
+    # A bool has no `choices`, but the listing above now shows it as On/Off —
+    # this is the one path where a bool is typed, so name what `parse` takes.
+    choices = field.choices or (("true", "false") if field.type is bool else None)
+    hint = f" ({'/'.join(choices)})" if choices else ""
     if field.masked:
         hint = " " + i18n.t("menu.masked_hint", default="(blank keeps the current value)")
     raw = _ask(

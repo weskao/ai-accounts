@@ -264,6 +264,17 @@ class LanguageChoiceDisplayTests(_ConfigMixin):
         field = cs._require("switch_when_used_pct")
         self.assertEqual(field.display_value(90), "90")
 
+    def test_a_bool_reads_as_a_toggle_in_the_menu_and_as_json_for_scripts(self) -> None:
+        field = cs._require("enabled")
+        # Then: the menu form is a toggle state, in the active language...
+        self.assertEqual(field.display_value(True, "en"), "On")
+        self.assertEqual(field.display_value(False, "en"), "Off")
+        self.assertEqual(field.display_value(True, "zh-TW"), "開啟")
+        self.assertEqual(field.display_value(False, "zh-TW"), "關閉")
+        # ...while `config get`/`set` keep the round-trippable spelling
+        self.assertEqual(field.format(True), "true")
+        self.assertIs(field.parse(field.format(False)), False)
+
     def test_a_masked_field_is_never_expanded_into_a_label(self) -> None:
         field = cs._require("telegram_bot_token")
         shown = field.display_value("0000000000:secret-tail")

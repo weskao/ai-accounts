@@ -167,12 +167,21 @@ class Field:
     def display_value(self, value: object, lang: str | None = None) -> str:
         """*value* as the interactive menu shows it — names, not raw codes.
 
-        Differs from :meth:`format` only where a field declares
-        ``choice_labels``: there the stored code (``zh-TW``) renders as its
-        name (``繁體中文``). Not round-trippable, and not used by ``config
-        get``/``set`` for that reason.
+        Differs from :meth:`format` in two places: a bool renders as the
+        toggle state a settings screen reads better with (``On``/``Off``,
+        ``開啟``/``關閉``) rather than the literal ``true``/``false`` a script
+        would parse, and a field declaring ``choice_labels`` renders the
+        stored code (``zh-TW``) as its name (``繁體中文``). Not
+        round-trippable, and not used by ``config get``/``set`` for that
+        reason.
         """
-        if self.masked or self.choice_labels is None:
+        if self.masked:
+            return self.format(value)
+        if isinstance(value, bool):
+            return i18n.t(
+                "value.on" if value else "value.off", lang=lang, default="On" if value else "Off"
+            )
+        if self.choice_labels is None:
             return self.format(value)
         return self.choice_labels(lang).get(str(value), self.format(value))
 

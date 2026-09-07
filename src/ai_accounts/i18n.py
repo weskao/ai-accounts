@@ -298,8 +298,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.table_style.help": {
         "zh-TW": "表格與面板的繪製方式：modern 為圓角淡化外框、標題列加底色、每隔一列加斑馬紋；classic 為原本的全亮格線（淺色終端機建議選這個）。"
     },
-    # Booleans keep their JSON spelling on purpose: `true`/`false` are what
-    # `config set` accepts, so showing 開/關 would name a value nobody can type.
+    # Booleans read as a toggle state in the menu, where they are cycled with
+    # ←→/Enter and never typed. `Field.format` (what `config get` prints and
+    # `config set` accepts) still says true/false, and the fallback menu — the
+    # one path that asks for a bool to be typed — spells that out in its hint.
+    "value.on": {"zh-TW": "開啟"},
+    "value.off": {"zh-TW": "關閉"},
     # Group headings, keyed by the English heading itself — Field.group holds
     # that string, so no slug mapping is needed in between.
     "group.Automatic switching": {"zh-TW": "自動切換"},

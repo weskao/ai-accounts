@@ -972,6 +972,26 @@ class FallbackTest(_ConfigFileMixin, unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(self.stored()["telegram_chat_id"], "")
 
+    def test_a_bool_prompt_names_the_spelling_it_accepts(self) -> None:
+        # The listing shows a bool as On/Off, but this is the one path where it
+        # has to be TYPED — so the prompt spells out what `parse` takes.
+        prompts: list[str] = []
+        it = iter([str(index_of("enabled") + 1), "true"])
+
+        def recording_input(prompt: str = "") -> str:
+            prompts.append(prompt)
+            try:
+                return next(it)
+            except StopIteration:
+                raise EOFError from None
+
+        with mock.patch("builtins.input", recording_input):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                rc = cm.cmd_config([], prog="ai-accounts")
+        self.assertEqual(rc, 0)
+        self.assertIn("(true/false)", prompts[-1])
+        self.assertIs(self.stored()["enabled"], True)
+
     def test_it_never_enters_raw_mode(self) -> None:
         with mock.patch.object(cm.kr, "raw_mode") as raw:
             self.fallback([])
