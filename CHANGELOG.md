@@ -1,3 +1,28 @@
+## [0.6.0] - 2026-09-07
+
+### 🚀 Features
+
+- **agy:** Add cached-list mode for agy-accounts list
+
+### 🐛 Bug Fixes
+
+- **test:** Commit the wide-output golden fixture
+- **grok:** Refresh active profile from live auth, not stale copy
+- **autoswitch:** Detect hooks by owner, not interpreter path
+- **agy:** Query active account live in cached mode
+- **config:** [**breaking**] Scope settings and fix windows hooks
+
+### 📚 Documentation
+
+- Delegate codex guidance to claude.md
+
+### ⚡ Performance
+
+- **agy:** Reduce repeated usage queries
+
+### 🧪 Testing
+
+- Verify concurrent list usage stays aligned
 ## [0.5.0] - 2026-09-03
 
 ### 🚀 Features
@@ -14,6 +39,7 @@
 ### 📚 Documentation
 
 - Document the layout setting
+- **changelog:** Release v0.5.0
 
 ### 🧪 Testing
 
