@@ -1061,12 +1061,15 @@ def cmd_list(
                 missing_note = i18n.t("list.agy.cached_missing.many", missing=missing)
             else:
                 missing_note = ""
+            # A plain count reads cleaner than "5/5" when every inactive
+            # account has a reading; the fraction only earns its place when
+            # missing_note already says some don't.
+            count = str(inactive_count) if not missing else f"{cached_rows}/{inactive_count}"
             print(
                 f"{DIM}"
                 + i18n.t(
                     "list.agy.cached_usage",
-                    cached_rows=cached_rows,
-                    inactive_count=inactive_count,
+                    count=count,
                     missing_note=missing_note,
                 )
                 + RESET

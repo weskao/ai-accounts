@@ -344,11 +344,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": " 另外 {missing} 個尚無任何紀錄。",
     },
     "list.agy.cached_usage": {
-        "en": "ℹ️ {cached_rows}/{inactive_count} inactive account(s) show the reading "
-        "saved at the time in UPDATED, not their usage right now.{missing_note} "
+        "en": "ℹ️ {count} inactive account(s) show the reading saved at the time "
+        "in UPDATED, not their usage right now.{missing_note} "
         "Refresh all: agy-accounts list --refresh",
-        "zh-TW": "ℹ️ {cached_rows}/{inactive_count} 個非作用中帳號顯示的是 UPDATED 欄"
-        "那個時間點存下的數值，不是現在的用量。{missing_note} "
+        "zh-TW": "ℹ️ {count} 個非作用中帳號顯示的是 UPDATED 欄那個時間點存下的數值，"
+        "不是現在的用量。{missing_note} "
         "全部重新查詢：agy-accounts list --refresh",
     },
     "list.agy.cached_empty": {
@@ -363,10 +363,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ai-accounts config set agy_list_cached_usage false",
     },
     "list.agy.live_usage_hint": {
-        "en": "ℹ️ Showing live usage; each profile may start agy and take a while. "
-        "To cache inactive accounts: ai-accounts config set agy_list_cached_usage true",
-        "zh-TW": "ℹ️ 顯示即時用量；每個帳號可能需要啟動 agy，較耗時。"
-        "若要快取非作用中帳號：ai-accounts config set agy_list_cached_usage true",
+        "en": "ℹ️ Live mode: every account is checked one by one via agy, which is "
+        "slow. Turn this on to make list much faster - inactive accounts show "
+        "their last-known usage instead of being checked live: "
+        "ai-accounts config set agy_list_cached_usage true",
+        "zh-TW": "ℹ️ 目前是即時模式：每個帳號都要逐一啟動 agy 查詢，較耗時。"
+        "開啟後可讓 list 快很多——非作用中帳號改顯示上次查到的用量，不用逐一即時查詢："
+        "ai-accounts config set agy_list_cached_usage true",
     },
     # ── validation errors (shown inline in the menu and by `config set`) ─────
     "error.bool": {"zh-TW": "需要布林值（true/false），得到 {raw}"},

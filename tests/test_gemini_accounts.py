@@ -479,7 +479,7 @@ class ProfileCommandTests(_HomeMixin):
         self.assertIn("81%", output)
         self.assertIn("25%", output)
         self.assertIn("show the reading saved at the time in UPDATED", output)
-        self.assertIn("1/1 inactive", output)
+        self.assertIn("1 inactive", output)
         self.assertIn("Only the account in use was queried live", output)
         self.assertEqual(self.active["refresh_token"], "current-token")
 
@@ -565,7 +565,7 @@ class ProfileCommandTests(_HomeMixin):
             mock.patch.object(ga.gemini_usage, "fetch_usage", return_value=_usage()),
         ):
             _, live, _ = self.capture(ga.cmd_list)
-        self.assertIn("Showing live usage", live)
+        self.assertIn("Live mode", live)
         self.assertIn("agy_list_cached_usage true", live)
 
         self.active = None
@@ -576,7 +576,7 @@ class ProfileCommandTests(_HomeMixin):
         ):
             _, cached, _ = self.capture(ga.cmd_list)
         fetcher.assert_not_called()
-        self.assertIn("1/1 inactive account(s) show the reading saved", cached)
+        self.assertIn("1 inactive account(s) show the reading saved", cached)
         self.assertIn("agy-accounts list --refresh", cached)
 
     def test_cached_list_without_a_reading_explains_how_to_populate_it(self) -> None:
