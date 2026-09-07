@@ -280,7 +280,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "config.agy_list_cached_usage.label": {"zh-TW": "Antigravity 非當前帳號使用快取"},
     "config.agy_list_cached_usage.help": {
-        "zh-TW": "當前帳號即時查詢，其他帳號顯示上次成功取得的配額。快取可能已過期；以 agy-accounts list --refresh 更新全部。"
+        "zh-TW": "開啟：當前帳號即時查詢，其他帳號用上次紀錄（可能過期，agy-accounts list --refresh 更新全部）；關閉：全部即時查詢，較慢。"
     },
     "config.token_refresh.label": {"zh-TW": "自動更新 token"},
     "config.token_refresh.help": {
@@ -333,7 +333,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     # ── agy-accounts `list` footer notes ──────────────────────────────────────
     "list.agy.live_queried": {
         "en": "ℹ️ Current account queried live; errors appear in UPDATED.",
-        "zh-TW": "ℹ️ 目前帳號為即時查詢；錯誤會顯示在「UPDATED」欄。",
+        "zh-TW": "ℹ️ 目前帳號為即時查詢；若有錯誤會顯示在「UPDATED」欄",
     },
     "list.agy.cached_missing.one": {
         "en": " {missing} has no saved reading.",
@@ -356,8 +356,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "ℹ️ 非作用中帳號尚無用量紀錄。更新一次：agy-accounts list --refresh",
     },
     "list.agy.cached_toggle_off": {
-        "en": "Adjust in config: ai-accounts config set agy_list_cached_usage false",
-        "zh-TW": "可於設定中調整：ai-accounts config set agy_list_cached_usage false",
+        "en": "ℹ️ Adjust in config: ai-accounts config set agy_list_cached_usage false",
+        "zh-TW": "ℹ️ 可於設定中調整：ai-accounts config set agy_list_cached_usage false",
     },
     "list.agy.live_usage_hint": {
         "en": "ℹ️ Showing live usage; each profile may start agy and take a while. "
