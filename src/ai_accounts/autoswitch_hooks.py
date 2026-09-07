@@ -195,9 +195,16 @@ def _grouped_update(
 
 
 def _grouped_stop_installed(data: JsonObject, provider: str) -> bool:
+    """Whether *provider* owns a Stop hook here — by module marker, not by the
+    exact command string. `command()` embeds `sys.executable`, which can read
+    differently between invocations of the very same interpreter (`uv tool
+    install` symlinks both `python` and `python3` to it); comparing the full
+    string made a correctly installed hook look missing depending on which
+    symlink launched the current process.
+    """
     hooks = data.get("hooks")
     stop = hooks.get("Stop") if isinstance(hooks, dict) else None
-    return isinstance(stop, list) and _managed_commands(stop, provider) == [command(provider)]
+    return isinstance(stop, list) and bool(_managed_commands(stop, provider))
 
 
 def is_installed() -> bool:
@@ -207,7 +214,9 @@ def is_installed() -> bool:
         for provider in providers():
             data = _load(paths[provider])
             if provider == "agy":
-                if data.get(MANAGED_HOOK) != _agy_value():
+                # Same ownership check as the grouped branch, for the same
+                # interpreter-path-instability reason (see _grouped_stop_installed).
+                if not _owns_agy(data.get(MANAGED_HOOK)):
                     return False
             elif not _grouped_stop_installed(data, provider):
                 return False

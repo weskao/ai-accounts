@@ -135,6 +135,22 @@ class HookConfigTests(unittest.TestCase):
 
         self.assertEqual(self.read(".gemini/config/hooks.json"), foreign)
 
+    def test_is_installed_survives_a_differing_interpreter_symlink(self) -> None:
+        """`uv tool install` symlinks both `python` and `python3` to the same
+        interpreter; whichever one launched the current process becomes
+        `sys.executable`, and it need not match the symlink recorded when the
+        hook was installed. `is_installed()` must recognize its own hook by
+        module ownership, not by re-deriving today's `command()` string and
+        comparing it byte-for-byte — else a correctly installed hook reads as
+        missing depending only on which symlink happens to be invoking.
+        """
+        with mock.patch.object(sys, "executable", "/tool/bin/python"):
+            hooks.install()
+            self.assertTrue(hooks.is_installed())
+
+        with mock.patch.object(sys, "executable", "/tool/bin/python3"):
+            self.assertTrue(hooks.is_installed())
+
     def test_an_unreachable_credential_store_skips_the_agy_hook(self) -> None:
         with mock.patch.object(u, "go_keyring_available", return_value=(False, "no secret-tool")):
             hooks.install()
