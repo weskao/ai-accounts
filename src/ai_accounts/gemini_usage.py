@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import json
 import os
@@ -206,8 +207,22 @@ def fetch_usage_from_pid(pid: int) -> UsageSnapshot | None:
         context = _tls_context(port)
         if context is None:
             continue
-        summary = summary or _post(port, "RetrieveUserQuotaSummary", context)
-        status = status or _post(port, "GetUserStatus", context)
+        # Both read the same PID's session; no shared keyring writes here.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            summary_request = (
+                pool.submit(_post, port, "RetrieveUserQuotaSummary", context)
+                if not summary else None
+            )
+            status_request = (
+                pool.submit(_post, port, "GetUserStatus", context)
+                if not status else None
+            )
+            if summary_request is not None:
+                summary = summary_request.result()
+            if status_request is not None:
+                status = status_request.result()
+        if summary is not None and status is not None:
+            break
     if summary is None or status is None:
         return None
     gemini_weekly, gemini_session, other_weekly, other_session = _parse_summary(summary)

@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -291,6 +292,41 @@ class KeyringTests(unittest.TestCase):
 
 
 class UsageTests(unittest.TestCase):
+    def test_rpc_requests_overlap_and_stop_after_complete_port(self) -> None:
+        both_started = threading.Barrier(2)
+
+        def post(port, method, context):
+            both_started.wait(timeout=2)
+            if method == "RetrieveUserQuotaSummary":
+                return {"groups": [{"displayName": "Gemini", "buckets": [
+                    {"bucketId": "weekly", "remainingFraction": 0.75}
+                ]}]}
+            return {"userStatus": {"email": "a@x.com", "userTier": {"id": "free-tier"}}}
+
+        with mock.patch.object(gu, "_ports", return_value=[100, 200]), mock.patch.object(
+            gu, "_tls_context", return_value=mock.sentinel.context
+        ) as tls, mock.patch.object(gu, "_post", side_effect=post) as rpc:
+            usage = gu.fetch_usage_from_pid(123)
+        self.assertIsNotNone(usage)
+        self.assertEqual(usage.email, "a@x.com")
+        self.assertEqual(usage.plan, "Free")
+        self.assertEqual(usage.gemini_weekly.percentage, 25)
+        self.assertEqual(rpc.call_count, 2)
+        tls.assert_called_once_with(100)
+
+    def test_rpc_retries_only_missing_response_on_next_port(self) -> None:
+        def post(port, method, context):
+            if method == "RetrieveUserQuotaSummary":
+                return {"groups": []}
+            return None if port == 100 else {"userStatus": {"email": "b@x.com"}}
+
+        with mock.patch.object(gu, "_ports", return_value=[100, 200]), mock.patch.object(
+            gu, "_tls_context", return_value=mock.sentinel.context
+        ), mock.patch.object(gu, "_post", side_effect=post) as rpc:
+            usage = gu.fetch_usage_from_pid(123)
+        self.assertEqual(usage.email, "b@x.com")
+        self.assertEqual(rpc.call_count, 3)
+
     def test_ports_parse_lsof_listener_rows(self) -> None:
         output = (
             "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
@@ -476,6 +512,69 @@ class ProfileCommandTests(_HomeMixin):
         self.assertIsNotNone(self.active)
         if self.active is None:
             self.fail("expected restored session")
+        self.assertEqual(self.active["refresh_token"], "rt-a")
+
+    def test_list_reuses_identical_snapshots_and_preserves_rows_and_rotation(self) -> None:
+        original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        first = self.write_profile("a", original)
+        alias = self.write_profile("b", original)
+        self.write_profile("c", _creds("sub-c", "c@x.com", refresh_token="rt-c"))
+        self.set_active(original)
+        self.mark_current("b")
+
+        def fetch(*, timeout):
+            if self.active["refresh_token"] == "rt-a":
+                self.set_active(_creds("sub-a", "a@x.com", refresh_token="rt-rotated"))
+                return _usage()
+            return _usage("c@x.com")
+
+        with mock.patch.object(gu, "fetch_usage", side_effect=fetch) as fetcher, mock.patch.object(
+            ga, "_print_accounts_table"
+        ) as table:
+            self.quiet(ga.cmd_list)
+        self.assertEqual(fetcher.call_count, 2)
+        rows = table.call_args.args[0]
+        self.assertEqual([ga._ANSI_RE.sub("", row["profile"]) for row in rows], ["a", "b", "c"])
+        self.assertIn("SAME ACCT", rows[0]["status"])
+        self.assertIn("ACTIVE", rows[1]["status"])
+        self.assertEqual(rows[0]["gemini_weekly"], rows[1]["gemini_weekly"])
+        self.assertIn("c@x.com", rows[2]["account"])
+        for path in (first, alias):
+            self.assertEqual(json.loads(path.read_text())["refresh_token"], "rt-rotated")
+        self.assertEqual(self.active["refresh_token"], "rt-rotated")
+
+    def test_list_does_not_reuse_failed_snapshot(self) -> None:
+        original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        self.write_profile("a", original)
+        self.write_profile("b", original)
+        self.set_active(original)
+        with mock.patch.object(gu, "fetch_usage", side_effect=[
+            _usage(error="agy unavailable"), _usage()
+        ]) as fetcher:
+            _, output, _ = self.capture(ga.cmd_list)
+        self.assertEqual(fetcher.call_count, 2)
+        self.assertIn("ERR agy", output)
+
+    def test_list_checks_different_credentials_for_the_same_account(self) -> None:
+        original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        self.write_profile("a", original)
+        self.write_profile("b", _creds("sub-a", "a@x.com", refresh_token="rt-b"))
+        self.set_active(original)
+        with mock.patch.object(gu, "fetch_usage", side_effect=[
+            _usage(), _usage(error="re-login required")
+        ]) as fetcher:
+            _, output, _ = self.capture(ga.cmd_list)
+        self.assertEqual(fetcher.call_count, 2)
+        self.assertIn("RELOGIN", output)
+        self.assertEqual(self.active["refresh_token"], "rt-a")
+
+    def test_list_restores_session_when_fetch_raises(self) -> None:
+        original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        self.write_profile("b", _creds("sub-b", "b@x.com", refresh_token="rt-b"))
+        self.set_active(original)
+        with mock.patch.object(gu, "fetch_usage", side_effect=RuntimeError("failed")):
+            with self.assertRaisesRegex(RuntimeError, "failed"):
+                self.quiet(ga.cmd_list)
         self.assertEqual(self.active["refresh_token"], "rt-a")
 
     def test_usage_shows_only_active_profile(self) -> None:

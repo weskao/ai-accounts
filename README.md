@@ -91,6 +91,48 @@ marks the active one.
 
 ![Saved profiles from every provider](ai-accounts-list%20demo.png)
 
+### List performance
+
+`ai-accounts list` runs providers concurrently and displays each provider's
+table as it finishes. Codex and Claude also fetch usage concurrently across
+profiles; Grok and Vibe list local profile data without quota network requests.
+
+Antigravity queries different credentials **sequentially**: each query switches
+the shared OS keyring session, launches `agy`, waits for authentication and
+quota data, then closes it. The original session is restored after listing.
+Within each launch, quota and account-status RPCs run concurrently. Profiles
+with identical credential file contents reuse a successful result within that
+invocation; different credentials and failed lookups are not reused.
+
+Measured on **2026-09-07 (Asia/Taipei)**, on a local macOS machine:
+
+| Provider command | Saved profiles | Total list time | Time per profile (total ÷ count) | Work performed |
+| --- | ---: | ---: | ---: | --- |
+| `codex-accounts list` | 5 | 0.944 s | 0.189 s | Concurrent usage requests |
+| `claude-accounts list` | 1 | 0.739 s | 0.739 s | Concurrent usage requests when multiple profiles exist |
+| `agy-accounts list` | 6 | 24.484 s | 4.081 s | Sequential credential sessions; concurrent RPCs within each session |
+| `grok-accounts list` | 7 | 0.003 s | <0.001 s | Local profile reads |
+| `vibe-accounts list` | 1 | 0.028 s | 0.028 s | Local profile and credential-store reads |
+
+These are single-run measurements of each provider's `cmd_list()`, with the
+five providers running concurrently in separate processes and output captured.
+They include list rendering and, for Antigravity, `agy` startup and cleanup,
+but exclude Python interpreter startup and module imports. Counts refer to
+saved profiles, which are not necessarily distinct accounts.
+
+**Time per profile is an amortized value, not individual request latency.**
+In particular, dividing a concurrent provider's total time by its profile count
+does not measure how long one account would take on its own. Authentication,
+network conditions, and machine load affect these results. Parallel RPCs do
+not remove Antigravity's per-account startup cost, so it can still dominate
+the total time of `ai-accounts list`.
+
+To query only the selected Antigravity account, use:
+
+```sh
+agy-accounts usage
+```
+
 ## Profile storage
 
 Saved profiles and shared settings live under `~/.ai-accounts`:

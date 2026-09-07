@@ -957,6 +957,9 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
         None, None, None, None, None, None, None, None
     )
     rows: list[dict[str, str]] = []
+    # Reuse only identical snapshots within this invocation. Different tokens
+    # still need their own check, even when their account identity matches.
+    fetched: dict[str, tuple[gemini_usage.UsageSnapshot, str | None]] = {}
     restore_text = active_text
     spinner = Spinner("Fetching Antigravity usage…")
     try:
@@ -977,29 +980,32 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
                         f"Fetching Antigravity usage… {DIM}({index}/{len(profile_claims)}){RESET} {MAGENTA}{name}{RESET}"
                     )
                     profile_text = profile_path.read_text(encoding="utf-8")
-                    if _write_cli_auth_text(profile_text):
+                    refreshed_text = None
+                    if profile_text in fetched:
+                        usage, refreshed_text = fetched[profile_text]
+                    elif _write_cli_auth_text(profile_text):
                         usage = _validated_usage(
                             gemini_usage.fetch_usage(timeout=8), claims
                         )
-                        # This loop already paid for the reading autoswitch is
-                        # not allowed to take itself — keep it.
                         if usage.error is None:
-                            _cache_usage(name, _worst_window(usage))
-                        refreshed_text = (
-                            _read_active_auth_text() if usage.error is None else None
+                            refreshed_text = _read_active_auth_text()
+                            fetched[profile_text] = usage, refreshed_text
+                    # Keep autoswitch readings for aliases too, without another
+                    # agy launch or writing their stale tokens into the keyring.
+                    if usage is not empty_usage and usage.error is None:
+                        _cache_usage(name, _worst_window(usage))
+                    if refreshed_text is not None:
+                        refreshed = json.loads(refreshed_text)
+                        saved = json.loads(profile_text)
+                        saved.update(refreshed)
+                        if usage.email:
+                            saved["email"] = usage.email
+                        profile_path.write_text(
+                            json.dumps(saved, indent=2) + "\n", encoding="utf-8"
                         )
-                        if refreshed_text is not None:
-                            refreshed = json.loads(refreshed_text)
-                            saved = json.loads(profile_text)
-                            saved.update(refreshed)
-                            if usage.email:
-                                saved["email"] = usage.email
-                            profile_path.write_text(
-                                json.dumps(saved, indent=2) + "\n", encoding="utf-8"
-                            )
-                            profile_path.chmod(0o600)
-                            if is_active:
-                                restore_text = json.dumps(saved)
+                        profile_path.chmod(0o600)
+                        if is_active:
+                            restore_text = json.dumps(saved)
                 expires_text, expires_color = _list_expiry_status(claims)
                 rows.append(
                     {
