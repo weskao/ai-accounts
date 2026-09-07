@@ -69,7 +69,7 @@ ai-accounts usage
 ai-accounts refresh --all
 ai-accounts sync
 ai-accounts login-switch work
-ai-accounts --help
+ai-accounts help
 ```
 
 `list` fetches providers concurrently. Interactive actions run providers one at
@@ -85,7 +85,7 @@ codex-accounts switch work
 codex-accounts refresh --all
 codex-accounts login-switch work
 codex-accounts remove work
-codex-accounts --help
+codex-accounts help
 ```
 
 `who` also answers to `current`. `login-switch <name>` runs a fresh provider
