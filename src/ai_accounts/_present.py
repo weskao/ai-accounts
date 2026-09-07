@@ -46,7 +46,25 @@ NARROW_BELOW = 60
 # …and those variants budget every emitted line to this many visible columns.
 NARROW_WIDTH = 40
 
+# ── modern styling (the ``table_style`` setting) ─────────────────────────────
+# 256-color bands, each paired with an explicit light foreground so a banded
+# row stays readable on a LIGHT terminal too — left to the terminal's own
+# default, its dark text would vanish into the band. A colored cell sets only
+# its foreground, so the band behind it survives; the resets a cell embeds are
+# re-armed by :func:`_reband`.
+HEADER_BAND = "\033[48;5;238;38;5;255m"  # the header row
+STRIPE_BAND = "\033[48;5;235;38;5;252m"  # every second data row
+FRAME = "\033[38;5;240m"  # box-drawing lines, dimmed so the data leads
+
+TABLE_STYLES = ("modern", "classic")
+# (top-left, top-right, bottom-left, bottom-right) per style.
+_CORNERS = {
+    "modern": ("╭", "╮", "╰", "╯"),
+    "classic": ("┌", "┐", "└", "┘"),
+}
+
 _layout_config: str | None = None
+_table_style_config: str | None = None
 
 
 def strip_ansi(s: str) -> str:
@@ -146,9 +164,11 @@ def terminal_width() -> int | None:
 
 
 def reset_layout_cache() -> None:
-    """Forget the cached ``layout`` setting (tests, and anything changing the config)."""
-    global _layout_config
+    """Forget the cached ``layout``/``table_style`` settings (tests, and
+    anything changing the config)."""
+    global _layout_config, _table_style_config
     _layout_config = None
+    _table_style_config = None
 
 
 def layout_mode(override: str | None = None) -> str:
@@ -194,6 +214,49 @@ def narrow_width() -> int:
     return max(min(terminal_width() or NARROW_WIDTH, NARROW_WIDTH), 20)
 
 
+def table_style(override: str | None = None) -> str:
+    """The active styling: ``"modern"`` (rounded, dimmed frame; banded header;
+    zebra-striped rows) or ``"classic"`` (the plain full-brightness grid).
+
+    Resolution mirrors :func:`layout_mode` — *override* short-circuits the
+    config read, otherwise the ``table_style`` setting decides and anything
+    unrecognized (or unreadable) falls back to ``modern``. Like the ``layout``
+    read it is cached process-wide; see :func:`reset_layout_cache`.
+
+    Style is deliberately independent of :func:`layout_mode`: it picks how the
+    frame and rows are *painted*, while the layout picks whether a table or a
+    stack of cards is drawn at all.
+    """
+    global _table_style_config
+    if override in TABLE_STYLES:
+        return override
+    if _table_style_config is None:
+        try:
+            from . import autoswitch
+
+            _table_style_config = autoswitch.load_config().get("table_style", "modern")
+        except Exception:  # noqa: BLE001 — presentation must never fail on config
+            _table_style_config = "modern"
+    return _table_style_config if _table_style_config in TABLE_STYLES else "modern"
+
+
+def corners(style: str | None = None) -> tuple[str, str, str, str]:
+    """This style's (top-left, top-right, bottom-left, bottom-right) glyphs —
+    rounded under ``modern``, square under ``classic``. Shared so every framed
+    surface (tables, panels, the config menu) rounds off together."""
+    return _CORNERS[table_style(style)]
+
+
+def _reband(text: str, band: str) -> str:
+    """*text* with *band* re-armed after every reset it embeds.
+
+    A cell's own color ends in :data:`~ai_accounts._utils.RESET`, which clears
+    the background too — without re-arming, a banded row would lose its stripe
+    from the first colored cell onward.
+    """
+    return text.replace(RESET, RESET + band) if band else text
+
+
 def panel(
     title: str,
     lines: list[str],
@@ -201,6 +264,7 @@ def panel(
     width: int = 64,
     *,
     mode: str | None = None,
+    style: str | None = None,
 ) -> None:
     """Bordered header/footer rule around left-aligned content — legible even
     with embedded ANSI color codes since only the header/footer are measured.
@@ -208,25 +272,30 @@ def panel(
     In narrow mode the border shrinks to the terminal (capped at
     ``NARROW_WIDTH``) and content lines wrap instead of running off the screen;
     ``mode`` defaults to :func:`layout_mode` so every existing call site follows
-    the setting without a change.
+    the setting without a change. ``style`` defaults to :func:`table_style` and
+    only picks the corner glyphs — the accent color is the caller's.
     """
+    top_left, top_right, bottom_left, bottom_right = corners(style)
     if (mode or layout_mode()) == "narrow":
         total = narrow_width()
         title = elide(title, total - 5)
         body = total - 3
-        print(f"{accent}┌─ {BOLD}{title}{RESET}{accent} {'─' * (total - visible_len(title) - 5)}┐{RESET}")
+        print(
+            f"{accent}{top_left}─ {BOLD}{title}{RESET}{accent} "
+            f"{'─' * (total - visible_len(title) - 5)}{top_right}{RESET}"
+        )
         for line in lines or [f"{DIM}(none){RESET}"]:
             for part in wrap(line, body):
                 print(f"{accent}│{RESET}  {part}")
-        print(f"{accent}└{'─' * (total - 2)}┘{RESET}")
+        print(f"{accent}{bottom_left}{'─' * (total - 2)}{bottom_right}{RESET}")
         return
 
     width = max(width, visible_len(title) + 8)
     top_dashes = width - visible_len(title) - 4
-    print(f"{accent}┌─ {BOLD}{title}{RESET}{accent} {'─' * top_dashes}┐{RESET}")
+    print(f"{accent}{top_left}─ {BOLD}{title}{RESET}{accent} {'─' * top_dashes}{top_right}{RESET}")
     for line in lines or [f"{DIM}(none){RESET}"]:
         print(f"{accent}│{RESET}  {line}")
-    print(f"{accent}└{'─' * (width - 1)}┘{RESET}")
+    print(f"{accent}{bottom_left}{'─' * (width - 1)}{bottom_right}{RESET}")
 
 
 # Section-header words across every module's HELP, English and zh-TW alike —
@@ -339,6 +408,7 @@ def accounts_table(
     optional_columns: frozenset[str] | set[str] = frozenset(),
     align_keys: Sequence[str] = (),
     mode: str | None = None,
+    style: str | None = None,
 ) -> None:
     """Render dict-keyed ``rows`` as a box-drawing table.
 
@@ -352,6 +422,11 @@ def accounts_table(
     In narrow mode (``mode`` defaults to :func:`layout_mode`) the same rows are
     stacked as one labelled card per record instead — no columns are dropped
     there, since a card has room for every field a table cannot fit.
+
+    ``style`` defaults to :func:`table_style`: ``modern`` rounds and dims the
+    frame, bands the header, and zebra-stripes every second row so the eye
+    keeps its line across a 9-column table; ``classic`` prints the original
+    full-brightness grid.
     """
     for key in align_keys:
         usage_format.align_usage_cells(rows, key)
@@ -374,19 +449,33 @@ def accounts_table(
         for h, k in zip(headers, keys)
     ]
 
+    modern = table_style(style) == "modern"
+    top_left, top_right, bottom_left, bottom_right = corners(style)
+
     def rule(left: str, mid: str, right: str) -> str:
-        return left + mid.join("─" * (w + 2) for w in widths) + right
+        line = left + mid.join("─" * (w + 2) for w in widths) + right
+        return f"{FRAME}{line}{RESET}" if modern else line
 
-    def row(cells: list[str]) -> str:
-        parts = [f" {cell}{' ' * (w - visible_len(cell))} " for cell, w in zip(cells, widths)]
-        return "│" + "│".join(parts) + "│"
+    def row(cells: list[str], band: str = "") -> str:
+        parts = [
+            f" {_reband(cell, band)}{' ' * (w - visible_len(cell))} "
+            for cell, w in zip(cells, widths)
+        ]
+        if not modern:
+            return "│" + "│".join(parts) + "│"
+        # The bar dims only the foreground, so a band armed at the start of the
+        # line (and re-armed by `_reband` after each cell's own reset) runs
+        # unbroken through every separator instead of gapping at each column;
+        # `band or RESET` hands an unbanded row its plain bar.
+        bar = f"{FRAME}│{band or RESET}"
+        return f"{band}{bar}{bar.join(parts)}{FRAME}│{RESET}"
 
-    print(rule("┌", "┬", "┐"))
-    print(row([f"{BOLD}{h}{RESET}" for h in headers]))
+    print(rule(top_left, "┬", top_right))
+    print(row([f"{BOLD}{h}{RESET}" for h in headers], HEADER_BAND if modern else ""))
     print(rule("├", "┼", "┤"))
-    for r in rows:
-        print(row([r[k] for k in keys]))
-    print(rule("└", "┴", "┘"))
+    for index, r in enumerate(rows):
+        print(row([r[k] for k in keys], STRIPE_BAND if modern and index % 2 else ""))
+    print(rule(bottom_left, "┴", bottom_right))
 
 
 def _accounts_cards(rows: list[dict[str, str]], columns: Sequence[tuple[str, str]]) -> None:
@@ -549,11 +638,13 @@ def success_panel(
     title: str,
     details: Sequence[str] = (),
     mode: str | None = None,
+    style: str | None = None,
 ) -> None:
     """``ok`` line + optional detail lines + a green panel. ``mode`` is passed
     straight to :func:`panel` (so the narrow border lives in one place) and to
-    :func:`ok`; the detail lines — store paths, measured at 72 columns — are
-    squeezed to the same narrow budget by :func:`_fit_detail`."""
+    :func:`ok`; ``style`` likewise, so a caller can pin the frame glyphs. The
+    detail lines — store paths, measured at 72 columns — are squeezed to the
+    same narrow budget by :func:`_fit_detail`."""
     narrow = (mode or layout_mode()) == "narrow"
     ok(action, name, mode="narrow" if narrow else "wide")
     for detail in details:
@@ -561,5 +652,5 @@ def success_panel(
             detail = _fit_detail(detail, narrow_width() - 3)
         print(f"{DIM}   {detail}{RESET}")
     print()
-    panel(title, lines, accent=GREEN, mode=mode)
+    panel(title, lines, accent=GREEN, mode=mode, style=style)
 

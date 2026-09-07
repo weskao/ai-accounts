@@ -290,6 +290,15 @@ FIELDS: tuple[Field, ...] = (
         group="General",
     ),
     Field(
+        key="table_style",
+        type=str,
+        default="modern",
+        choices=("modern", "classic"),
+        label="Table style",
+        help="How tables and panels are painted: modern rounds and dims the frame, bands the header and stripes every second row; classic is the plain full-brightness grid (also the safer pick on a light terminal).",
+        group="General",
+    ),
+    Field(
         key="token_refresh",
         type=bool,
         default=True,

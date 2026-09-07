@@ -49,8 +49,9 @@ class BoxIntegrityTests(unittest.TestCase):
 
     def test_top_and_bottom_borders_present(self) -> None:
         lines = _clean(config_menu.render("ai-accounts config", cs.FIELDS, _default_values(), cursor=0))
-        self.assertTrue(lines[0].startswith("┌"))
-        self.assertTrue(lines[-1].startswith("└"))
+        top_left, _, bottom_left, _ = _present.corners()
+        self.assertTrue(lines[0].startswith(top_left))
+        self.assertTrue(lines[-1].startswith(bottom_left))
         self.assertIn("ai-accounts config", lines[0])
 
     def test_box_integrity_holds_with_cjk_value(self) -> None:

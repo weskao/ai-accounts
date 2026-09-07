@@ -357,7 +357,12 @@ class TableGrammarTests(unittest.TestCase):
     all-empty guard never raises."""
 
     def test_renders_box_drawing_frame(self) -> None:
-        text = _capture(present.accounts_table, [{"a": "1", "b": "y"}], [("A", "a"), ("B", "b")])
+        text = _capture(
+            present.accounts_table,
+            [{"a": "1", "b": "y"}],
+            [("A", "a"), ("B", "b")],
+            style="classic",
+        )
         self.assertIn("┌", text)
         self.assertIn("│", text)
         self.assertIn("└", text)
@@ -898,7 +903,7 @@ class NarrowSurfaceBudgetTests(unittest.TestCase):
 
 
 class WideGoldenFixtureTests(unittest.TestCase):
-    """Wide output matches a checked-in golden, byte for byte.
+    """Wide *layout* output matches a checked-in golden, byte for byte.
 
     ``WideModeUnchangedTests`` above diffs against ``git show HEAD``, which
     stops being meaningful the moment this feature is committed — HEAD then
@@ -906,6 +911,11 @@ class WideGoldenFixtureTests(unittest.TestCase):
     unchanged" guarantee with nothing enforcing it, so this pins the same
     guarantee to a fixture that survives the merge. Regenerate the file
     deliberately (and review the diff) if wide output is ever meant to move.
+
+    Pins ``style="classic"`` throughout: this fixture predates the
+    ``table_style`` setting and its concern is layout (wide vs. narrow), not
+    paint — the ``modern`` default (now painted regardless of layout) gets its
+    own coverage in ``ModernTableStyleTests`` below.
     """
 
     GOLDEN = Path(__file__).resolve().parent / "fixtures" / "wide_golden.txt"
@@ -928,21 +938,67 @@ class WideGoldenFixtureTests(unittest.TestCase):
         buffer = io.StringIO()
         with redirect_stdout(buffer):
             present.accounts_table(
-                [dict(row) for row in self.ROWS], self.COLUMNS, mode="wide"
+                [dict(row) for row in self.ROWS], self.COLUMNS, mode="wide", style="classic"
             )
             present.panel(
                 "Codex Login Status",
                 ["Logged in", "Account: user@example.com"],
                 mode="wide",
+                style="classic",
             )
             present.ok("Switched Codex account", "work", mode="wide")
             present.success_panel(
                 "Saved Codex profile", "work", ["Account: user@example.com"],
                 title="Current Auth Claims",
-                details=["→ /tmp/accounts/work.json"], mode="wide",
+                details=["→ /tmp/accounts/work.json"], mode="wide", style="classic",
             )
         self.assertEqual(
             buffer.getvalue(),
             self.GOLDEN.read_text(encoding="utf-8"),
             "wide output drifted from tests/fixtures/wide_golden.txt",
         )
+
+
+class ModernTableStyleTests(unittest.TestCase):
+    """The ``table_style`` setting: ``modern`` (default) rounds the frame,
+    bands the header, and zebra-stripes every second data row; ``classic``
+    reproduces the original plain grid exactly (locked separately, by
+    ``WideGoldenFixtureTests`` above)."""
+
+    ROWS = [{"a": "1", "b": "x"}, {"a": "2", "b": "y"}, {"a": "3", "b": "z"}]
+    COLUMNS = [("A", "a"), ("B", "b")]
+
+    def test_default_style_is_modern(self) -> None:
+        self.assertEqual(present.table_style(), "modern")
+
+    def test_modern_rounds_the_frame(self) -> None:
+        text = _capture(present.accounts_table, self.ROWS, self.COLUMNS, style="modern")
+        self.assertIn("╭", text)
+        self.assertIn("╰", text)
+        self.assertNotIn("┌", text)
+
+    def test_classic_keeps_the_square_frame(self) -> None:
+        text = _capture(present.accounts_table, self.ROWS, self.COLUMNS, style="classic")
+        self.assertIn("┌", text)
+        self.assertNotIn("╭", text)
+
+    def test_modern_bands_the_header_and_stripes_every_second_row(self) -> None:
+        text = _capture(present.accounts_table, self.ROWS, self.COLUMNS, style="modern")
+        lines = text.splitlines()
+        header, first_row, second_row, third_row = lines[1], lines[3], lines[4], lines[5]
+        self.assertIn(present.HEADER_BAND, header)
+        self.assertNotIn(present.STRIPE_BAND, first_row)
+        self.assertIn(present.STRIPE_BAND, second_row)
+        self.assertNotIn(present.STRIPE_BAND, third_row)
+
+    def test_classic_has_no_bands(self) -> None:
+        text = _capture(present.accounts_table, self.ROWS, self.COLUMNS, style="classic")
+        self.assertNotIn(present.HEADER_BAND, text)
+        self.assertNotIn(present.STRIPE_BAND, text)
+
+    def test_panel_rounds_under_modern(self) -> None:
+        panel_text = _capture(present.panel, "Title", ["line"], mode="wide", style="modern")
+        first_line = present.strip_ansi(panel_text.splitlines()[0])
+        self.assertTrue(first_line.startswith("╭"))
+        self.assertEqual(present.corners("modern"), ("╭", "╮", "╰", "╯"))
+        self.assertEqual(present.corners("classic"), ("┌", "┐", "└", "┘"))

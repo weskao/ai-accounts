@@ -276,7 +276,7 @@ class LanguageChoiceDisplayTests(_ConfigMixin):
         self.assertEqual(field.group, "General")
         self.assertEqual(
             [f.key for f in cs.FIELDS if f.group == "General"],
-            ["language", "layout", "token_refresh"],
+            ["language", "layout", "table_style", "token_refresh"],
         )
 
     def test_every_field_declares_a_group(self) -> None:

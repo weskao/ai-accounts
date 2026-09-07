@@ -513,12 +513,13 @@ def render(
             inner = max(inner, width - 2)
 
     dashes = inner - visible_len(title) - 3
-    top = f"{CYAN}┌─ {BOLD}{title}{RESET}{CYAN} {'─' * dashes}┐{RESET}"
+    top_left, top_right, bottom_left, bottom_right = _present.corners()
+    top = f"{CYAN}{top_left}─ {BOLD}{title}{RESET}{CYAN} {'─' * dashes}{top_right}{RESET}"
     content_lines = [
         f"{CYAN}│{RESET}  {line}{' ' * (inner - 2 - visible_len(line))}{CYAN}│{RESET}"
         for line in body
     ]
-    bottom = f"{CYAN}└{'─' * inner}┘{RESET}"
+    bottom = f"{CYAN}{bottom_left}{'─' * inner}{bottom_right}{RESET}"
     return [top, *content_lines, bottom]
 
 

@@ -399,6 +399,34 @@ personal                               —
   AUTH     20:15
 ```
 
+(the box-drawing corners above are the `classic` `table_style`; see below — the
+default `modern` style rounds them instead.)
+
+## Table style
+
+Every table and panel is also painted by the `table_style` setting, independent
+of `layout` above — `layout` decides table vs. stacked cards, `table_style`
+decides how either one is drawn:
+
+```sh
+ai-accounts config set table_style modern   # default: rounded, dimmed frame,
+                                             # banded header, zebra-striped rows
+ai-accounts config set table_style classic  # the plain full-brightness grid —
+                                             # also the safer pick on a light
+                                             # terminal, where a 256-color band
+                                             # can wash out
+```
+
+```text
+Saved Codex profiles  (2)
+╭──────────┬───────────────────┬──────┬────────┐
+│ PROFILE  │ ACCOUNT           │ PLAN │ STATE  │
+├──────────┼───────────────────┼──────┼────────┤
+│ work     │ user@example.com  │ Plus │ ACTIVE │
+│ personal │ user2@example.com │ Free │ —      │
+╰──────────┴───────────────────┴──────┴────────╯
+```
+
 ## Platform notes
 
 | Provider | Credential source | Notes |

@@ -294,6 +294,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.layout.help": {
         "zh-TW": "指令輸出的排版方式：auto 依終端機寬度自動判斷、wide 為完整桌面表格、narrow 為適合手機寬度終端機的堆疊版面。"
     },
+    "config.table_style.label": {"zh-TW": "表格樣式"},
+    "config.table_style.help": {
+        "zh-TW": "表格與面板的繪製方式：modern 為圓角淡化外框、標題列加底色、每隔一列加斑馬紋；classic 為原本的全亮格線（淺色終端機建議選這個）。"
+    },
     # Booleans keep their JSON spelling on purpose: `true`/`false` are what
     # `config set` accepts, so showing 開/關 would name a value nobody can type.
     # Group headings, keyed by the English heading itself — Field.group holds
