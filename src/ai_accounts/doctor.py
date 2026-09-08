@@ -7,17 +7,23 @@ each provider's own CLI the way ``list``/``usage --json`` do.
 Per :data:`ai_accounts.providers.PROVIDERS` entry, checks:
 
   (a) the CLI binary (``provider.binary``) is on ``PATH``
-  (b) the OS credential store is reachable — reuses
+  (b) the provider's own account-tool console script (``provider.label``,
+      e.g. ``copilot-accounts``) is on ``PATH`` — distinct from (a): a newly
+      declared ``[project.scripts]`` entry point stays invisible until the
+      next ``uv tool install``/``uv sync``, so a stale install can have the
+      vendor binary present while its own account tool is a bare shell
+      "command not found" with no other diagnostic
+  (c) the OS credential store is reachable — reuses
       :func:`ai_accounts._utils.go_keyring_available` (already handles macOS/
       Windows keychain vs Linux ``secret-tool``) rather than re-deriving the
       per-OS branching; only ``agy`` hard-requires it (see README's "Platform
       notes" — codex/claude/vibe fall back to a plaintext file, grok never
       touches a credential store at all)
-  (c) every saved profile under that provider's account dir is well-formed
+  (d) every saved profile under that provider's account dir is well-formed
       JSON and, if it carries a recognizable expiry field, not already
       expired — a lightweight, fully offline heuristic scan, never a live
       quota/HTTP call
-  (d) the auto-switch timer's install state, via
+  (e) the auto-switch timer's install state, via
       :func:`ai_accounts.autoswitch_timer.status`
 
 Never raises: a missing binary, unreachable credential store, corrupt
@@ -31,6 +37,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -76,9 +83,15 @@ _MAX_SCAN_DEPTH = 3
 class _Check:
     ok: bool
     detail: str
+    # Full fix, kept out of `detail` so it never lands in a table cell (see
+    # `_check_account_tool`) but still reaches scripted `--json` consumers.
+    remediation: str | None = None
 
     def to_json(self) -> dict[str, object]:
-        return {"ok": self.ok, "detail": self.detail}
+        doc: dict[str, object] = {"ok": self.ok, "detail": self.detail}
+        if self.remediation is not None:
+            doc["remediation"] = self.remediation
+        return doc
 
 
 def _mark(check: _Check) -> str:
@@ -91,6 +104,71 @@ def _check_binary(provider: Provider) -> _Check:
     if have(provider.binary):
         return _Check(True, f"`{provider.binary}` on PATH")
     return _Check(False, f"`{provider.binary}` not found on PATH")
+
+
+def _repo_root() -> Path:
+    # src/ai_accounts/doctor.py -> src/ai_accounts -> src -> repo root. Valid
+    # whether this module is running from a checkout via `uv run` or from an
+    # editable install (both keep the package under <repo>/src/ai_accounts).
+    return Path(__file__).resolve().parents[2]
+
+
+def _installed_editable_root() -> Path | None:
+    """Source root an *already-installed* console script's editable install
+    points to, or ``None`` if that can't be told cheaply.
+
+    Best-effort only: reads the shebang of whichever of this project's own
+    scripts is already on PATH (``ai-accounts`` — the one entry point this
+    repo's docs already assume exists) to find its venv's interpreter, then
+    looks for that venv's ``uv tool install --editable`` marker file
+    recording the source it was installed from. Never raises and never
+    shells out — a handful of file reads/globs at most, no subprocess.
+    """
+    try:
+        script = shutil.which("ai-accounts")
+        if not script:
+            return None
+        first_line = Path(script).read_text(encoding="utf-8").splitlines()[0]
+        if not first_line.startswith("#!"):
+            return None
+        python_bin = Path(first_line[2:].strip())
+        venv_root = python_bin.parents[1]  # venv/bin/python -> venv
+        for pth in venv_root.glob("lib/python*/site-packages/_editable_impl_ai_accounts.pth"):
+            lines = [line for line in pth.read_text(encoding="utf-8").splitlines() if line.strip()]
+            if lines:
+                return Path(lines[0]).resolve().parent  # .pth records the `src` dir
+    except Exception:
+        # Broad on purpose (matches the same module's `except Exception` at
+        # `_check_credential_store`/`_check_timer`/`_account_dir_for`): we're
+        # only here because a provider's shim is already missing, so whatever
+        # is first on PATH under "ai-accounts" can be anything, and
+        # enumerating exception subtypes has already failed twice here — a
+        # non-UTF-8 file (read_text -> UnicodeDecodeError, a ValueError
+        # subclass), an empty file (splitlines()[0] -> IndexError), a shebang
+        # with too few parent segments (parents[1] -> IndexError), and now a
+        # symlink loop in the resolved path (`Path.resolve()` ->
+        # `RuntimeError` on Python 3.10-3.12; 3.13 no longer raises here).
+        # Per the module docstring's "never raises" bar for this best-effort
+        # diagnostic probe, any failure degrades to "can't tell" instead of
+        # turning one FAIL row into a crash for every provider.
+        return None
+    return None
+
+
+def _check_account_tool(provider: Provider, repo_root: Path) -> _Check:
+    """Short, table-cell-sized result — matches the voice/length of the
+    neighbouring binary/credential_store/profiles checks. The remediation
+    command (and, when it applies, the "installed root differs" note) is
+    reported once for the whole run, not stuffed into every failing row's
+    cell — see `_run_checks`/`_account_tool_footer`.
+    """
+    if have(provider.label):
+        return _Check(True, f"`{provider.label}` on PATH")
+    return _Check(
+        False,
+        f"`{provider.label}` not found on PATH",
+        f"uv tool install --editable {repo_root} --force",
+    )
 
 
 def _check_credential_store(provider: Provider) -> _Check:
@@ -251,29 +329,74 @@ def _check_timer() -> _Check:
     return _Check(True, state)
 
 
-def _run_checks() -> tuple[list[dict[str, object]], _Check]:
+def _run_checks() -> tuple[list[dict[str, object]], _Check, str | None]:
     rows: list[dict[str, object]] = []
+    repo_root = _repo_root()
     for provider in PROVIDERS:
         binary = _check_binary(provider)
+        account_tool = _check_account_tool(provider, repo_root)
         store = _check_credential_store(provider)
         profiles = _check_profiles(provider)
         rows.append(
             {
                 "provider": provider,
                 "binary": binary,
+                "account_tool": account_tool,
                 "credential_store": store,
                 "profiles": profiles,
-                "ok": binary.ok and store.ok and profiles.ok,
+                "ok": binary.ok and account_tool.ok and store.ok and profiles.ok,
             }
         )
-    return rows, _check_timer()
+    account_tool_note = None
+    if any(not row["account_tool"].ok for row in rows):
+        # Only worth the probe when something already failed above, and only
+        # once for the whole run (the answer is the same for every provider —
+        # see the module's "not to fix" note on repeated calls).
+        installed_root = _installed_editable_root()
+        if installed_root is not None and installed_root != repo_root:
+            account_tool_note = (
+                f"the installed ai-accounts tool is an editable install pointing "
+                f"at a different checkout ({installed_root}) than this one "
+                f"({repo_root}) — running the command above from here switches it"
+            )
+    return rows, _check_timer(), account_tool_note
 
 
-def _print_table(rows: list[dict[str, object]], timer: _Check) -> None:
+def _account_tool_footer(rows: list[dict[str, object]], account_tool_note: str | None) -> str | None:
+    """One line covering every provider whose account-tool check failed, or
+    ``None`` if all passed. Printed once below the table/JSON, never per row —
+    see `_check_account_tool`'s docstring for why the cell itself stays short.
+
+    Deliberately doesn't claim a single root cause: `have(provider.label)`
+    returning False is equally consistent with the tool never having been
+    installed, a newly declared entry point awaiting reinstall, or the
+    install directory simply not being on PATH yet.
+    """
+    failing = [row["provider"].label for row in rows if not row["account_tool"].ok]
+    if not failing:
+        return None
+    cmd = next(row["account_tool"].remediation for row in rows if not row["account_tool"].ok)
+    # Multiple short lines, not one long one -- with every provider failing
+    # (a fresh install's first run) a single line naming all of them plus the
+    # command comfortably exceeds a terminal width and would defeat the whole
+    # point of moving this out of the table.
+    lines = [
+        f"Account tool not on PATH for: {', '.join(failing)}",
+        "This can mean the tool was never installed, a newly declared entry "
+        "point needs a reinstall, or its install directory isn't on PATH.",
+        f"Run {_present.highlight_cmd(cmd)}",
+    ]
+    if account_tool_note:
+        lines.append(f"Note: {account_tool_note}.")
+    return "\n".join(lines)
+
+
+def _print_table(rows: list[dict[str, object]], timer: _Check, account_tool_note: str | None) -> None:
     table_rows = [
         {
             "provider": row["provider"].label,
             "binary": _mark(row["binary"]),
+            "account_tool": _mark(row["account_tool"]),
             "credential_store": _mark(row["credential_store"]),
             "profiles": _mark(row["profiles"]),
             "status": _mark(_Check(row["ok"], "OK" if row["ok"] else "issues found")),
@@ -283,6 +406,7 @@ def _print_table(rows: list[dict[str, object]], timer: _Check) -> None:
     columns = [
         ("Provider", "provider"),
         ("Binary", "binary"),
+        ("Account tool", "account_tool"),
         ("Credential store", "credential_store"),
         ("Profiles", "profiles"),
         # "STATE" (not "Status") matches every other `accounts_table` caller
@@ -293,13 +417,17 @@ def _print_table(rows: list[dict[str, object]], timer: _Check) -> None:
     ]
     _present.accounts_table(table_rows, columns)
     print(f"\nAutoswitch timer: {_mark(timer)}")
+    footer = _account_tool_footer(rows, account_tool_note)
+    if footer:
+        print(footer)
 
 
-def _print_json(rows: list[dict[str, object]], timer: _Check) -> None:
+def _print_json(rows: list[dict[str, object]], timer: _Check, account_tool_note: str | None) -> None:
     merged: dict[str, object] = {
         "providers": {
             row["provider"].label: {
                 "binary": row["binary"].to_json(),
+                "account_tool": row["account_tool"].to_json(),
                 "credential_store": row["credential_store"].to_json(),
                 "profiles": row["profiles"].to_json(),
                 "ok": row["ok"],
@@ -307,6 +435,10 @@ def _print_json(rows: list[dict[str, object]], timer: _Check) -> None:
             for row in rows
         },
         "autoswitch_timer": timer.to_json(),
+        # Always present (possibly null) so a scripted consumer doesn't need
+        # to special-case its absence; non-null only when an account-tool
+        # check failed AND the installed editable link points elsewhere.
+        "account_tool_note": account_tool_note,
     }
     merged["ok"] = timer.ok and all(row["ok"] for row in rows)
     print(json.dumps(merged))
@@ -318,9 +450,9 @@ def run_doctor(json_output: bool) -> int:
     Returns 0 always — doctor reports problems, it doesn't fail the CLI
     invocation itself (mirrors ``timer-status``, which is informational too).
     """
-    rows, timer = _run_checks()
+    rows, timer, account_tool_note = _run_checks()
     if json_output:
-        _print_json(rows, timer)
+        _print_json(rows, timer, account_tool_note)
     else:
-        _print_table(rows, timer)
+        _print_table(rows, timer, account_tool_note)
     return 0

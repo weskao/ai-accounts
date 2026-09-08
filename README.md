@@ -128,6 +128,18 @@ quota/HTTP calls — and never fails the process just because a provider isn't
 set up; it reports the gap instead:
 
 - the provider's CLI binary (`codex`, `claude`, `agy`, `grok`, `vibe`, `copilot`) is on `PATH`
+- the provider's own account-tool console script (`codex-accounts`,
+  `claude-accounts`, `agy-accounts`, `grok-accounts`, `vibe-accounts`,
+  `copilot-accounts`) is on `PATH` — distinct from the binary check above: a
+  newly declared `[project.scripts]` entry point stays invisible until the
+  next `uv tool install`/`uv sync`, so a stale install can have the vendor
+  CLI present while its own account tool is a bare shell "command not found"
+  with no other clue. The table cell for a failing row just names the missing
+  tool, matching every other cell's length; the fix — a `uv tool install
+  --editable <repo> --force` you can run as-is, plus, best-effort, a note
+  when the currently installed tool is an editable install pointing at a
+  *different* checkout than the one `doctor` is running from — is printed
+  once below the table, not repeated per provider
 - the OS credential store is reachable (macOS/Windows Keychain/Credential
   Manager, or Linux `secret-tool`)
 - every saved profile's JSON is well-formed and, if it carries a recognizable
@@ -139,24 +151,54 @@ set up; it reports the gap instead:
 ai-accounts doctor
 ```
 
+This is the real output — one wide table plus a short footer — from a fresh
+install where none of the vendor CLIs or account tools are on `PATH` yet, and
+no profiles have been saved for any provider (every existing user's first run
+after upgrading to this version). Captured by pointing each provider's
+`*_ACCOUNT_DIR` override (see "Profile storage" below) at an empty directory,
+so the table reflects a true empty store rather than hand-edited numbers:
+
+```sh
+CODEX_ACCOUNT_DIR=<empty-dir> CLAUDE_ACCOUNT_DIR=<empty-dir> \
+ANTIGRAVITY_ACCOUNT_DIR=<empty-dir> GROK_ACCOUNT_DIR=<empty-dir> \
+VIBE_ACCOUNT_DIR=<empty-dir> COPILOT_ACCOUNT_DIR=<empty-dir> \
+PATH=/usr/bin:/bin ai-accounts doctor
 ```
-codex-accounts
-  Binary            PASS `codex` on PATH
-  Credential store  PASS reachable
-  Profiles          PASS 2 profile(s) checked
-  Status            PASS OK
-────────────────────────────────────────
-grok-accounts
-  Binary            FAIL `grok` not found on PATH
-  Credential store  PASS reachable
-  Profiles          FAIL 1 profile(s) checked, expired: work
-  Status            FAIL issues found
+
+```
+┌──────────────────┬──────────────────────────────────┬───────────────────────────────────────────┬──────────────────┬────────────────────────┬───────────────────┐
+│ Provider         │ Binary                           │ Account tool                              │ Credential store │ Profiles               │ STATE             │
+├──────────────────┼──────────────────────────────────┼───────────────────────────────────────────┼──────────────────┼────────────────────────┼───────────────────┤
+│ codex-accounts   │ FAIL `codex` not found on PATH   │ FAIL `codex-accounts` not found on PATH   │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ claude-accounts  │ FAIL `claude` not found on PATH  │ FAIL `claude-accounts` not found on PATH  │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ agy-accounts     │ FAIL `agy` not found on PATH     │ FAIL `agy-accounts` not found on PATH     │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ grok-accounts    │ FAIL `grok` not found on PATH    │ FAIL `grok-accounts` not found on PATH    │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ vibe-accounts    │ FAIL `vibe` not found on PATH    │ FAIL `vibe-accounts` not found on PATH    │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ copilot-accounts │ FAIL `copilot` not found on PATH │ FAIL `copilot-accounts` not found on PATH │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+└──────────────────┴──────────────────────────────────┴───────────────────────────────────────────┴──────────────────┴────────────────────────┴───────────────────┘
 
 Autoswitch timer: PASS installed
+Account tool not on PATH for: codex-accounts, claude-accounts, agy-accounts, grok-accounts, vibe-accounts, copilot-accounts
+This can mean the tool was never installed, a newly declared entry point needs a reinstall, or its install directory isn't on PATH.
+Run uv tool install --editable <repo> --force
 ```
 
+Once a provider's CLI and account tool are actually on `PATH`, its "Binary"
+and "Account tool" cells read `PASS` instead — an "Account tool" cell never
+carries the fix, only the fact; the fix is the "Run ..." line below the
+table, printed once for however many providers are missing theirs, not
+repeated per row. (`STATE`, not "Status" — matches the header every other
+`accounts_table` caller in this repo uses.) When `doctor` can also tell that
+the currently installed tool is an editable install pointing at a
+*different* checkout than the one it's running from, it appends one more
+line noting that under the "Run ..." line.
+
 `--json` prints one JSON document (never one per provider — same merge shape
-as `list --json`/`usage --json` above), keyed by provider label:
+as `list --json`/`usage --json` above), keyed by provider label. A failing
+`account_tool` check carries a `remediation` field with the same install
+command shown in the footer above (kept in full — only the table cell got
+shorter), and the top-level `account_tool_note` key mirrors the optional
+"different checkout" note (`null` when it doesn't apply):
 
 ```sh
 ai-accounts doctor --json | python3 -m json.tool
