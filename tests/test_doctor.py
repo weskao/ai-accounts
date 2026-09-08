@@ -207,7 +207,8 @@ class InstalledEditableRootTest(unittest.TestCase):
     """Direct coverage of `_installed_editable_root`'s shebang/.pth parsing --
     the account-tool tests above mock this function away entirely, so its
     actual body (where the CRITICAL non-UTF-8 crash lived) was previously
-    untested. Uses a fabricated PATH, never the real environment.
+    untested. Mocks script discovery so extensionless fixtures are also read
+    on Windows, where PATH lookup normally requires a PATHEXT suffix.
     """
 
     @staticmethod
@@ -237,7 +238,7 @@ class InstalledEditableRootTest(unittest.TestCase):
                 f"{package_dir}\n", encoding="utf-8"
             )
 
-            with mock.patch.dict(os.environ, {"PATH": str(bin_dir)}):
+            with mock.patch.object(doctor.shutil, "which", return_value=str(bin_dir / "ai-accounts")):
                 result = doctor._installed_editable_root()
             self.assertEqual(result, src_dir.resolve())
 
@@ -250,7 +251,7 @@ class InstalledEditableRootTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp)
             self._write_executable(bin_dir / "ai-accounts", b"\xff\xfe\x00\x01garbage")
-            with mock.patch.dict(os.environ, {"PATH": str(bin_dir)}):
+            with mock.patch.object(doctor.shutil, "which", return_value=str(bin_dir / "ai-accounts")):
                 result = doctor._installed_editable_root()  # must not raise
             self.assertIsNone(result)
 
@@ -297,7 +298,7 @@ class InstalledEditableRootTest(unittest.TestCase):
                 f"{loop_a / 'ai_accounts'}\n", encoding="utf-8"
             )
 
-            with mock.patch.dict(os.environ, {"PATH": str(bin_dir)}):
+            with mock.patch.object(doctor.shutil, "which", return_value=str(bin_dir / "ai-accounts")):
                 result = doctor._installed_editable_root()  # must not raise
             self.assertTrue(result is None or isinstance(result, Path))
 
@@ -325,7 +326,9 @@ class InstalledEditableRootTest(unittest.TestCase):
                 f"{loop_a / 'ai_accounts'}\n", encoding="utf-8"
             )
 
-            with mock.patch.dict(os.environ, {"PATH": str(bin_dir)}):
+            with mock.patch.dict(os.environ, {"PATH": str(bin_dir)}), mock.patch.object(
+                doctor.shutil, "which", return_value=str(bin_dir / "ai-accounts")
+            ), mock.patch.object(doctor, "have", return_value=False):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     rc = doctor.run_doctor(False)  # must not raise
@@ -336,7 +339,7 @@ class InstalledEditableRootTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp)
             self._write_executable(bin_dir / "ai-accounts", b"")
-            with mock.patch.dict(os.environ, {"PATH": str(bin_dir)}):
+            with mock.patch.object(doctor.shutil, "which", return_value=str(bin_dir / "ai-accounts")):
                 result = doctor._installed_editable_root()  # must not raise
             self.assertIsNone(result)
 
@@ -347,7 +350,9 @@ class InstalledEditableRootTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp)
             self._write_executable(bin_dir / "ai-accounts", b"\xff\xfe")
-            with mock.patch.dict(os.environ, {"PATH": str(bin_dir)}):
+            with mock.patch.dict(os.environ, {"PATH": str(bin_dir)}), mock.patch.object(
+                doctor.shutil, "which", return_value=str(bin_dir / "ai-accounts")
+            ), mock.patch.object(doctor, "have", return_value=False):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     rc = doctor.run_doctor(False)  # must not raise
@@ -381,7 +386,9 @@ class DoctorOutputTest(unittest.TestCase):
         # narrow (no wrapped remediation command inside a cell) and the full
         # `uv tool install ...` command must appear exactly once, below the
         # table.
-        with self._patched(), mock.patch.object(doctor, "have", return_value=False):
+        with self._patched(), mock.patch.object(doctor, "have", return_value=False), mock.patch.object(
+            doctor, "go_keyring_available", return_value=(True, "")
+        ):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 doctor.run_doctor(False)
