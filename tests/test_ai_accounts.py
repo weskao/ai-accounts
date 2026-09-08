@@ -42,18 +42,21 @@ class AiAccountsTest(unittest.TestCase):
         # though codex is declared first in _TOOLS.
         codex_may_finish = threading.Event()
         completed_yields = 0
+        # 6 providers total, 5 of them not codex — codex is released only once
+        # all 5 others have been yielded.
+        _NON_CODEX_COUNT = 5
 
-        class ReleaseCodexAfterFourYields:
+        class ReleaseCodexAfterOthersYield:
             def __init__(self, message: str) -> None:
                 pass
 
-            def __enter__(self) -> "ReleaseCodexAfterFourYields":
+            def __enter__(self) -> "ReleaseCodexAfterOthersYield":
                 return self
 
             def __exit__(self, *exc_info: object) -> None:
                 nonlocal completed_yields
                 completed_yields += 1
-                if completed_yields == 4:
+                if completed_yields == _NON_CODEX_COUNT:
                     codex_may_finish.set()
 
         def run(module: str) -> subprocess.CompletedProcess[str]:
@@ -65,11 +68,12 @@ class AiAccountsTest(unittest.TestCase):
                 "ai_accounts.gemini_accounts": "AGY-TABLE",
                 "ai_accounts.grok_accounts": "GROK-TABLE",
                 "ai_accounts.vibe_accounts": "VIBE-TABLE",
+                "ai_accounts.copilot_accounts": "COPILOT-TABLE",
             }[module]
             return _fake(module, table)
 
         buf = io.StringIO()
-        with mock.patch.object(aa, "Spinner", ReleaseCodexAfterFourYields):
+        with mock.patch.object(aa, "Spinner", ReleaseCodexAfterOthersYield):
             with mock.patch.object(aa, "_run_list", side_effect=run):
                 with redirect_stdout(buf):
                     rc = aa.cmd_list()
@@ -79,12 +83,14 @@ class AiAccountsTest(unittest.TestCase):
         self.assertLess(text.index("AGY-TABLE"), text.index("CODEX-TABLE"))
         self.assertLess(text.index("GROK-TABLE"), text.index("CODEX-TABLE"))
         self.assertLess(text.index("VIBE-TABLE"), text.index("CODEX-TABLE"))
+        self.assertLess(text.index("COPILOT-TABLE"), text.index("CODEX-TABLE"))
         for label in (
             "codex-accounts",
             "claude-accounts",
             "agy-accounts",
             "grok-accounts",
             "vibe-accounts",
+            "copilot-accounts",
         ):
             self.assertIn(label, text)
 
@@ -109,6 +115,7 @@ class AiAccountsTest(unittest.TestCase):
             "ai_accounts.gemini_accounts": _fake("ai_accounts.gemini_accounts", "AGY-TABLE"),
             "ai_accounts.grok_accounts": _fake("ai_accounts.grok_accounts", "GROK-TABLE"),
             "ai_accounts.vibe_accounts": _fake("ai_accounts.vibe_accounts", "VIBE-TABLE"),
+            "ai_accounts.copilot_accounts": _fake("ai_accounts.copilot_accounts", "COPILOT-TABLE"),
         }
         with mock.patch.object(aa, "Spinner", RecordingSpinner):
             with mock.patch.object(aa, "_run_list", side_effect=lambda m: outputs[m]):
@@ -117,7 +124,8 @@ class AiAccountsTest(unittest.TestCase):
         self.assertEqual(
             messages,
             [
-                "Fetching accounts from 5 providers…",
+                "Fetching accounts from 6 providers…",
+                "Fetching remaining 5 providers…",
                 "Fetching remaining 4 providers…",
                 "Fetching remaining 3 providers…",
                 "Fetching remaining 2 providers…",
@@ -138,6 +146,105 @@ class AiAccountsTest(unittest.TestCase):
     def test_unknown_command_returns_1(self) -> None:
         with redirect_stdout(io.StringIO()):
             self.assertEqual(aa.main(["bogus"]), 1)
+
+    def test_json_list_merges_every_provider_into_one_object(self) -> None:
+        # `list --json` must go through the capturing parallel path (_run_json),
+        # never cmd_forward, and merge each provider's own JSON array into one
+        # document keyed by provider label — in providers.PROVIDERS order.
+        entries = {
+            "ai_accounts.codex_accounts": [{"name": "work", "active": True, "usage": None, "no_quota_api": False}],
+            "ai_accounts.claude_accounts": [{"name": "work", "active": True, "usage": None, "no_quota_api": False}],
+            "ai_accounts.gemini_accounts": [],
+            "ai_accounts.grok_accounts": [{"name": "work", "active": False, "usage": None, "no_quota_api": True}],
+            "ai_accounts.vibe_accounts": [],
+            "ai_accounts.copilot_accounts": [],
+        }
+
+        def run(module: str, command: str) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(command, "list")
+            return subprocess.CompletedProcess(
+                args=["python", "-m", module, "list", "--json"],
+                returncode=0,
+                stdout=json.dumps(entries[module]),
+                stderr="",
+            )
+
+        buf = io.StringIO()
+        with mock.patch.object(aa, "_run_json", side_effect=run):
+            with redirect_stdout(buf):
+                rc = aa.main(["list", "--json"])
+
+        self.assertEqual(rc, 0)
+        merged = json.loads(buf.getvalue())
+        self.assertEqual(
+            list(merged.keys()),
+            [
+                "codex-accounts",
+                "claude-accounts",
+                "agy-accounts",
+                "grok-accounts",
+                "vibe-accounts",
+                "copilot-accounts",
+            ],
+        )
+        self.assertEqual(merged["codex-accounts"], entries["ai_accounts.codex_accounts"])
+        self.assertEqual(merged["grok-accounts"], entries["ai_accounts.grok_accounts"])
+
+    def test_json_usage_child_failure_becomes_error_field_not_a_crash(self) -> None:
+        # A child that exits non-zero (or prints unparseable output) must not
+        # crash the umbrella merge — it surfaces as {"error": "..."} for that
+        # provider's key while the other providers still merge normally.
+        def run(module: str, command: str) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(command, "usage")
+            if module == "ai_accounts.gemini_accounts":
+                return subprocess.CompletedProcess(
+                    args=["python", "-m", module, "usage", "--json"],
+                    returncode=1,
+                    stdout="",
+                    stderr="boom: quota API unreachable",
+                )
+            if module == "ai_accounts.grok_accounts":
+                return subprocess.CompletedProcess(
+                    args=["python", "-m", module, "usage", "--json"],
+                    returncode=0,
+                    stdout="not json",
+                    stderr="",
+                )
+            return subprocess.CompletedProcess(
+                args=["python", "-m", module, "usage", "--json"],
+                returncode=0,
+                stdout=json.dumps([]),
+                stderr="",
+            )
+
+        buf = io.StringIO()
+        with mock.patch.object(aa, "_run_json", side_effect=run):
+            with redirect_stdout(buf):
+                rc = aa.main(["usage", "--json"])
+
+        self.assertEqual(rc, 0)
+        merged = json.loads(buf.getvalue())
+        self.assertEqual(merged["agy-accounts"], {"error": "boom: quota API unreachable"})
+        self.assertIn("error", merged["grok-accounts"])
+        self.assertEqual(merged["codex-accounts"], [])
+
+    def test_forward_without_json_flag_is_unaffected_by_json_dispatch(self) -> None:
+        # Default (non-json) `usage` must still go through cmd_forward with
+        # live/inherited stdio — the --json branch must not intercept it.
+        calls = []
+
+        def run(cmd, *a, **k):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        with mock.patch.object(aa, "cmd_json") as cmd_json, \
+                mock.patch.object(aa.subprocess, "run", side_effect=run):
+            with redirect_stdout(io.StringIO()):
+                rc = aa.main(["usage"])
+
+        self.assertEqual(rc, 0)
+        cmd_json.assert_not_called()
+        self.assertEqual(len(calls), len(aa._TOOLS))
 
     def test_run_list_forwards_the_parents_detected_width_as_columns(self) -> None:
         # `_run_list` captures each provider's stdout via a pipe, so the child
@@ -200,6 +307,7 @@ class AiAccountsTest(unittest.TestCase):
                 "ai_accounts.gemini_accounts",
                 "ai_accounts.grok_accounts",
                 "ai_accounts.vibe_accounts",
+                "ai_accounts.copilot_accounts",
             ],
         )
         for c in calls:

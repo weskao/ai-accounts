@@ -56,7 +56,9 @@ from .usage_format import (
     credential_status_prefix,
     format_unix_time_compact,
     format_usage_window,
+    json_empty_list,
     print_no_active_account,
+    usage_window_to_json,
 )
 
 JsonValue: TypeAlias = (
@@ -83,9 +85,12 @@ USAGE
   agy-accounts save [<name>]         Save the current login as a reusable profile;
                                      no name = derive it from the active account's
                                      email (needs one quota lookup)
-  agy-accounts list [--refresh]      List saved profiles (table view); --refresh
-                                     fetches live quota when cached-list mode is on
-  agy-accounts usage                 Show only the active account's quota row
+  agy-accounts list [--refresh] [--json]
+                                     List saved profiles (table view); --refresh
+                                     fetches live quota when cached-list mode is on;
+                                     --json prints one JSON array instead of the table
+  agy-accounts usage [--json]        Show only the active account's quota row;
+                                     --json prints one JSON array instead of the table
   agy-accounts switch [<name>]       Switch by name; no name = interactive picker
   agy-accounts remove [<name>]       Delete by name; no name = interactive picker
   agy-accounts refresh [<name>]      Renew tokens via the Google OAuth refresh grant
@@ -931,11 +936,17 @@ _CACHE_TOGGLE_ON_CMD = highlight_cmd("ai-accounts config set agy_list_cached_usa
 
 
 def cmd_list(
-    *, fetch_usage: bool = True, only_active: bool = False, refresh: bool = False
+    *,
+    fetch_usage: bool = True,
+    only_active: bool = False,
+    refresh: bool = False,
+    json_output: bool = False,
 ) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
+        if json_empty_list(json_output):
+            return 0
         log_yellow("⚠️  No saved Antigravity profiles.")
         print(
             f"{DIM}   Add one with: agy-accounts save <profile_name>{RESET}",
@@ -948,6 +959,8 @@ def cmd_list(
     active_profile = _active_profile(active_text)
     if only_active:
         if active_profile is None:
+            if json_empty_list(json_output):
+                return 0
             print_no_active_account("Antigravity", "agy-accounts")
             return 0
         # Filter before the fetch loop so only the active profile's session is
@@ -978,6 +991,7 @@ def cmd_list(
         None, None, None, None, None, None, None, None
     )
     rows: list[dict[str, str]] = []
+    json_entries: list[JsonDict] = []
     # Reuse only identical snapshots within this invocation. Different tokens
     # still need their own check, even when their account identity matches.
     fetched: dict[str, tuple[gemini_usage.UsageSnapshot, str | None]] = {}
@@ -1048,9 +1062,29 @@ def cmd_list(
                         "status": status,
                     }
                 )
+                if json_output:
+                    json_entries.append(
+                        {
+                            "name": name,
+                            "active": is_active,
+                            "usage": {
+                                "gemini_session": usage_window_to_json(usage.gemini_session),
+                                "gemini_weekly": usage_window_to_json(usage.gemini_weekly),
+                                "other_session": usage_window_to_json(usage.other_session),
+                                "other_weekly": usage_window_to_json(usage.other_weekly),
+                                "refreshed_at": usage.refreshed_at,
+                                "error": usage.error,
+                            },
+                            "no_quota_api": False,
+                        }
+                    )
     finally:
         if live_query:
             _restore_cli_auth(restore_text)
+
+    if json_output:
+        print(json.dumps(json_entries))
+        return 0
 
     if only_active:
         print(f"{BOLD}Current Antigravity account{RESET}")
@@ -1921,12 +1955,14 @@ def main(argv: list[str] | None = None) -> int:
     if command == "save":
         return cmd_save(rest[0] if rest else None)
     if command == "list":
-        if rest and rest != ["--refresh"]:
-            log_red("Usage: agy-accounts list [--refresh]")
+        json_output = "--json" in rest
+        list_rest = [arg for arg in rest if arg != "--json"]
+        if list_rest and list_rest != ["--refresh"]:
+            log_red("Usage: agy-accounts list [--refresh] [--json]")
             return 1
-        return cmd_list(refresh=bool(rest))
+        return cmd_list(refresh=bool(list_rest), json_output=json_output)
     if command == "usage":
-        return cmd_list(only_active=True)
+        return cmd_list(only_active=True, json_output="--json" in rest)
     if command == "switch":
         if not rest:
             return cmd_switch_interactive()

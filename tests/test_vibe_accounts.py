@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -177,6 +178,27 @@ class VibeAccountsTests(unittest.TestCase):
             self.assertEqual(va.cmd_list(only_active=True), 0)
         self.assertNotIn("PROFILE", _ANSI_RE.sub("", out.getvalue()))  # no table
         self.assertIn("No active Vibe account", _ANSI_RE.sub("", err.getvalue()))
+
+    def test_list_json_round_trips_profile_with_no_quota_api(self) -> None:
+        self.assertTrue(va._write_env(va._auth_file(), _auth()))
+        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+        (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(va.main(["list", "--json"]), 0)
+        text = output.getvalue()
+        self.assertNotIn("\033[", text)  # no ANSI in --json output
+        self.assertEqual(
+            json.loads(text),
+            [{"name": "personal", "active": True, "usage": None, "no_quota_api": True}],
+        )
+
+    def test_usage_json_empty_array_when_no_active_profile(self) -> None:
+        self.assertTrue(va._write_json(self.account_dir / "saved.json", _auth()))
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(va.main(["usage", "--json"]), 0)
+        self.assertEqual(json.loads(output.getvalue()), [])
 
     def test_list_never_prints_tokens(self) -> None:
         self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))

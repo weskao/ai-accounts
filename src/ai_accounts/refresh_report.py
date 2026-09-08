@@ -22,7 +22,8 @@ from dataclasses import dataclass, replace
 
 from . import _present
 from . import i18n
-from ._utils import BLUE, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW
+from ._utils import DIM, RED, RESET
+from .providers import PROVIDERS
 
 # The provider section header `ai_accounts._header` prints, and the two
 # revoked-token wordings every provider's refresh path uses: the per-account
@@ -40,13 +41,7 @@ UNKNOWN_PROVIDER = "unknown"
 
 # One color per provider so a profile name carries its provider even when the
 # eye skips the group heading. Unlisted providers fall back to dim-less plain.
-PROVIDER_COLORS = {
-    "codex": CYAN,
-    "claude": MAGENTA,
-    "agy": BLUE,
-    "grok": YELLOW,
-    "vibe": GREEN,
-}
+PROVIDER_COLORS = {p.key: p.report_color for p in PROVIDERS}
 
 
 @dataclass(frozen=True, slots=True)

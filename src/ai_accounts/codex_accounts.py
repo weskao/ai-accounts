@@ -67,8 +67,10 @@ USAGE
   codex-accounts current               Alias for `who`
   codex-accounts save [<name>]         Save the current login as a reusable profile;
                                        no name = derive from active account's email
-  codex-accounts list                  List profiles with usage (never refreshes tokens)
-  codex-accounts usage                 Show only the active account's usage row
+  codex-accounts list [--json]         List profiles with usage (never refreshes tokens);
+                                       --json prints one JSON array instead of the table
+  codex-accounts usage [--json]        Show only the active account's usage row;
+                                       --json prints one JSON array instead of the table
   codex-accounts switch [<name>]       Switch by name; no name = interactive picker
   codex-accounts autoswitch            Switch away from the active profile if it is
                                        low on quota (see ~/.ai-accounts/config.json)
@@ -793,10 +795,12 @@ def cmd_save(name: str | None = None) -> int:
     return _save_profile_auth(name, auth_text)
 
 
-def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
+def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output: bool = False) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
+        if usage_format.json_empty_list(json_output):
+            return 0
         log_yellow("⚠️  No saved Codex profiles.")
         print(f"{DIM}   Add one with: codex-accounts save <profile_name>{RESET}", file=sys.stderr)
         return 0
@@ -806,6 +810,8 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
     active_profile = _active_profile(active_text)
     if only_active:
         if active_profile is None:
+            if usage_format.json_empty_list(json_output):
+                return 0
             usage_format.print_no_active_account("Codex", "codex-accounts")
             return 0
         # Filter before fetching so only the active account's usage is queried.
@@ -855,6 +861,24 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
             )
     else:
         usages = [empty_usage] * len(profile_claims)
+
+    if json_output:
+        entries = [
+            {
+                "name": profile_path.stem,
+                "active": profile_path == active_profile,
+                "usage": {
+                    "hourly": usage_format.usage_window_to_json(usage.hourly),
+                    "weekly": usage_format.usage_window_to_json(usage.weekly),
+                    "refreshed_at": usage.refreshed_at,
+                    "error": usage.error,
+                },
+                "no_quota_api": False,
+            }
+            for (profile_path, _claims), usage in zip(profile_claims, usages)
+        ]
+        print(json.dumps(entries))
+        return 0
 
     rows = []
     for (profile_path, claims), usage in zip(profile_claims, usages):
@@ -1295,9 +1319,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "save":
         return cmd_save(rest[0] if rest else None)
     if command == "list":
-        return cmd_list()
+        return cmd_list(json_output="--json" in rest)
     if command == "usage":
-        return cmd_list(only_active=True)
+        return cmd_list(only_active=True, json_output="--json" in rest)
     if command == "switch":
         if not rest:
             return cmd_switch_interactive()

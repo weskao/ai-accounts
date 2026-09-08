@@ -382,9 +382,13 @@ MESSAGES: dict[str, dict[str, str]] = {
 
 用法
   ai-accounts                        顯示這份說明（可用的指令）
-  ai-accounts list                   列出所有提供者的帳號（各提供者並行執行）
+  ai-accounts list [--json]          列出所有提供者的帳號（各提供者並行執行）；
+                                      --json 會把每個提供者自己的 --json 輸出合併成
+                                      一個以提供者為鍵的物件（例如 "codex-accounts": [...]）；
+                                      失敗的提供者改回傳 {"error": "..."}
   ai-accounts who | current          顯示每個提供者目前作用中的帳號
-  ai-accounts usage                  只顯示每個提供者作用中帳號的用量列
+  ai-accounts usage [--json]         只顯示每個提供者作用中帳號的用量列；
+                                      --json 以相同方式合併每個提供者的 --json 輸出
   ai-accounts refresh [<name>|--all] 重新整理每個提供者的 token
   ai-accounts sync                   把作用中的登入同步回其帳號檔案，每個提供者都做
   ai-accounts save [<name>]          在每個提供者儲存目前的登入；
@@ -407,14 +411,23 @@ MESSAGES: dict[str, dict[str, str]] = {
                                       每 1800 秒／30 分鐘一次）
   ai-accounts uninstall-timer       移除已排程的自動切換檢查
   ai-accounts timer-status          回報自動切換檢查是否已排程
+  ai-accounts doctor [--json]        離線健康檢查：各提供者的 CLI 執行檔是否在
+                                      PATH 上、憑證儲存區是否可連線、已存帳號
+                                      JSON 是否正確且未過期、自動切換計時器狀態；
+                                      預設印出成功/失敗表格，--json 則印出單一
+                                      JSON 文件
   ai-accounts -h | --help | help     顯示這份說明
 
-每個指令都會轉發給 codex-accounts、claude-accounts、agy-accounts、grok-accounts 與 vibe-accounts。
+每個指令都會轉發給 codex-accounts、claude-accounts、agy-accounts、grok-accounts、
+vibe-accounts 與 copilot-accounts。
 `list` 會同時執行並在每個表格完成時立即印出（最快的提供者最先顯示），
 中間以進度指示器顯示還有幾個提供者在抓取；其他每個指令都會一次對一個
 提供者執行、保留即時輸出，讓互動式選擇器與登入流程正常運作、顏色也會保留。
 指令後的任何參數（例如帳號名稱或 `--all`）都會原樣轉發給每個提供者 —
 但 `autoswitch` 之後只接受本機的 `setup` 動作，其餘多餘參數一律拒絕。
+`list`／`usage` 之後的 `--json` 是另一個例外：一樣並行執行每個提供者，
+但改為擷取輸出（不使用即時 stdio），把每個提供者自己的 `--json` 文件
+合併成一個物件後印出一次。
 """,
     },
     "help.codex": {
@@ -425,8 +438,10 @@ MESSAGES: dict[str, dict[str, str]] = {
   codex-accounts current               `who` 的別名
   codex-accounts save [<name>]         儲存目前的登入為可重複使用的帳號；
                                        不給名稱 = 依作用中帳號的 email 決定
-  codex-accounts list                  列出帳號與用量（不會重新整理 token）
-  codex-accounts usage                 只顯示作用中帳號的用量列
+  codex-accounts list [--json]         列出帳號與用量（不會重新整理 token）；
+                                       --json 改印一份 JSON 陣列，取代表格
+  codex-accounts usage [--json]        只顯示作用中帳號的用量列；
+                                       --json 改印一份 JSON 陣列，取代表格
   codex-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
   codex-accounts autoswitch            若作用中帳號配額偏低就切換
                                        （見 ~/.ai-accounts/config.json）
@@ -463,8 +478,10 @@ $CODEX_ACCOUNT_DIR 覆寫）；舊的 ~/.codex/accounts 位置會自動搬移過
   claude-accounts current               `who` 的別名
   claude-accounts save [<name>]         儲存目前的登入為可重複使用的帳號；
                                         不給名稱 = 依作用中帳號的 email 決定
-  claude-accounts list                  列出帳號與用量（不會重新整理 token）
-  claude-accounts usage                 只顯示作用中帳號的用量列
+  claude-accounts list [--json]         列出帳號與用量（不會重新整理 token）；
+                                        --json 改印一份 JSON 陣列，取代表格
+  claude-accounts usage [--json]        只顯示作用中帳號的用量列；
+                                        --json 改印一份 JSON 陣列，取代表格
   claude-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
   claude-accounts autoswitch            若作用中帳號配額偏低就切換
                                         （見 ~/.ai-accounts/config.json）
@@ -507,9 +524,12 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
   agy-accounts save [<name>]         儲存目前的登入為可重複使用的帳號；
                                      不給名稱 = 依作用中帳號的 email 決定
                                      （需要查一次配額）
-  agy-accounts list [--refresh]      列出已存帳號（表格檢視）；--refresh
-                                     會在快取模式下強制抓取即時配額
-  agy-accounts usage                 只顯示作用中帳號的配額列
+  agy-accounts list [--refresh] [--json]
+                                     列出已存帳號（表格檢視）；--refresh
+                                     會在快取模式下強制抓取即時配額；
+                                     --json 改印一份 JSON 陣列，取代表格
+  agy-accounts usage [--json]        只顯示作用中帳號的配額列；
+                                     --json 改印一份 JSON 陣列，取代表格
   agy-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
   agy-accounts remove [<name>]       依名稱刪除；不給名稱 = 互動式選擇器
   agy-accounts refresh [<name>]      透過 Google OAuth 更新授權更新 token
@@ -550,8 +570,11 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
   grok-accounts who                   顯示目前登入的 Grok 帳號
   grok-accounts current               `who` 的別名
   grok-accounts save [<name>]         儲存目前的登入；不給名稱 = 依 email 決定
-  grok-accounts list                  列出已存帳號
-  grok-accounts usage                 只顯示作用中帳號（session 與到期時間）
+  grok-accounts list [--json]         列出已存帳號；--json 改印一份 JSON 陣列，取代表格
+                                       （沒有配額 API：usage 一律為 null，
+                                       no_quota_api: true）
+  grok-accounts usage [--json]        只顯示作用中帳號（session 與到期時間）；
+                                       --json 改印一份 JSON 陣列，取代表格
   grok-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
   grok-accounts remove [<name>]       刪除已存帳號；不給名稱 = 互動式選擇器
   grok-accounts refresh [<name>]      更新作用中／指定帳號的 session token
@@ -595,8 +618,11 @@ $GROK_ACCOUNT_DIR 覆寫）。請把這個目錄當成機密資料 — 帳號內
   vibe-accounts who                   顯示目前登入的 Vibe 帳號
   vibe-accounts current               `who` 的別名
   vibe-accounts save [<name>]         儲存目前的登入；不給名稱 = 依金鑰決定
-  vibe-accounts list                  列出已存帳號
-  vibe-accounts usage                 只顯示作用中帳號
+  vibe-accounts list [--json]         列出已存帳號；--json 改印一份 JSON 陣列，取代表格
+                                       （沒有配額 API：usage 一律為 null，
+                                       no_quota_api: true）
+  vibe-accounts usage [--json]        只顯示作用中帳號；
+                                       --json 改印一份 JSON 陣列，取代表格
   vibe-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
   vibe-accounts remove [<name>]       刪除已存帳號；不給名稱 = 互動式選擇器
   vibe-accounts refresh [<name>]      驗證／更新作用中或指定帳號的 session
@@ -624,6 +650,53 @@ $VIBE_ACCOUNT_DIR 覆寫）。請把這個目錄當成機密資料 — 帳號內
 Vibe 會把即時金鑰存在作業系統鑰匙圈（macOS：login keychain，
 service 名稱 "ai.mistral.vibe"），若無則改用 $VIBE_HOME/.env；
 這些指令會讀寫 vibe 自己實際使用的那個儲存區。
+""",
+    },
+    "help.copilot": {
+        "zh-TW": """copilot-accounts — 管理多組 GitHub Copilot CLI 登入帳號
+
+用法
+  copilot-accounts who                   顯示目前登入的 Copilot 帳號
+  copilot-accounts current               `who` 的別名
+  copilot-accounts save [<name>]         儲存目前的登入；不給名稱 = 依 GitHub
+                                          帳號決定
+  copilot-accounts list [--json]         列出已存帳號與 premium 配額；
+                                          --json 改印一份 JSON 陣列，取代表格
+  copilot-accounts usage [--json]        只顯示作用中帳號；
+                                          --json 改印一份 JSON 陣列，取代表格
+  copilot-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
+  copilot-accounts remove [<name>]       刪除已存帳號；不給名稱 = 互動式選擇器
+  copilot-accounts refresh [<name>]      驗證該帳號的 token 是否仍然有效
+  copilot-accounts refresh --all         驗證所有已存帳號的 token
+  copilot-accounts sync                  把作用中的登入複製回對應的帳號檔案
+  copilot-accounts autoswitch            回報 Copilot 目前的自動切換支援狀況
+  copilot-accounts login-switch <name>   全新 Copilot CLI 登入並存成 <name>
+  copilot-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
+  copilot-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
+  copilot-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  copilot-accounts -h | --help | help    顯示這份說明
+
+範例
+  copilot-accounts login-switch personal
+  copilot-accounts login-switch work
+  copilot-accounts list
+  copilot-accounts switch
+  copilot-accounts switch personal
+  copilot-accounts who
+
+帳號存放於 ~/.ai-accounts/copilot/accounts/<name>.json（可用
+$COPILOT_ACCOUNT_DIR 覆寫）。請把這個目錄當成機密資料 — 已存帳號內含
+GitHub token。
+
+即時 token 依序查詢 Copilot CLI 設定目錄（~/.copilot，遵循
+$XDG_CONFIG_HOME）、作業系統鑰匙圈，最後是
+$COPILOT_GITHUB_TOKEN／$GH_TOKEN／$GITHUB_TOKEN。已匯出的環境變數
+token 會蓋過這些指令寫入的任何值，因此 `switch` 在偵測到時會提出警告。
+
+Copilot 的配額端點（premium/chat/completions 用量）尚未對照真實登入
+驗證過；查詢失敗時會像 grok／vibe 一樣退回「沒有配額 API」，`list`／
+`usage` 不會因此失敗。`autoswitch` 目前會回報配額 API 尚未驗證、暫不
+支援自動切換。
 """,
     },
 }

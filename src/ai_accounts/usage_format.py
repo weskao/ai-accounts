@@ -72,6 +72,16 @@ def capitalize_first(text: str | None) -> str | None:
     return text[:1].upper() + text[1:]
 
 
+def json_empty_list(json_output: bool) -> bool:
+    """For a --json ``list``/``usage`` call with nothing to report: print ``[]``
+    and report whether the caller should return 0 immediately. No-op (returns
+    False) when not in json mode, so callers can write
+    ``if json_empty_list(json_output): return 0`` without a separate branch."""
+    if json_output:
+        print(json.dumps([]))
+    return json_output
+
+
 def print_no_active_account(provider: str, command: str) -> None:
     """Print the shared "no active account" warning + save/switch hint for a `usage` subcommand."""
     log_yellow(f"⚠️  No active {provider} account detected.")
@@ -239,6 +249,33 @@ def format_usage_window(window: UsageWindow | None, window_kind: str, percentage
     percent = percentage_text or f"{window.percentage}%"
     remaining = format_reset_remaining(window.reset_time, include_days=window_kind != "5h")
     return f"{percent} · {remaining}"
+
+
+def no_quota_json_entries(profiles: list[Path], active: Path | None) -> list[dict[str, object]]:
+    """``--json`` entries for a provider with no quota API at all (grok/vibe):
+    every profile gets ``usage: null`` and ``no_quota_api: true`` rather than
+    silently omitting the field. Shared so the two providers' JSON shape can't
+    drift apart — see :func:`usage_window_to_json` for the quota-API side."""
+    return [
+        {"name": path.stem, "active": path == active, "usage": None, "no_quota_api": True}
+        for path in profiles
+    ]
+
+
+def usage_window_to_json(window: UsageWindow | None) -> dict[str, int | None] | None:
+    """Plain-dict form of one usage window for ``--json`` output: percent used,
+    percent remaining, the raw reset epoch, and the window length — no ANSI, no
+    formatting. Shared by every provider whose quota API backs onto
+    :class:`UsageWindow` (codex/claude/agy); providers with no quota API at all
+    (grok/vibe) never call this — they set ``no_quota_api`` instead."""
+    if window is None:
+        return None
+    return {
+        "percent": window.percentage,
+        "remaining_percent": 100 - window.percentage,
+        "reset_time": window.reset_time,
+        "window_minutes": window.window_minutes,
+    }
 
 
 def _format_error(error: str) -> str:

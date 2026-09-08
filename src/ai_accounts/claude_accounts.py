@@ -34,7 +34,9 @@ from .usage_format import (
     capitalize_first,
     format_unix_time_compact,
     format_usage_window,
+    json_empty_list,
     print_no_active_account,
+    usage_window_to_json,
 )
 from ._present import (
     _ANSI_RE as _ANSI_RE,
@@ -82,8 +84,10 @@ USAGE
   claude-accounts current               Alias for `who`
   claude-accounts save [<name>]         Save the current login as a reusable profile;
                                         no name = derive one from the active account's email
-  claude-accounts list                  List profiles with usage (never refreshes tokens)
-  claude-accounts usage                 Show only the active account's usage row
+  claude-accounts list [--json]         List profiles with usage (never refreshes tokens);
+                                        --json prints one JSON array instead of the table
+  claude-accounts usage [--json]        Show only the active account's usage row;
+                                        --json prints one JSON array instead of the table
   claude-accounts switch [<name>]       Switch by name; no name = interactive picker
   claude-accounts autoswitch            Switch away from the active profile if it is
                                         low on quota (see ~/.ai-accounts/config.json)
@@ -724,10 +728,12 @@ def cmd_save(name: str | None = None) -> int:
     return _save_profile_oauth(name, oauth, identity)
 
 
-def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
+def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output: bool = False) -> int:
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
+        if json_empty_list(json_output):
+            return 0
         log_yellow("⚠️  No saved Claude profiles.")
         print(f"{DIM}   Add one with: claude-accounts save <profile_name>{RESET}", file=sys.stderr)
         return 0
@@ -740,6 +746,8 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
     profile_oauth = [(p, _read_profile_oauth(p) or {}) for p in profiles]
     if only_active:
         if active_profile is None:
+            if json_empty_list(json_output):
+                return 0
             print_no_active_account("Claude", "claude-accounts")
             return 0
         # Filter before fetching so only the active account's usage is queried.
@@ -770,6 +778,24 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False) -> int:
             )
     else:
         usages = [empty_usage] * len(profiles)
+
+    if json_output:
+        entries = [
+            {
+                "name": profile_path.stem,
+                "active": profile_path == active_profile,
+                "usage": {
+                    "hourly": usage_window_to_json(usage.five_hour),
+                    "weekly": usage_window_to_json(usage.seven_day),
+                    "refreshed_at": usage.refreshed_at,
+                    "error": usage.error,
+                },
+                "no_quota_api": False,
+            }
+            for (profile_path, _oauth), usage in zip(profile_oauth, usages)
+        ]
+        print(json.dumps(entries))
+        return 0
 
     rows = []
     for (profile_path, oauth), usage in zip(profile_oauth, usages):
@@ -1220,9 +1246,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "save":
         return cmd_save(rest[0] if rest else None)
     if command == "list":
-        return cmd_list()
+        return cmd_list(json_output="--json" in rest)
     if command == "usage":
-        return cmd_list(only_active=True)
+        return cmd_list(only_active=True, json_output="--json" in rest)
     if command == "switch":
         if not rest:
             return cmd_switch_interactive()
