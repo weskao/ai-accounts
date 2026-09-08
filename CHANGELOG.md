@@ -1,3 +1,32 @@
+## [0.8.0] - 2026-09-08
+
+### 🚀 Features
+
+- **providers:** Add centralized provider registry
+- **cli:** Add --json output for list and usage
+- **doctor:** Add ai-accounts doctor health check
+- **copilot:** Add github copilot as sixth provider
+- **cli:** Wire json, doctor, and copilot into umbrella
+- **doctor:** [**breaking**] Flag a provider whose own shim is missing
+
+### 🐛 Bug Fixes
+
+- **config-menu:** Clamp wide box width to the terminal
+- **copilot:** Read the login the way the cli stores it
+- **ci:** Stabilize doctor tests across platforms
+
+### 🚜 Refactor
+
+- **cli:** Dedupe the --json empty-list branch
+
+### 📚 Documentation
+
+- Use help alias in command examples
+- Document json, doctor, and copilot support
+
+### ⚙️ Miscellaneous Tasks
+
+- **todo:** Reconcile copilot checklist
 ## [0.7.0] - 2026-09-07
 
 ### 🚀 Features
@@ -44,6 +73,7 @@
 ### ⚙️ Miscellaneous Tasks
 
 - Notify telegram on failed pushes
+- **release:** Bump version to 0.7.0
 ## [0.6.0] - 2026-09-07
 
 ### 🚀 Features
