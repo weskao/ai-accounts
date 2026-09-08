@@ -488,6 +488,56 @@ class ProfileCommandTests(_HomeMixin):
         self.assertNotIn("PROFILE", text)  # no table rendered
         self.assertIn("No active Claude account", text)
 
+    def test_list_json_round_trips_profile_and_usage(self) -> None:
+        oauth = _oauth(access="at-a", refresh="rt-a")
+        self.write_profile("active", oauth)
+        self.set_active(oauth)
+        self.mark_current("active")
+        snap = cu.UsageSnapshot(
+            cu.UsageWindow(45, 2_000_000_000, 300),
+            cu.UsageWindow(12, 2_000_000_000, 10080),
+            "Max",
+            2_000_000_000,
+            None,
+        )
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
+            result, output, _ = self.capture(lambda: ca.main(["list", "--json"]))
+        self.assertEqual(result, 0)
+        self.assertNotIn("\033[", output)  # no ANSI in --json output
+        entries = json.loads(output)
+        self.assertEqual(
+            entries,
+            [
+                {
+                    "name": "active",
+                    "active": True,
+                    "usage": {
+                        "hourly": {
+                            "percent": 45,
+                            "remaining_percent": 55,
+                            "reset_time": 2_000_000_000,
+                            "window_minutes": 300,
+                        },
+                        "weekly": {
+                            "percent": 12,
+                            "remaining_percent": 88,
+                            "reset_time": 2_000_000_000,
+                            "window_minutes": 10080,
+                        },
+                        "refreshed_at": 2_000_000_000,
+                        "error": None,
+                    },
+                    "no_quota_api": False,
+                }
+            ],
+        )
+
+    def test_usage_json_empty_array_when_no_active_profile(self) -> None:
+        self.write_profile("saved", _oauth(access="at-a", refresh="rt-a"))
+        result, output, _err = self.capture(lambda: ca.main(["usage", "--json"]))
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(output), [])
+
     def test_save_snapshots_identity_from_config_json(self) -> None:
         self.set_active(_oauth(access="live", refresh="rt-live"))
         (self.home / ".claude.json").write_text(

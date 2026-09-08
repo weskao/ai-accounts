@@ -28,7 +28,7 @@ from ._utils import (
     oauth_token_refresh,
     resolve_account_dir,
 )
-from .usage_format import credential_status_prefix, print_no_active_account
+from .usage_format import credential_status_prefix, no_quota_json_entries, print_no_active_account
 
 JsonDict = dict[str, Any]
 
@@ -38,8 +38,11 @@ USAGE
   grok-accounts who                   Show the current logged-in Grok account
   grok-accounts current               Alias for `who`
   grok-accounts save [<name>]         Save the current login; no name = derive from email
-  grok-accounts list                  List saved profiles
-  grok-accounts usage                 Show only the active account (session & expiry)
+  grok-accounts list [--json]         List saved profiles; --json prints one JSON
+                                       array instead of the table (no quota API: usage
+                                       is always null, no_quota_api: true)
+  grok-accounts usage [--json]        Show only the active account (session & expiry);
+                                       --json prints one JSON array instead of the table
   grok-accounts switch [<name>]       Switch by name; no name = interactive picker
   grok-accounts remove [<name>]       Delete a saved profile; no name = interactive picker
   grok-accounts refresh [<name>]      Renew the active/named session's token
@@ -362,9 +365,12 @@ _TABLE_COLUMNS = [
 ]
 
 
-def cmd_list(*, only_active: bool = False) -> int:
+def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
+        if json_output:
+            print(json.dumps([]))
+            return 0
         log_yellow("⚠️  No saved Grok profiles.")
         print(
             f"{DIM}   Add one with: grok-accounts save <profile_name>{RESET}",
@@ -374,9 +380,17 @@ def cmd_list(*, only_active: bool = False) -> int:
     active = _active_profile()
     if only_active:
         if active is None:
+            if json_output:
+                print(json.dumps([]))
+                return 0
             print_no_active_account("Grok", "grok-accounts")
             return 0
         profiles = [active]
+
+    if json_output:
+        print(json.dumps(no_quota_json_entries(profiles, active)))
+        return 0
+
     rows = []
     for path in profiles:
         claims = _claims(_read_json(path))
@@ -852,9 +866,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "save":
         return cmd_save(rest[0] if rest else None)
     if command == "list":
-        return cmd_list()
+        return cmd_list(json_output="--json" in rest)
     if command == "usage":
-        return cmd_list(only_active=True)
+        return cmd_list(only_active=True, json_output="--json" in rest)
     if command == "switch":
         return cmd_switch(rest[0]) if rest else cmd_switch_interactive()
     if command == "remove":

@@ -241,6 +241,33 @@ def format_usage_window(window: UsageWindow | None, window_kind: str, percentage
     return f"{percent} · {remaining}"
 
 
+def no_quota_json_entries(profiles: list[Path], active: Path | None) -> list[dict[str, object]]:
+    """``--json`` entries for a provider with no quota API at all (grok/vibe):
+    every profile gets ``usage: null`` and ``no_quota_api: true`` rather than
+    silently omitting the field. Shared so the two providers' JSON shape can't
+    drift apart — see :func:`usage_window_to_json` for the quota-API side."""
+    return [
+        {"name": path.stem, "active": path == active, "usage": None, "no_quota_api": True}
+        for path in profiles
+    ]
+
+
+def usage_window_to_json(window: UsageWindow | None) -> dict[str, int | None] | None:
+    """Plain-dict form of one usage window for ``--json`` output: percent used,
+    percent remaining, the raw reset epoch, and the window length — no ANSI, no
+    formatting. Shared by every provider whose quota API backs onto
+    :class:`UsageWindow` (codex/claude/agy); providers with no quota API at all
+    (grok/vibe) never call this — they set ``no_quota_api`` instead."""
+    if window is None:
+        return None
+    return {
+        "percent": window.percentage,
+        "remaining_percent": 100 - window.percentage,
+        "reset_time": window.reset_time,
+        "window_minutes": window.window_minutes,
+    }
+
+
 def _format_error(error: str) -> str:
     if error == "re-login required":
         return "RELOGIN"

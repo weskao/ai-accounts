@@ -744,6 +744,60 @@ class ProfileCommandTests(_HomeMixin):
         self.assertNotIn("PROFILE", text)  # no table rendered
         self.assertIn("No active Antigravity account", text)
 
+    def test_list_json_round_trips_profile_and_usage(self) -> None:
+        auth = _creds("sub-a", "a@x.com", refresh_token="rt-a")
+        self.write_profile("active", auth)
+        self.set_active(auth)
+        self.mark_current("active")
+        with (
+            mock.patch.object(ga, "go_keyring_available", return_value=(True, "")),
+            mock.patch.object(ga.gemini_usage, "fetch_usage", return_value=_usage("a@x.com")),
+        ):
+            result, output, _ = self.capture(ga.main, ["list", "--json"])
+        self.assertEqual(result, 0)
+        self.assertNotIn("\033[", output)  # no ANSI in --json output
+        entries = json.loads(output)
+        self.assertEqual(
+            entries,
+            [
+                {
+                    "name": "active",
+                    "active": True,
+                    "usage": {
+                        "gemini_session": {
+                            "percent": 25,
+                            "remaining_percent": 75,
+                            "reset_time": 2_000_000_000,
+                            "window_minutes": 300,
+                        },
+                        "gemini_weekly": {
+                            "percent": 6,
+                            "remaining_percent": 94,
+                            "reset_time": 2_000_000_000,
+                            "window_minutes": 10080,
+                        },
+                        "other_session": None,
+                        "other_weekly": {
+                            "percent": 0,
+                            "remaining_percent": 100,
+                            "reset_time": 2_000_000_000,
+                            "window_minutes": 10080,
+                        },
+                        "refreshed_at": 2_000_000_000,
+                        "error": None,
+                    },
+                    "no_quota_api": False,
+                }
+            ],
+        )
+
+    def test_usage_json_empty_array_when_no_active_profile(self) -> None:
+        self.write_profile("saved", _creds("sub-a", "a@x.com", refresh_token="rt-a"))
+        with mock.patch.object(ga, "go_keyring_available", return_value=(True, "")):
+            result, output, _err = self.capture(ga.main, ["usage", "--json"])
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(output), [])
+
     def test_list_rejects_quota_from_a_different_account(self) -> None:
         original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
         self.write_profile("a", original)

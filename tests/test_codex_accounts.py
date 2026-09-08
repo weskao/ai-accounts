@@ -1297,6 +1297,54 @@ class UsageRequestTests(_CodexHomeMixin):
         self.assertIn("34%", out)
         fetch_usage.assert_called_once()
 
+    def test_list_json_round_trips_profile_and_usage(self):
+        self.write_auth(_auth_payload("acct-w", "work@example.com"))
+        self.write_profile("work", _auth_payload("acct-w", "work@example.com"))
+        usage = usage_format.UsageSnapshot(
+            hourly=usage_format.UsageWindow(percentage=12, reset_time=1_800_000_000, window_minutes=300),
+            weekly=usage_format.UsageWindow(percentage=34, reset_time=1_800_003_600, window_minutes=10_080),
+            refreshed_at=1_700_000_000,
+            error=None,
+        )
+        with mock.patch.object(usage_format, "fetch_usage", return_value=usage):
+            rc, out, _err = self.run_capture(lambda: ca.main(["list", "--json"]))
+
+        self.assertEqual(rc, 0)
+        self.assertNotIn("\033[", out)  # no ANSI in --json output
+        entries = json.loads(out)
+        self.assertEqual(
+            entries,
+            [
+                {
+                    "name": "work",
+                    "active": True,
+                    "usage": {
+                        "hourly": {
+                            "percent": 12,
+                            "remaining_percent": 88,
+                            "reset_time": 1_800_000_000,
+                            "window_minutes": 300,
+                        },
+                        "weekly": {
+                            "percent": 34,
+                            "remaining_percent": 66,
+                            "reset_time": 1_800_003_600,
+                            "window_minutes": 10_080,
+                        },
+                        "refreshed_at": 1_700_000_000,
+                        "error": None,
+                    },
+                    "no_quota_api": False,
+                }
+            ],
+        )
+
+    def test_usage_json_empty_array_when_no_active_profile(self):
+        self.write_profile("saved", _auth_payload("acct-a", "a@x.com"))
+        rc, out, _err = self.run_capture(lambda: ca.main(["usage", "--json"]))
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out), [])
+
 
 class InteractiveSwitchTests(_CodexHomeMixin):
     def test_selects_valid_profile_by_number(self):
