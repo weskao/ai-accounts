@@ -25,6 +25,7 @@ from ai_accounts import (
     autoswitch as aw,
     claude_accounts,
     codex_accounts,
+    copilot_accounts,
     gemini_accounts,
     grok_accounts,
     i18n,
@@ -38,6 +39,7 @@ _MODULES = (
     gemini_accounts,
     grok_accounts,
     vibe_accounts,
+    copilot_accounts,
 )
 
 

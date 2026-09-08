@@ -1,8 +1,8 @@
 """Cross-tool coverage for the shared ``config`` subcommand.
 
-All six ai-accounts CLIs (``ai-accounts`` and the five per-provider tools)
+All seven ai-accounts CLIs (``ai-accounts`` and the six per-provider tools)
 delegate ``config`` to :func:`ai_accounts.config_menu.cmd_config` — one shared
-implementation, six one-line dispatches. This file proves the wiring, not
+implementation, seven one-line dispatches. This file proves the wiring, not
 the implementation (that's ``tests/test_config_menu.py``'s job): each tool's
 ``main()`` must route ``config`` / ``config get`` / ``config set`` to the
 shared entry point, and ``ai-accounts`` must never let ``config`` fall
@@ -26,6 +26,7 @@ from ai_accounts import (
     autoswitch,
     claude_accounts,
     codex_accounts,
+    copilot_accounts,
     gemini_accounts,
     grok_accounts,
     vibe_accounts,
@@ -40,6 +41,7 @@ _MODULES = (
     (gemini_accounts, "agy-accounts"),
     (grok_accounts, "grok-accounts"),
     (vibe_accounts, "vibe-accounts"),
+    (copilot_accounts, "copilot-accounts"),
 )
 
 

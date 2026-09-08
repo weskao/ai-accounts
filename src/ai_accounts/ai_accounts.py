@@ -1,7 +1,8 @@
 """ai-accounts — drive every AI account tool at once.
 
-Fans a subcommand out to all five per-provider tools (codex-accounts,
-claude-accounts, agy-accounts, grok-accounts, vibe-accounts) so one command covers every provider. ``list``
+Fans a subcommand out to all six per-provider tools (codex-accounts,
+claude-accounts, agy-accounts, grok-accounts, vibe-accounts, copilot-accounts)
+so one command covers every provider. ``list``
 runs the providers in parallel and prints each provider's table as soon as
 it finishes fetching (its output embeds ANSI unconditionally, so color
 survives the pipe); every other command runs the providers one at a time
@@ -11,6 +12,7 @@ TTY-gated color keep working.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -18,17 +20,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config_menu as cm
 from . import _present, i18n
-from ._utils import BLUE, BOLD, CYAN, GREEN, ORANGE, RESET, YELLOW, Spinner, log_red
+from ._utils import BOLD, CYAN, RESET, Spinner, log_red
+from .providers import PROVIDERS
 
 # (display label, importable module). Each module is `python -m`-runnable and
-# understands the same subcommand set as the others.
-_TOOLS: list[tuple[str, str]] = [
-    ("codex-accounts", "ai_accounts.codex_accounts"),
-    ("claude-accounts", "ai_accounts.claude_accounts"),
-    ("agy-accounts", "ai_accounts.gemini_accounts"),
-    ("grok-accounts", "ai_accounts.grok_accounts"),
-    ("vibe-accounts", "ai_accounts.vibe_accounts"),
-]
+# understands the same subcommand set as the others. Derived from
+# providers.PROVIDERS — the single source of truth for the provider list.
+_TOOLS: list[tuple[str, str]] = [(p.label, p.module) for p in PROVIDERS]
 
 # Subcommands every per-provider tool understands (shared surface). Anything
 # outside this set is rejected rather than blindly forwarded.
@@ -52,9 +50,13 @@ HELP = """ai-accounts — drive every AI account tool at once
 
 USAGE
   ai-accounts                        Show this help (the available commands)
-  ai-accounts list                   List all provider profiles (providers run in parallel)
+  ai-accounts list [--json]          List all provider profiles (providers run in parallel);
+                                      --json merges every provider's own --json output into
+                                      one object keyed by provider (e.g. "codex-accounts": [...]);
+                                      a provider that fails gets {"error": "..."} instead
   ai-accounts who | current          Show the active account for every provider
-  ai-accounts usage                  Show only the active account's usage row per provider
+  ai-accounts usage [--json]         Show only the active account's usage row per provider;
+                                      --json merges every provider's --json output the same way
   ai-accounts refresh [<name>|--all] Refresh tokens across every provider
   ai-accounts sync                   Sync active auth back to its profile, every provider
   ai-accounts save [<name>]          Save the current login in every provider;
@@ -78,9 +80,13 @@ USAGE
                                       every 1800s / 30 minutes)
   ai-accounts uninstall-timer       Remove the scheduled auto-switch check
   ai-accounts timer-status          Report whether the auto-switch check is scheduled
+  ai-accounts doctor [--json]        Offline health check per provider: CLI binary on PATH,
+                                      credential-store reachability, saved-profile JSON
+                                      validity/expiry, and auto-switch timer status;
+                                      pass/fail table by default, one JSON document with --json
   ai-accounts -h | --help | help     Show this help
 
-Each command is forwarded to codex-accounts, claude-accounts, agy-accounts, grok-accounts, and vibe-accounts.
+Each command is forwarded to codex-accounts, claude-accounts, agy-accounts, grok-accounts, vibe-accounts, and copilot-accounts.
 `list` runs them concurrently and prints each table as soon as it finishes
 (fastest provider first), with a spinner tracking how many are still
 fetching in between; every other command runs them one provider at a time
@@ -88,18 +94,15 @@ with live output, so interactive pickers and login flows work and color is
 preserved. Any argument after the command (e.g. a profile name or `--all`) is
 passed through to each provider — except after `autoswitch`, which accepts
 only the local `setup` action and otherwise rejects extra arguments.
+`--json` after `list`/`usage` is the one other exception: it also runs
+providers concurrently and captures output (never live stdio), merging each
+provider's own `--json` document into one object printed once.
 """
 
 
-# One accent color per provider, so five stacked `list`/`switch`/etc. blocks
-# stay visually distinct instead of five identical cyan rules.
-_PROVIDER_COLOR = {
-    "codex-accounts": CYAN,
-    "claude-accounts": ORANGE,
-    "agy-accounts": BLUE,
-    "grok-accounts": YELLOW,
-    "vibe-accounts": GREEN,
-}
+# One accent color per provider, so six stacked `list`/`switch`/etc. blocks
+# stay visually distinct instead of six identical cyan rules.
+_PROVIDER_COLOR = {p.label: p.cli_color for p in PROVIDERS}
 
 
 def _header(label: str) -> None:
@@ -159,6 +162,44 @@ def cmd_list() -> int:
                 exit_code = result.returncode
             print()
     return exit_code
+
+
+def _run_json(module: str, command: str) -> subprocess.CompletedProcess[str]:
+    # Same capture-not-inherit rationale as _run_list, extended to `usage
+    # --json`: the child's stdout is one JSON document to be parsed, not
+    # printed live, so it must go through a pipe rather than inherited stdio.
+    return subprocess.run(
+        [sys.executable, "-m", module, command, "--json"],
+        capture_output=True,
+        text=True,
+        env=os.environ,
+    )
+
+
+def cmd_json(command: str) -> int:
+    # `list --json` / `usage --json`: run every provider concurrently (the
+    # same capturing pattern as cmd_list, never cmd_forward's inherited
+    # stdio), then merge each provider's own JSON array into one object keyed
+    # by provider label, in providers.PROVIDERS order. A provider that exits
+    # non-zero or prints unparseable JSON gets {"error": "..."} instead of
+    # crashing the merge.
+    with ThreadPoolExecutor(max_workers=len(PROVIDERS)) as pool:
+        futures = {pool.submit(_run_json, p.module, command): p.label for p in PROVIDERS}
+        results = {futures[future]: future.result() for future in as_completed(futures)}
+
+    merged: dict[str, object] = {}
+    for provider in PROVIDERS:
+        result = results[provider.label]
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or "").strip() or f"exited {result.returncode}"
+            merged[provider.label] = {"error": message}
+            continue
+        try:
+            merged[provider.label] = json.loads(result.stdout)
+        except ValueError as exc:
+            merged[provider.label] = {"error": f"invalid JSON output: {exc}"}
+    print(json.dumps(merged))
+    return 0
 
 
 def cmd_forward(argv: list[str]) -> int:
@@ -228,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
 
     command = argv[0]
     # 🔴 Intercepted BEFORE the _COMMANDS gate below, and deliberately absent
-    # from _COMMANDS: falling through to cmd_forward would make all five
+    # from _COMMANDS: falling through to cmd_forward would make all six
     # provider subprocesses each print their own "Unknown command".
     if command == "config":
         return cm.cmd_config(argv[1:], prog="ai-accounts")
@@ -238,10 +279,14 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_uninstall_timer()
     if command == "timer-status":
         return cmd_timer_status()
+    if command == "doctor":
+        from . import doctor
+
+        return doctor.run_doctor("--json" in argv[1:])
 
     # `autoswitch` accepts one local setup action; providers ignore every other
     # trailing arg, so `autoswitch install-timer` would run
-    # five quota checks and install nothing — silently, while the user believes
+    # six quota checks and install nothing — silently, while the user believes
     # a scheduler was registered. Reject it and name the working spelling.
     if command == "autoswitch" and argv[1:] == ["setup"]:
         return cmd_autoswitch_setup()
@@ -258,7 +303,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if command == "list":
-        return cmd_list()
+        return cmd_json("list") if "--json" in argv[1:] else cmd_list()
+    if command == "usage" and "--json" in argv[1:]:
+        return cmd_json("usage")
     return cmd_forward(argv)
 
 
