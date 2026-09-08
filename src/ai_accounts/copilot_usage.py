@@ -15,11 +15,12 @@ comments mark what a working call did not settle.
 from __future__ import annotations
 
 import json
+import math
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Final
 
 from .usage_format import UsageWindow, format_unix_time_compact
@@ -63,6 +64,15 @@ class UsageSnapshot:
     plan: str | None
     refreshed_at: int | None
     error: str | None
+    token_based_billing: bool = False
+    used: float | None = None
+    entitlement: float | None = None
+    remaining: float | None = None
+    unlimited: bool = False
+
+    @property
+    def plan_usage(self) -> UsageWindow | None:
+        return self.chat if self.token_based_billing else self.premium
 
 
 _EMPTY: Final = UsageSnapshot(None, None, None, None, None, None)
@@ -71,7 +81,7 @@ _EMPTY: Final = UsageSnapshot(None, None, None, None, None, None)
 def _number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return float(value)
+    return float(value) if math.isfinite(value) else None
 
 
 def _reset_epoch(value: Any) -> int | None:
@@ -80,13 +90,16 @@ def _reset_epoch(value: Any) -> int | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
-    except ValueError:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return int((stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)).timestamp())
+    except (ValueError, OverflowError, OSError):
         return None
 
 
 def _window(data: Any, reset_fallback: Any) -> UsageWindow | None:
     if not isinstance(data, dict):
+        return None
+    if data.get("has_quota") is False:
         return None
     reset_time = _reset_epoch(data.get("quota_reset_date")) or _reset_epoch(reset_fallback)
 
@@ -99,7 +112,9 @@ def _window(data: Any, reset_fallback: Any) -> UsageWindow | None:
         else:
             # Fall back to the raw counters when the percentage is absent.
             entitlement = _number(data.get("entitlement"))
-            remaining = _number(data.get("remaining"))
+            remaining = _number(data.get("quota_remaining"))
+            if remaining is None:
+                remaining = _number(data.get("remaining"))
             if entitlement is None or remaining is None or entitlement <= 0:
                 return None
             used = 100.0 * (entitlement - remaining) / entitlement
@@ -151,8 +166,21 @@ def fetch_usage(token: str | None, *, timeout: float = 20) -> UsageSnapshot:
     if not isinstance(snapshots, dict):
         return UsageSnapshot(None, None, None, None, None, "unexpected quota shape")
 
-    reset_fallback = result.get("quota_reset_date")
+    reset_fallback = result.get("quota_reset_date_utc") or result.get("quota_reset_date")
     plan = result.get("copilot_plan")
+    chat = snapshots.get(_CHAT_KEY)
+    token_based = result.get("token_based_billing") is True or (
+        isinstance(chat, dict) and chat.get("token_based_billing") is True
+    )
+    quota = snapshots.get(_CHAT_KEY if token_based else _PREMIUM_KEY)
+    quota = quota if isinstance(quota, dict) and quota.get("has_quota") is not False else {}
+    entitlement = _number(quota.get("entitlement"))
+    remaining = _number(quota.get("quota_remaining"))
+    if remaining is None:
+        remaining = _number(quota.get("remaining"))
+    used = _number(quota.get("credits_used")) if token_based else None
+    if used is None and entitlement is not None and remaining is not None:
+        used = max(0.0, entitlement - remaining)
     return UsageSnapshot(
         premium=_window(snapshots.get(_PREMIUM_KEY), reset_fallback),
         chat=_window(snapshots.get(_CHAT_KEY), reset_fallback),
@@ -160,6 +188,11 @@ def fetch_usage(token: str | None, *, timeout: float = 20) -> UsageSnapshot:
         plan=plan if isinstance(plan, str) and plan else None,
         refreshed_at=int(time.time()),
         error=None,
+        token_based_billing=token_based,
+        used=used,
+        entitlement=entitlement,
+        remaining=remaining,
+        unlimited=quota.get("unlimited") is True,
     )
 
 

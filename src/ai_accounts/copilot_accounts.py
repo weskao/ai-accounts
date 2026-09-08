@@ -77,7 +77,7 @@ USAGE
   copilot-accounts current               Alias for `who`
   copilot-accounts save [<name>]         Save the current login; no name = derive from
                                           the GitHub account
-  copilot-accounts list [--json]         List saved profiles with premium-request quota;
+  copilot-accounts list [--json]         List profiles, identity and monthly credit balance;
                                           --json prints one JSON array instead of the table
   copilot-accounts usage [--json]        Show only the active account; --json prints
                                           one JSON array instead of the table
@@ -322,11 +322,9 @@ def _write_active(token: str, host: str, login: str) -> bool:
 
 # ── GitHub identity ─────────────────────────────────────────────────────────
 
-def _fetch_identity(token: str, *, timeout: float = 20) -> JsonDict | None:
-    """``login``/``email`` for a token, or None when the call fails. Only ever
-    used to label a profile, so every failure is silent."""
+def _identity_request(url: str, token: str, *, timeout: float) -> Any:
     request = urllib.request.Request(
-        _USER_URL,
+        url,
         headers={**_API_HEADERS, "Authorization": f"Bearer {token}"},
         method="GET",
     )
@@ -335,7 +333,23 @@ def _fetch_identity(token: str, *, timeout: float = 20) -> JsonDict | None:
             raw = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    return raw if isinstance(raw, dict) else None
+    return raw
+
+
+def _fetch_identity(token: str, *, timeout: float = 20) -> JsonDict | None:
+    """GitHub identity, including a verified primary email when permitted."""
+    raw = _identity_request(_USER_URL, token, timeout=timeout)
+    if not isinstance(raw, dict):
+        return None
+    if not raw.get("email"):
+        emails = _identity_request(_USER_URL + "/emails", token, timeout=timeout)
+        if isinstance(emails, list):
+            for email in emails:
+                if (isinstance(email, dict) and email.get("primary") is True
+                        and email.get("verified") is True and isinstance(email.get("email"), str)):
+                    raw["email"] = email["email"]
+                    break
+    return raw
 
 
 def _token(payload: JsonDict | None) -> str:
@@ -345,7 +359,11 @@ def _token(payload: JsonDict | None) -> str:
 
 def _label(payload: JsonDict | None) -> str:
     payload = payload or {}
-    for key in ("login", "email"):
+    name = payload.get("name") or payload.get("login")
+    email = payload.get("email")
+    if isinstance(name, str) and name and isinstance(email, str) and email:
+        return f"{name} <{email}>"
+    for key in ("name", "login", "email"):
         value = payload.get(key)
         if isinstance(value, str) and value:
             return value
@@ -449,7 +467,7 @@ def cmd_save(name: str | None = None) -> int:
         # /user lookup (which only fills in email/id, or login on an env token).
         payload["host"], payload["login"] = user
     identity = _fetch_identity(token) or {}
-    for key in ("login", "email", "id"):
+    for key in ("login", "name", "email", "id"):
         value = identity.get(key)
         if value and key not in payload:
             payload[key] = value
@@ -475,8 +493,11 @@ _TABLE_COLUMNS = [
     ("PROFILE", "profile"),
     ("ACCOUNT", "account"),
     ("PLAN", "plan"),
-    ("PREMIUM", "usage_premium"),
+    ("ID", "id"),
+    ("MONTH USED", "usage_premium"),
+    ("REMAINING", "remaining"),
     ("UPDATED", "usage_updated"),
+    ("AUTH", "auth"),
     ("STATE", "state"),
 ]
 
@@ -489,7 +510,26 @@ def _usage_cell(window) -> str:
     if window is None:
         return f"{DIM}—{RESET}"
     color = usage_color(window.percentage)
+    if window.reset_time is None:
+        return f"{color}{window.percentage}%{RESET} · reset unknown"
     return format_usage_window(window, "1month", f"{color}{window.percentage}%{RESET}")
+
+
+def _fetch_profile(path: Path) -> tuple[JsonDict, copilot_usage.UsageSnapshot]:
+    payload = _read_json(path) or {}
+    token = _token(payload)
+    identity = _fetch_identity(token) if token else None
+    for key in ("login", "name", "email", "id"):
+        if identity and identity.get(key) is not None:
+            payload[key] = identity[key]
+    usage = copilot_usage.fetch_usage(token)
+    payload["auth"] = (
+        "missing" if not token else
+        "valid" if identity is not None or usage.refreshed_at is not None else
+        "rejected" if usage.error and usage.error.startswith("HTTP 401 ") else
+        "unknown"
+    )
+    return payload, usage
 
 
 def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output: bool = False) -> int:
@@ -517,15 +557,15 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
     if fetch_usage:
         spinner = Spinner("Fetching Copilot quota…")
         with spinner:
-            usages = fetch_parallel(
+            readings = fetch_parallel(
                 profiles,
-                lambda path: copilot_usage.fetch_usage(_token(_read_json(path))),
+                _fetch_profile,
                 spinner,
                 "Fetching Copilot quota…",
                 labels=[path.stem for path in profiles],
             )
     else:
-        usages = [empty] * len(profiles)
+        readings = [(_read_json(path) or {}, empty) for path in profiles]
 
     if json_output:
         # Same envelope every other provider prints. `quota_snapshots` is an
@@ -537,7 +577,18 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                     {
                         "name": path.stem,
                         "active": path == active,
+                        "account": _label(payload),
+                        "login": payload.get("login"),
+                        "email": payload.get("email"),
+                        "id": payload.get("id"),
+                        "auth": payload.get("auth", "unknown"),
                         "usage": {
+                            "monthly": usage_window_to_json(usage.plan_usage),
+                            "unit": "AIC" if usage.token_based_billing else "requests",
+                            "used": usage.used,
+                            "entitlement": usage.entitlement,
+                            "remaining": usage.remaining,
+                            "unlimited": usage.unlimited,
                             "premium": usage_window_to_json(usage.premium),
                             "chat": usage_window_to_json(usage.chat),
                             "completions": usage_window_to_json(usage.completions),
@@ -549,23 +600,33 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                         else None,
                         "no_quota_api": not _has_quota(usage),
                     }
-                    for path, usage in zip(profiles, usages)
+                    for path, (payload, usage) in zip(profiles, readings)
                 ]
             )
         )
         return 0
 
     rows = []
-    for path, usage in zip(profiles, usages):
-        payload = _read_json(path)
+    for path, (payload, usage) in zip(profiles, readings):
         is_active = path == active
+        unit = "AIC" if usage.token_based_billing else "requests"
+        used = "unlimited" if usage.unlimited else _usage_cell(usage.plan_usage)
+        if not usage.unlimited and usage.used is not None and usage.entitlement is not None:
+            used += f" · {usage.used:g}/{usage.entitlement:g} {unit}"
+        remaining = (
+            "unlimited" if usage.unlimited else
+            f"{usage.remaining:g} {unit}" if usage.remaining is not None else "—"
+        )
         rows.append(
             {
                 "profile": f"{GREEN}{BOLD}{path.stem}{RESET}" if is_active else path.stem,
                 "account": _label(payload),
                 "plan": usage.plan or f"{DIM}—{RESET}",
-                "usage_premium": _usage_cell(usage.premium),
+                "id": str(payload.get("id") or "—"),
+                "usage_premium": used,
+                "remaining": remaining,
                 "usage_updated": copilot_usage.format_refreshed_at(usage),
+                "auth": payload.get("auth", "unknown"),
                 "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
             }
         )

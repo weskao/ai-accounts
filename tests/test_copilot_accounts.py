@@ -359,7 +359,23 @@ class CopilotAccountsTests(unittest.TestCase):
                 {
                     "name": "personal",
                     "active": True,
+                    "account": "testuser <user@example.com>",
+                    "login": "testuser",
+                    "email": "user@example.com",
+                    "id": 4242,
+                    "auth": "valid",
                     "usage": {
+                        "monthly": {
+                            "percent": 75,
+                            "remaining_percent": 25,
+                            "reset_time": 4102416000,
+                            "window_minutes": 43200,
+                        },
+                        "unit": "requests",
+                        "used": None,
+                        "entitlement": None,
+                        "remaining": None,
+                        "unlimited": False,
                         "premium": {
                             "percent": 75,
                             "remaining_percent": 25,
@@ -386,8 +402,28 @@ class CopilotAccountsTests(unittest.TestCase):
                 self.assertEqual(ca.main(["list", "--json"]), 0)
         self.assertEqual(
             json.loads(out.getvalue()),
-            [{"name": "personal", "active": False, "usage": None, "no_quota_api": True}],
+            [{"name": "personal", "active": False, "usage": None, "no_quota_api": True,
+              "account": "testuser <user@example.com>", "login": "testuser",
+              "email": "user@example.com", "id": 4242, "auth": "valid"}],
         )
+
+    def test_list_uses_credit_quota_and_live_identity_without_rewriting_profile(self) -> None:
+        path = self.account_dir / "personal.json"
+        self.assertTrue(ca._write_json(path, {"oauth_token": _TOKEN}))
+        original = path.read_bytes()
+        self._install_fake_identity({**_IDENTITY, "name": "Test User"})
+        with mock.patch.object(cu, "_request", return_value=_CREDIT_JSON):
+            for only_active in (False, True):
+                self._sign_in()
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    self.assertEqual(ca.cmd_list(only_active=only_active), 0)
+                listing = _ANSI_RE.sub("", out.getvalue())
+                for value in ("Test User <user@example.com>", "4242", "12/500 AIC", "487.5 AIC", "MONTH USED", "valid"):
+                    self.assertIn(value, listing)
+                self.assertNotIn("100%", listing)
+                self.assertNotIn(_TOKEN, listing)
+        self.assertEqual(path.read_bytes(), original)
 
     def test_usage_json_empty_array_when_no_active_profile(self) -> None:
         self.assertTrue(ca._write_json(self.account_dir / "saved.json", _profile()))
@@ -423,6 +459,20 @@ class CopilotAccountsTests(unittest.TestCase):
         self.assertIn("re-login required", _ANSI_RE.sub("", err.getvalue()))
 
 
+_CREDIT_JSON = {
+    "copilot_plan": "individual",
+    "token_based_billing": True,
+    "quota_reset_date_utc": "2099-02-01T00:00:00Z",
+    "quota_snapshots": {
+        "chat": {"has_quota": True, "token_based_billing": True,
+                 "credits_used": 12, "entitlement": 500, "remaining": 487,
+                 "quota_remaining": 487.5, "percent_remaining": 97.5},
+        "premium_interactions": {"has_quota": False, "entitlement": 0,
+                                 "remaining": 0, "percent_remaining": 0},
+    },
+}
+
+
 class CopilotUsageTests(unittest.TestCase):
     def _fetch(self, payload: object) -> cu.UsageSnapshot:
         with mock.patch.object(cu, "_request", return_value=payload):
@@ -445,6 +495,40 @@ class CopilotUsageTests(unittest.TestCase):
         snapshot = cu.fetch_usage(None)
         self.assertEqual(snapshot.error, "missing token")
         self.assertIsNone(snapshot.premium)
+
+    def test_credit_billing_uses_chat_and_preserves_fractional_balance(self) -> None:
+        snapshot = self._fetch(_CREDIT_JSON)
+        self.assertIsNone(snapshot.premium)
+        self.assertEqual(snapshot.plan_usage, snapshot.chat)
+        self.assertEqual(snapshot.used, 12)
+        self.assertEqual(snapshot.entitlement, 500)
+        self.assertEqual(snapshot.remaining, 487.5)
+        self.assertEqual(snapshot.chat.reset_time, cu._reset_epoch("2099-02-01"))
+        self.assertEqual(snapshot.chat.percentage, 2)
+
+    def test_legacy_billing_keeps_premium_requests(self) -> None:
+        snapshot = self._fetch(_QUOTA_JSON)
+        self.assertEqual(snapshot.plan_usage, snapshot.premium)
+        self.assertFalse(snapshot.token_based_billing)
+        self.assertEqual(snapshot.used, 225)
+        self.assertEqual(snapshot.remaining, 75)
+
+    def test_unavailable_and_malformed_quotas_do_not_report_exhaustion(self) -> None:
+        for quota in ({"has_quota": False, "percent_remaining": 0},
+                      {"percent_remaining": float("nan")},
+                      {"percent_remaining": float("inf")}):
+            self.assertIsNone(cu._window(quota, None))
+        snapshot = self._fetch({**_CREDIT_JSON, "quota_snapshots": {}})
+        self.assertIsNone(snapshot.plan_usage)
+        self.assertIsNone(snapshot.remaining)
+        self.assertNotIn("0d", ca._usage_cell(cu.UsageWindow(20, None, 43200)))
+
+    def test_primary_email_lookup_is_optional(self) -> None:
+        for emails, expected in (([{"email": "user@example.com", "primary": True, "verified": True}], "user@example.com"),
+                                 (None, None),
+                                 ([{"email": "other@example.com", "primary": True, "verified": False}], None)):
+            with mock.patch.object(ca, "_identity_request", side_effect=[{"login": "testuser"}, emails]):
+                self.assertEqual(ca._fetch_identity(_TOKEN).get("email"), expected)
 
     def test_unexpected_shapes_degrade_instead_of_raising(self) -> None:
         for payload, expected in (

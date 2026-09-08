@@ -60,7 +60,7 @@ uv tool uninstall ai-accounts
 | `agy-accounts` | Manage Antigravity profiles and quota usage |
 | `grok-accounts` | Manage Grok Build OAuth profiles |
 | `vibe-accounts` | Manage Mistral Vibe API-key profiles |
-| `copilot-accounts` | Manage GitHub Copilot CLI profiles |
+| `copilot-accounts` | Manage GitHub Copilot CLI profiles, identity and monthly credit balance |
 
 Use the umbrella command to run the same action for all providers:
 
@@ -120,6 +120,33 @@ tells you to run.
 marks the active one.
 
 ![Saved profiles from every provider](ai-accounts-list%20demo.png)
+
+### Copilot account details and balance
+
+`copilot-accounts list` shows `PROFILE`, `ACCOUNT`, `PLAN`, `ID`, `MONTH USED`,
+`REMAINING`, `UPDATED`, `AUTH`, and `STATE`. `copilot-accounts usage` shows the
+same details for the active saved profile. Account details are fetched from
+GitHub on each listing, with saved details as a fallback, without rewriting
+profiles. `ACCOUNT` displays `Name <email>` when available, otherwise the name,
+GitHub login, or email. A private primary email is included only when GitHub
+allows the token to read it and reports it as verified.
+
+For AI-credit billing, the monthly balance comes from GitHub's `chat` quota,
+matching the plan allowance used by Copilot `/usage`. The obsolete premium
+quota marked `has_quota: false` is unavailable, not 100% used. Legacy billing
+still shows premium requests. For example, `2% · 22d 4h 35m · 12/500 AIC`
+shows percent used, time until reset, and used/total credits; `487.5 AIC` in
+`REMAINING` preserves GitHub's fractional balance. GitHub's percentage and
+credit counters can have different rounding. Unlimited quotas say `unlimited`.
+Copilot does not supply 5-hour/weekly windows or token expiry through these
+lookups, so those columns are omitted. `UPDATED` is the successful fetch time;
+`AUTH` is `valid`, `rejected` (HTTP 401), `missing`, or `unknown`.
+
+`--json` adds `account`, `login`, `email`, `id`, and `auth` to each profile.
+The `usage` object includes `monthly`, `unit` (`AIC` or `requests`), `used`,
+`entitlement`, `remaining`, and `unlimited`, alongside the existing
+`premium`, `chat`, `completions`, `plan`, `refreshed_at`, and `error` fields.
+Unavailable values are null; existing no-quota behavior is retained.
 
 ### Doctor
 
@@ -209,8 +236,9 @@ ai-accounts doctor --json | python3 -m json.tool
 `ai-accounts list` runs providers concurrently and displays each provider's
 table as it finishes. Codex and Claude also fetch usage concurrently across
 profiles; Grok and Vibe list local profile data without quota network requests.
-Copilot does issue a quota network request per profile, but degrades to the
-same no-network-result shape as Grok/Vibe if that request fails.
+Copilot fetches quota and GitHub identity per profile (plus the primary email
+when permitted), with profiles queried concurrently. Failed quota requests
+retain the same no-quota result shape as Grok/Vibe.
 
 Antigravity queries different credentials **sequentially**: each query switches
 the shared OS keyring session, launches `agy`, waits for authentication and
@@ -573,7 +601,7 @@ plain, same as it leaves tables unbanded.
 | Antigravity | macOS Keychain, Windows Credential Manager, or Linux Secret Service | Linux needs `secret-tool` from libsecret |
 | Grok Build | `$GROK_HOME/auth.json` | Quota switching is skipped when no quota API is available |
 | Mistral Vibe | macOS Keychain or `$VIBE_HOME/.env` | On Windows and Linux, `$VIBE_HOME/.env` is used; `vibe` is required for login flows |
-| GitHub Copilot | macOS Keychain item `copilot-cli` keyed `<host>:<login>`, with the signed-in login read from `~/.copilot/config.json` (JSONC); `$COPILOT_GITHUB_TOKEN`/`$GH_TOKEN`/`$GITHUB_TOKEN` as fallback | `copilot` is required for login flows. Store layout verified on macOS; Linux/Windows stores, the quota endpoint, and env-var precedence are still unverified — see `# ASSUMPTION:` comments in `copilot_accounts.py`/`copilot_usage.py` |
+| GitHub Copilot | macOS Keychain item `copilot-cli` keyed `<host>:<login>`, with the signed-in login read from `~/.copilot/config.json` (JSONC); `$COPILOT_GITHUB_TOKEN`/`$GH_TOKEN`/`$GITHUB_TOKEN` as fallback | `copilot` is required for login flows. Store layout and monthly AI-credit quota verified on macOS; the quota endpoint is undocumented. Linux/Windows stores and env-var precedence remain unverified. |
 
 Run a provider command with `--help` for its exact files, environment overrides,
 and authentication behavior.
