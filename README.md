@@ -4,7 +4,8 @@ Manage, inspect, refresh, and switch saved profiles across AI coding CLIs from
 one dependency-free Python package.
 
 `ai-accounts` is the all-provider command. The package also installs focused
-commands for Codex, Claude Code, Antigravity, Grok Build, and Mistral Vibe.
+commands for Codex, Claude Code, Antigravity, Grok Build, Mistral Vibe, and
+GitHub Copilot.
 
 ## Requirements
 
@@ -59,6 +60,7 @@ uv tool uninstall ai-accounts
 | `agy-accounts` | Manage Antigravity profiles and quota usage |
 | `grok-accounts` | Manage Grok Build OAuth profiles |
 | `vibe-accounts` | Manage Mistral Vibe API-key profiles |
+| `copilot-accounts` | Manage GitHub Copilot CLI profiles |
 
 Use the umbrella command to run the same action for all providers:
 
@@ -69,11 +71,25 @@ ai-accounts usage
 ai-accounts refresh --all
 ai-accounts sync
 ai-accounts login-switch work
+ai-accounts doctor
 ai-accounts --help
 ```
 
 `list` fetches providers concurrently. Interactive actions run providers one at
 a time so their prompts remain usable.
+
+`list` and `usage` also accept `--json`. In that mode every provider runs
+concurrently with its output captured (not printed live), and each
+provider's own `--json` document is merged into one object printed once,
+keyed by provider (`codex-accounts`, `claude-accounts`, `agy-accounts`,
+`grok-accounts`, `vibe-accounts`, `copilot-accounts`). A provider that exits
+non-zero or prints unparseable output gets `{"error": "..."}` in its place
+instead of crashing the merge:
+
+```sh
+ai-accounts list --json | python3 -m json.tool
+ai-accounts usage --json
+```
 
 Every provider command supports the common profile workflow:
 
@@ -81,12 +97,20 @@ Every provider command supports the common profile workflow:
 codex-accounts who
 codex-accounts save work
 codex-accounts list
+codex-accounts list --json
 codex-accounts switch work
 codex-accounts refresh --all
 codex-accounts login-switch work
 codex-accounts remove work
 codex-accounts --help
 ```
+
+Every per-provider tool's `list`/`usage` also accepts `--json`, printing one
+JSON array of `{"name", "active", "usage", "no_quota_api"}` objects instead of
+the table (`usage` is `null` and `no_quota_api` is `true` for Grok and Vibe,
+which have no quota API). Copilot attempts a real quota lookup and only
+degrades to the same `no_quota_api: true` shape when that lookup fails — see
+Platform notes below.
 
 `who` also answers to `current`. `login-switch <name>` runs a fresh provider
 login and saves the result as `<name>` — it is what the re-login report below
@@ -97,11 +121,54 @@ marks the active one.
 
 ![Saved profiles from every provider](ai-accounts-list%20demo.png)
 
+### Doctor
+
+`ai-accounts doctor` runs one offline health check per provider — no live
+quota/HTTP calls — and never fails the process just because a provider isn't
+set up; it reports the gap instead:
+
+- the provider's CLI binary (`codex`, `claude`, `agy`, `grok`, `vibe`, `copilot`) is on `PATH`
+- the OS credential store is reachable (macOS/Windows Keychain/Credential
+  Manager, or Linux `secret-tool`)
+- every saved profile's JSON is well-formed and, if it carries a recognizable
+  expiry field, not already expired with nothing left to refresh it (a stale
+  *access* token backed by a live refresh token is normal, not a failure)
+- the auto-switch timer's install state
+
+```sh
+ai-accounts doctor
+```
+
+```
+codex-accounts
+  Binary            PASS `codex` on PATH
+  Credential store  PASS reachable
+  Profiles          PASS 2 profile(s) checked
+  Status            PASS OK
+────────────────────────────────────────
+grok-accounts
+  Binary            FAIL `grok` not found on PATH
+  Credential store  PASS reachable
+  Profiles          FAIL 1 profile(s) checked, expired: work
+  Status            FAIL issues found
+
+Autoswitch timer: PASS installed
+```
+
+`--json` prints one JSON document (never one per provider — same merge shape
+as `list --json`/`usage --json` above), keyed by provider label:
+
+```sh
+ai-accounts doctor --json | python3 -m json.tool
+```
+
 ### List performance
 
 `ai-accounts list` runs providers concurrently and displays each provider's
 table as it finishes. Codex and Claude also fetch usage concurrently across
 profiles; Grok and Vibe list local profile data without quota network requests.
+Copilot does issue a quota network request per profile, but degrades to the
+same no-network-result shape as Grok/Vibe if that request fails.
 
 Antigravity queries different credentials **sequentially**: each query switches
 the shared OS keyring session, launches `agy`, waits for authentication and
@@ -174,7 +241,8 @@ Saved profiles and shared settings live under `~/.ai-accounts`:
 ├── antigravity/accounts/
 ├── antigravity/usage-cache.json
 ├── grok/accounts/
-└── vibe/accounts/
+├── vibe/accounts/
+└── copilot/accounts/
 ```
 
 `antigravity/usage-cache.json` holds the last quota reading seen for each agy
@@ -186,8 +254,9 @@ replacement where the provider format allows it.
 Provider-native legacy stores such as `~/.codex/accounts` and
 `~/.claude/accounts` are moved into the central directory on first use. Override
 paths with `CODEX_ACCOUNT_DIR`, `CLAUDE_ACCOUNT_DIR`,
-`ANTIGRAVITY_ACCOUNT_DIR`, `GROK_ACCOUNT_DIR`, or `VIBE_ACCOUNT_DIR`. Override
-the shared config with `AI_ACCOUNTS_CONFIG_JSON`.
+`ANTIGRAVITY_ACCOUNT_DIR`, `GROK_ACCOUNT_DIR`, `VIBE_ACCOUNT_DIR`, or
+`COPILOT_ACCOUNT_DIR`. Override the shared config with
+`AI_ACCOUNTS_CONFIG_JSON`.
 
 ## Auto-switch
 
@@ -455,6 +524,7 @@ plain, same as it leaves tables unbanded.
 | Antigravity | macOS Keychain, Windows Credential Manager, or Linux Secret Service | Linux needs `secret-tool` from libsecret |
 | Grok Build | `$GROK_HOME/auth.json` | Quota switching is skipped when no quota API is available |
 | Mistral Vibe | macOS Keychain or `$VIBE_HOME/.env` | On Windows and Linux, `$VIBE_HOME/.env` is used; `vibe` is required for login flows |
+| GitHub Copilot | `~/.copilot` config dir, then the OS keyring, then `$COPILOT_GITHUB_TOKEN`/`$GH_TOKEN`/`$GITHUB_TOKEN` | `copilot` is required for login flows; the credential store, quota endpoint, and env-var precedence are unverified against a live Copilot CLI — see `# ASSUMPTION:` comments in `copilot_accounts.py`/`copilot_usage.py` |
 
 Run a provider command with `--help` for its exact files, environment overrides,
 and authentication behavior.
