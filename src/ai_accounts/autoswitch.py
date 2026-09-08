@@ -34,6 +34,7 @@ from pathlib import Path
 from . import _utils as u
 from . import config_schema
 from . import i18n
+from .providers import PROVIDERS
 from .usage_format import UsageWindow
 
 CONFIG_ENV = "AI_ACCOUNTS_CONFIG_JSON"
@@ -449,12 +450,7 @@ RUNGS = ("seamless", "auto-restart", "manual-restart")
 # rung. It stays as the answer for the day a quota API lands (the spike found
 # grok the cleanest of the three to restart); it is not shipped behavior today.
 # Kept in sync with the doc's grok section, which names the same blocker.
-PROVIDER_VERDICTS: dict[str, str] = {
-    "codex": "auto-restart",
-    "claude": "auto-restart",
-    "agy": "auto-restart",
-    "grok": "auto-restart",
-}
+PROVIDER_VERDICTS: dict[str, str] = {p.key: p.verdict for p in PROVIDERS if p.verdict is not None}
 
 
 def effective_rung(
