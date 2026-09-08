@@ -524,7 +524,7 @@ plain, same as it leaves tables unbanded.
 | Antigravity | macOS Keychain, Windows Credential Manager, or Linux Secret Service | Linux needs `secret-tool` from libsecret |
 | Grok Build | `$GROK_HOME/auth.json` | Quota switching is skipped when no quota API is available |
 | Mistral Vibe | macOS Keychain or `$VIBE_HOME/.env` | On Windows and Linux, `$VIBE_HOME/.env` is used; `vibe` is required for login flows |
-| GitHub Copilot | `~/.copilot` config dir, then the OS keyring, then `$COPILOT_GITHUB_TOKEN`/`$GH_TOKEN`/`$GITHUB_TOKEN` | `copilot` is required for login flows; the credential store, quota endpoint, and env-var precedence are unverified against a live Copilot CLI — see `# ASSUMPTION:` comments in `copilot_accounts.py`/`copilot_usage.py` |
+| GitHub Copilot | macOS Keychain item `copilot-cli` keyed `<host>:<login>`, with the signed-in login read from `~/.copilot/config.json` (JSONC); `$COPILOT_GITHUB_TOKEN`/`$GH_TOKEN`/`$GITHUB_TOKEN` as fallback | `copilot` is required for login flows. Store layout verified on macOS; Linux/Windows stores, the quota endpoint, and env-var precedence are still unverified — see `# ASSUMPTION:` comments in `copilot_accounts.py`/`copilot_usage.py` |
 
 Run a provider command with `--help` for its exact files, environment overrides,
 and authentication behavior.

@@ -11,12 +11,14 @@ CLI actually uses). Follow the same three-step shape.
 
 ## 0. Research first (nothing below is verified yet)
 
-- [ ] Where Copilot CLI stores its login. Candidates: `~/.copilot/` (honors
-      `XDG_CONFIG_HOME`), OS keyring, or the `gh` CLI token. Check what `copilot` writes
-      after `/login` and what it deletes on success — vibe deleted the plaintext copy on a
-      successful keyring write and that broke `who`/`switch` until `8d6ee96`.
-      Implemented best-effort, see `# ASSUMPTION:` comments in `copilot_accounts.py`
-      (config dir → keychain → env var read order) — needs live verification.
+- [x] Where Copilot CLI stores its login. **Verified on macOS (2026-09-08) against a
+      real `/login`:** `~/.copilot/config.json` is JSONC (two leading `//` comment
+      lines, then JSON) holding `lastLoggedInUser: {host, login}` and `loggedInUsers`
+      — no token in it. The token is a Keychain generic-password item, service
+      `copilot-cli`, account `<host>:<login>` (e.g. `https://github.com:<login>`).
+      The first best-effort guess (token inside config.json, keyring service
+      `com.github.copilot`) was wrong on both counts and made `save` report "no login";
+      fixed in `copilot_accounts.py`. Still open: Linux/Windows store layout.
 - [ ] Env-var precedence the CLI honors (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`,
       `GITHUB_TOKEN`). `switch` must not be shadowed by an exported token; warn like the
       other tools do. Implemented best-effort (the order above, with a `switch`/`who`
@@ -28,14 +30,13 @@ CLI actually uses). Follow the same three-step shape.
       documented, stable `/user` endpoint — login preferred, then email's local part,
       then a token digest; no `# ASSUMPTION:` comment here since this endpoint (unlike
       the quota one below) is public and documented.
-- [ ] Quota: `GET https://api.github.com/copilot_internal/user` — reported to return
-      `quota_snapshots.{premium_interactions,chat,completions}` with `entitlement`,
-      `remaining`, `percent_remaining`, `quota_reset_date`, plus `copilot_plan`. Confirm
-      the endpoint, auth header form, and that a CLI OAuth token is accepted. If it
-      works, Copilot gets real autoswitch (unlike grok/vibe).
-      Implemented best-effort in `copilot_usage.py` against this exact undocumented
-      shape, with every parse step degrading to "no quota API" on failure instead of
-      raising — see its `# ASSUMPTION:` comments — needs live verification.
+- [x] Quota: `GET https://api.github.com/copilot_internal/user` — **verified live
+      (2026-09-08)**: the CLI's Keychain OAuth token is accepted, and the response
+      carries `copilot_plan` plus `quota_snapshots.{premium_interactions,chat,completions}`
+      in the shape `copilot_usage.py` parses (`list --json` returned real premium/chat/
+      completions windows with a monthly reset). Parsing still degrades to "no quota
+      API" on any shape drift. Follow-up (not done here): with a working quota API,
+      Copilot could get real autoswitch instead of the vibe-shaped "unsupported" stub.
 - [ ] Token lifetime and refresh path. GitHub OAuth app tokens for Copilot may be
       long-lived with no refresh token — if so `refresh` becomes "verify still valid"
       like vibe, and the timer's re-login report needs a `copilot` color/line.

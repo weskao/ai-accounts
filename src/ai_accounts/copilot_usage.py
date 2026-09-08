@@ -3,11 +3,13 @@
 ``fetch_usage`` only — every table/JSON formatter is shared in
 ``usage_format`` (same split as ``claude_usage``/``gemini_usage``).
 
-Nothing here is verified against a live Copilot CLI login: the endpoint,
-its auth header form and its JSON shape are all reported-but-unconfirmed,
-so each is marked ``# ASSUMPTION:`` below and every parse step is written
-to *return None rather than raise*. A wrong guess therefore degrades to
-the grok/vibe "no quota API" path instead of breaking ``list``/``usage``.
+Verified against a live Copilot CLI login on macOS (2026-09-08): the
+endpoint answers a ``Bearer`` Keychain token with ``copilot_plan`` and the
+three ``quota_snapshots`` parsed below. It is still an undocumented route,
+so every parse step is written to *return None rather than raise* — if it
+moves or changes shape, ``list``/``usage`` degrade to the grok/vibe
+"no quota API" path instead of breaking. Remaining ``# ASSUMPTION:``
+comments mark what a working call did not settle.
 """
 
 from __future__ import annotations
@@ -22,14 +24,14 @@ from typing import Any, Final
 
 from .usage_format import UsageWindow, format_unix_time_compact
 
-# ASSUMPTION: undocumented endpoint, reported to serve Copilot quota for the
-# authenticated user. Unconfirmed — it may 404, move, or change shape at any
-# time, which is exactly why every failure here is non-fatal.
+# Verified live: this undocumented route serves the authenticated user's
+# Copilot quota. Undocumented still means it may 404, move, or change shape
+# at any time, which is exactly why every failure here is non-fatal.
 USAGE_URL: Final = "https://api.github.com/copilot_internal/user"
 
-# ASSUMPTION: a Copilot CLI OAuth token is accepted as a plain GitHub bearer
-# token. `token <t>` is the older equivalent form; if `Bearer` is rejected the
-# call returns HTTP 401 and degrades, it does not crash.
+# Verified live: the Copilot CLI's Keychain OAuth token is accepted as a plain
+# GitHub `Bearer` token. If that ever changes the call returns HTTP 401 and
+# degrades, it does not crash.
 # ASSUMPTION: the Editor-Version / Editor-Plugin-Version pair is required by
 # copilot_internal routes (it is by the token-exchange route); sending it to an
 # endpoint that ignores it is harmless.
@@ -44,9 +46,10 @@ _HEADERS: Final = {
 # rounding, so a 30-day nominal month is close enough.
 _MONTH_MINUTES: Final = 30 * 24 * 60
 
-# ASSUMPTION: `quota_snapshots` carries these three keys, each an object with
-# `entitlement` / `remaining` / `percent_remaining` / `unlimited`, plus a
-# `quota_reset_date` either per-snapshot or at the top level.
+# Verified live: `quota_snapshots` carries these three keys, each an object
+# with `entitlement` / `remaining` / `percent_remaining` / `unlimited`, plus a
+# top-level `quota_reset_date`; the per-snapshot fallback below is kept in
+# case the shape drifts.
 _PREMIUM_KEY: Final = "premium_interactions"
 _CHAT_KEY: Final = "chat"
 _COMPLETIONS_KEY: Final = "completions"

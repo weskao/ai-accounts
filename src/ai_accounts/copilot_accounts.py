@@ -3,13 +3,15 @@
 Structure mirrors ``vibe_accounts`` (the previous provider added): same
 subcommand surface, same profile store, same ``--json`` shape.
 
-**Everything about where the Copilot CLI keeps its login is unverified.**
-This module was written without live Copilot CLI access, so each candidate
-store, env var and endpoint carries an ``# ASSUMPTION:`` comment and every
-read is written to fall through quietly rather than raise. The read order
-below covers all three documented candidates at once, so whichever one the
-CLI actually uses is found; the write path updates the config file *and*
-the keyring so whichever one it reads sees the switch.
+Where the Copilot CLI keeps its login (verified against a real ``/login`` on
+macOS): ``~/.copilot/config.json`` is JSONC — leading ``//`` comment lines,
+then JSON — and names the signed-in account under ``lastLoggedInUser``
+(``{"host", "login"}``) with no token in it; the OAuth token itself is a
+Keychain generic-password item, service ``copilot-cli``, account
+``<host>:<login>``. ``switch`` therefore writes that keyring item and points
+``lastLoggedInUser`` at the profile. The remaining unverified pieces (env-var
+precedence, the quota endpoint, non-macOS stores) still carry an
+``# ASSUMPTION:`` comment and fall through quietly rather than raise.
 """
 
 from __future__ import annotations
@@ -103,20 +105,21 @@ Profiles live under ~/.ai-accounts/copilot/accounts/<name>.json (override with
 $COPILOT_ACCOUNT_DIR). Treat that directory as secrets — profiles contain
 GitHub tokens.
 
-The live token is looked up in the Copilot CLI config dir (~/.copilot, honoring
-$XDG_CONFIG_HOME), then the OS keyring, then $COPILOT_GITHUB_TOKEN / $GH_TOKEN /
-$GITHUB_TOKEN. An exported token wins over anything these commands write, so
+The signed-in login comes from the Copilot CLI's config.json (~/.copilot, honoring
+$XDG_CONFIG_HOME) and its token from the OS keyring, then $COPILOT_GITHUB_TOKEN /
+$GH_TOKEN / $GITHUB_TOKEN. An exported token wins over anything these commands write, so
 `switch` warns when one is set.
 """
 
 
 # ── where the Copilot CLI keeps its login ───────────────────────────────────
-# ASSUMPTION (all four constants below): the Copilot CLI's config dir is
-# ~/.copilot, honoring $XDG_CONFIG_HOME like most GitHub tooling; the token
-# lives in one of these JSON files under one of these keys, possibly nested
-# per host ({"github.com": {"oauth_token": ...}}); the keyring item is a
-# generic password under this service. None of it is confirmed against a real
-# `copilot` login — an empty result just reads as "not logged in".
+# Verified against a real `/login` on macOS: the config dir is ~/.copilot
+# (COPILOT_HOME / $XDG_CONFIG_HOME override, like most GitHub tooling), its
+# config.json is JSONC (leading `//` comment lines) whose `lastLoggedInUser`
+# is {"host", "login"} with *no token*, and the token is a Keychain
+# generic-password item: service "copilot-cli", account "<host>:<login>".
+# ASSUMPTION: Linux/Windows stores are unverified — keychain_read is a no-op
+# there, so those platforms read as "not logged in" until someone checks.
 
 def _copilot_home() -> Path:
     explicit = os.environ.get("COPILOT_HOME")
@@ -128,10 +131,9 @@ def _copilot_home() -> Path:
     return Path.home() / ".copilot"
 
 
-_CONFIG_FILENAMES = ("config.json", "hosts.json", "apps.json")
-_TOKEN_KEYS = ("oauth_token", "access_token", "github_token", "token")
-_KEYCHAIN_SERVICE = "com.github.copilot"
-_KEYCHAIN_ACCOUNT = "oauth_token"
+_CONFIG_FILENAME = "config.json"
+_DEFAULT_HOST = "https://github.com"
+_KEYCHAIN_SERVICE = "copilot-cli"
 # ASSUMPTION: env-var precedence. The Copilot CLI is documented to read
 # $GITHUB_TOKEN / $GH_TOKEN; $COPILOT_GITHUB_TOKEN is the Copilot-specific
 # override reported to outrank both. Exact order unconfirmed — the warning in
@@ -166,15 +168,28 @@ def _backup_dir() -> Path:
     return _account_dir().parent / "backups"
 
 
+def _split_jsonc(text: str) -> tuple[str, str]:
+    """(header, body): the Copilot CLI's config.json opens with `//` comment
+    lines ("This file is managed automatically") that json.loads rejects.
+    Split them off so the body parses and the header can be written back."""
+    lines = text.splitlines(keepends=True)
+    index = 0
+    while index < len(lines) and lines[index].lstrip().startswith("//"):
+        index += 1
+    return "".join(lines[:index]), "".join(lines[index:])
+
+
 def _read_json(path: Path) -> JsonDict | None:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(_split_jsonc(path.read_text(encoding="utf-8"))[1])
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) and value else None
 
 
-def _write_json(path: Path, payload: JsonDict) -> bool:
+def _write_json(path: Path, payload: JsonDict, *, header: str = "") -> bool:
+    """Atomically write `payload`; `header` (the CLI's `//` comment lines) is
+    kept verbatim in front so a managed file still looks like its own."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
     try:
@@ -185,6 +200,7 @@ def _write_json(path: Path, payload: JsonDict) -> bool:
             prefix=f".{path.name}.",
             delete=False,
         ) as handle:
+            handle.write(header)
             json.dump(payload, handle, indent=2)
             handle.write("\n")
             temporary = Path(handle.name)
@@ -206,61 +222,31 @@ def _set_marker(profile: Path) -> None:
     marker.chmod(0o600)
 
 
-def _find_token(value: Any) -> str | None:
-    """First non-empty token-shaped string anywhere in a config document —
-    the file may key it per host rather than at the top level."""
-    if isinstance(value, dict):
-        for key in _TOKEN_KEYS:
-            found = value.get(key)
-            if isinstance(found, str) and found.strip():
-                return found.strip()
-        for child in value.values():
-            found = _find_token(child)
-            if found is not None:
-                return found
-    elif isinstance(value, list):
-        for child in value:
-            found = _find_token(child)
-            if found is not None:
-                return found
+def _config_path() -> Path:
+    return _copilot_home() / _CONFIG_FILENAME
+
+
+def _logged_in_user(document: JsonDict | None = None) -> tuple[str, str] | None:
+    """(host, login) the CLI is signed in as — config.json's lastLoggedInUser."""
+    document = _read_json(_config_path()) if document is None else document
+    user = (document or {}).get("lastLoggedInUser")
+    if not isinstance(user, dict):
+        return None
+    host, login = user.get("host"), user.get("login")
+    if isinstance(host, str) and host and isinstance(login, str) and login:
+        return host, login
     return None
 
 
-def _replace_token(value: Any, token: str) -> bool:
-    """Overwrite the first token-shaped key in place. False = none found."""
-    if isinstance(value, dict):
-        for key in _TOKEN_KEYS:
-            if isinstance(value.get(key), str):
-                value[key] = token
-                return True
-        for child in value.values():
-            if _replace_token(child, token):
-                return True
-    elif isinstance(value, list):
-        for child in value:
-            if _replace_token(child, token):
-                return True
-    return False
-
-
-def _config_files() -> list[Path]:
-    home = _copilot_home()
-    return [home / name for name in _CONFIG_FILENAMES]
-
-
-def _read_config_token() -> tuple[str, Path] | None:
-    for path in _config_files():
-        document = _read_json(path)
-        if document is None:
-            continue
-        token = _find_token(document)
-        if token:
-            return token, path
-    return None
+def _keychain_account(host: str, login: str) -> str:
+    return f"{host}:{login}"
 
 
 def _read_keychain_token() -> str | None:
-    secret = keychain_read(_KEYCHAIN_SERVICE, _KEYCHAIN_ACCOUNT)
+    user = _logged_in_user()
+    if user is None:
+        return None
+    secret = keychain_read(_KEYCHAIN_SERVICE, _keychain_account(*user))
     return secret.strip() if secret and secret.strip() else None
 
 
@@ -274,11 +260,8 @@ def _env_token() -> tuple[str, str] | None:
 
 
 def _read_active() -> str | None:
-    """The token the Copilot CLI would use: config file, then keyring, then a
-    exported env var as the last resort."""
-    from_config = _read_config_token()
-    if from_config is not None:
-        return from_config[0]
+    """The token the Copilot CLI would use: the keyring item for config.json's
+    signed-in login, then an exported env var as the last resort."""
     from_keychain = _read_keychain_token()
     if from_keychain:
         return from_keychain
@@ -288,11 +271,9 @@ def _read_active() -> str | None:
 
 def _active_source() -> str:
     """Where the live token comes from — the one fact that explains a stale switch."""
-    from_config = _read_config_token()
-    if from_config is not None:
-        return str(from_config[1])
-    if _read_keychain_token():
-        return "OS keyring"
+    user = _logged_in_user()
+    if user is not None and _read_keychain_token():
+        return f"OS keyring ({_KEYCHAIN_SERVICE} · {_keychain_account(*user)})"
     env = _env_token()
     return f"${env[0]}" if env else "—"
 
@@ -305,12 +286,11 @@ def _warn_env_shadow() -> None:
     print(f"{DIM}   Unset it for these commands to take effect: unset {env[0]}{RESET}", file=sys.stderr)
 
 
-def _write_active(token: str) -> bool:
-    """Install a saved profile's token as the live Copilot credential.
-
-    Writes the config file *and* (best effort) the keyring: the CLI's own read
-    order is unverified, so updating only one could leave the other winning.
-    """
+def _write_active(token: str, host: str, login: str) -> bool:
+    """Install a saved profile as the live Copilot credential: its token goes
+    into the keyring item the CLI reads for `<host>:<login>`, then config.json's
+    `lastLoggedInUser` is pointed at that account (and it is added to
+    `loggedInUsers`), keeping the `//` header the CLI writes."""
     if not token.strip():
         # Never persist an empty secret — an empty keychain item reads back as
         # a successful login and logs the user out of the real one.
@@ -318,17 +298,26 @@ def _write_active(token: str) -> bool:
         return False
     token = token.strip()
 
-    from_config = _read_config_token()
-    path = from_config[1] if from_config is not None else _copilot_home() / _CONFIG_FILENAMES[0]
-    document = _read_json(path) or {}
-    if not _replace_token(document, token):
-        document[_TOKEN_KEYS[0]] = token
-    if not _write_json(path, document):
+    if not keychain_write(_KEYCHAIN_SERVICE, _keychain_account(host, login), token):
+        log_red("❌ Could not write the Copilot token to the OS keyring")
         return False
-    keychain_write(_KEYCHAIN_SERVICE, _KEYCHAIN_ACCOUNT, token)
+
+    path = _config_path()
+    try:
+        header, _ = _split_jsonc(path.read_text(encoding="utf-8"))
+    except OSError:
+        header = ""
+    document = _read_json(path) or {}
+    user = {"host": host, "login": login}
+    document["lastLoggedInUser"] = user
+    users = document.get("loggedInUsers")
+    users = [u for u in users if isinstance(u, dict)] if isinstance(users, list) else []
+    if user not in users:
+        users.append(user)
+    document["loggedInUsers"] = users
     # The env-shadow warning is left to cmd_who, which every switch ends with —
     # warning here too printed it twice for one `switch`.
-    return True
+    return _write_json(path, document, header=header)
 
 
 # ── GitHub identity ─────────────────────────────────────────────────────────
@@ -419,8 +408,15 @@ def _claims_lines(claims: dict[str, str], profile: Path | None) -> list[str]:
 def cmd_who() -> int:
     token = _read_active()
     profile = _active_profile(token) if token else None
-    payload = (_read_json(profile) if profile else None) or ({"oauth_token": token} if token else {})
-    claims = _claims(payload)
+    payload = _read_json(profile) if profile else None
+    if payload is None and token:
+        # Untracked login: still name the account from config.json so `who`
+        # does not show "—" for a signed-in user who just has no profile yet.
+        payload = {"oauth_token": token}
+        user = _logged_in_user()
+        if user is not None:
+            payload["host"], payload["login"] = user
+    claims = _claims(payload or {})
 
     if token:
         status_lines = [
@@ -430,7 +426,7 @@ def cmd_who() -> int:
     else:
         status_lines = [
             f"{RED}Not logged in{RESET}  "
-            f"{DIM}(no token in {_copilot_home()}, the OS keyring, or ${_ENV_VARS[0]}){RESET}"
+            f"{DIM}(no lastLoggedInUser in {_config_path()}, no keyring item, or ${_ENV_VARS[0]}){RESET}"
         ]
     panel("Copilot Login Status", status_lines)
 
@@ -446,11 +442,16 @@ def cmd_save(name: str | None = None) -> int:
     if not token:
         log_red("❌ No GitHub Copilot login found. Run: copilot-accounts login-switch <name>")
         return 1
-    identity = _fetch_identity(token) or {}
     payload: JsonDict = {"oauth_token": token}
+    user = _logged_in_user()
+    if user is not None:
+        # config.json's login is what keys the keyring item, so it outranks the
+        # /user lookup (which only fills in email/id, or login on an env token).
+        payload["host"], payload["login"] = user
+    identity = _fetch_identity(token) or {}
     for key in ("login", "email", "id"):
         value = identity.get(key)
-        if value:
+        if value and key not in payload:
             payload[key] = value
 
     profile = _profile_file(_derived_name(payload) if name is None else name)
@@ -595,9 +596,18 @@ def cmd_switch(name: str) -> int:
     if not _token(payload):
         log_red(f"❌ Profile has no Copilot token: {name}")
         return 1
+    login = payload.get("login")
+    if not isinstance(login, str) or not login:
+        log_red(
+            "❌ Profile has no GitHub login to key the keyring item on — "
+            f"re-save it: copilot-accounts save {name}"
+        )
+        return 1
+    host = payload.get("host")
+    host = host if isinstance(host, str) and host else _DEFAULT_HOST
     if not _backup_active():
         return 1
-    if not _write_active(_token(payload)):
+    if not _write_active(_token(payload), host, login):
         return 1
     _set_marker(profile)
     ok("Switched Copilot profile to", profile.stem)
@@ -659,6 +669,9 @@ def cmd_sync() -> int:
         return 1
     payload = _read_json(profile) or {}
     payload["oauth_token"] = token
+    user = _logged_in_user()
+    if user is not None:
+        payload["host"], payload["login"] = user
     if not _write_json(profile, payload):
         return 1
     _set_marker(profile)

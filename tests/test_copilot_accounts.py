@@ -42,8 +42,11 @@ _QUOTA_JSON = {
 }
 
 
+_HOST = "https://github.com"
+
+
 def _profile(token: str = _TOKEN) -> dict[str, object]:
-    return {"oauth_token": token, **_IDENTITY}
+    return {"oauth_token": token, "host": _HOST, **_IDENTITY}
 
 
 class CopilotAccountsTests(unittest.TestCase):
@@ -92,11 +95,19 @@ class CopilotAccountsTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _write_config_token(self, token: str = _TOKEN) -> Path:
+    def _sign_in(self, token: str = _TOKEN, *, login: str = "testuser", host: str = _HOST) -> Path:
+        """Reproduce a real `/login`: config.json is JSONC naming the account
+        (no token in it), and the token sits in the keyring under <host>:<login>."""
         path = self.copilot_home / "config.json"
-        # Nested per-host shape — the token must be found even when it is not
-        # a top-level key.
-        self.assertTrue(ca._write_json(path, {"github.com": {"oauth_token": token}}))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        user = {"host": host, "login": login}
+        document = {"firstLaunchAt": "2026-01-01T00:00:00.000Z", "lastLoggedInUser": user, "loggedInUsers": [user]}
+        path.write_text(
+            "// User settings belong in settings.json.\n"
+            "// This file is managed automatically.\n" + json.dumps(document, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self.keychain[(ca._KEYCHAIN_SERVICE, f"{host}:{login}")] = token
         return path
 
     # ── who / save ──────────────────────────────────────────────────────────
@@ -113,18 +124,24 @@ class CopilotAccountsTests(unittest.TestCase):
             self.assertEqual(ca.main(["save"]), 1)
         self.assertIn("No GitHub Copilot login found", _ANSI_RE.sub("", err.getvalue()))
 
-    def test_save_reads_the_token_from_the_config_file(self) -> None:
-        self._write_config_token()
+    def test_save_reads_login_from_jsonc_config_and_token_from_keychain(self) -> None:
+        self._sign_in()
         with redirect_stdout(io.StringIO()):
             self.assertEqual(ca.cmd_save("personal"), 0)
             self.assertEqual(ca.cmd_who(), 0)
         self.assertEqual(ca._read_json(self.account_dir / "personal.json"), _profile())
 
-    def test_save_reads_the_token_from_the_keychain(self) -> None:
-        self.keychain[(ca._KEYCHAIN_SERVICE, ca._KEYCHAIN_ACCOUNT)] = _TOKEN
-        with redirect_stdout(io.StringIO()):
-            self.assertEqual(ca.cmd_save("personal"), 0)
-        self.assertEqual(ca._read_active(), _TOKEN)
+    def test_config_json_comment_header_is_tolerated_and_preserved(self) -> None:
+        path = self._sign_in()
+        self.assertEqual(ca._logged_in_user(), (_HOST, "testuser"))
+        header, _ = ca._split_jsonc(path.read_text(encoding="utf-8"))
+        self.assertTrue(header.startswith("// User settings"))
+
+    def test_keychain_item_alone_is_not_a_login(self) -> None:
+        # Without config.json naming the account there is no way to know which
+        # keyring item is the live one — that reads as signed out, not as a guess.
+        self.keychain[(ca._KEYCHAIN_SERVICE, f"{_HOST}:testuser")] = _TOKEN
+        self.assertIsNone(ca._read_active())
 
     def test_env_token_is_the_last_resort_and_warns(self) -> None:
         with mock.patch.dict(os.environ, {"GH_TOKEN": "ghp_env_token"}, clear=False):
@@ -133,23 +150,23 @@ class CopilotAccountsTests(unittest.TestCase):
             with redirect_stderr(err):
                 ca._warn_env_shadow()
             self.assertIn("GH_TOKEN", _ANSI_RE.sub("", err.getvalue()))
-            # A config-file token still wins over the exported one.
-            self._write_config_token()
+            # The keyring login still wins over the exported one.
+            self._sign_in()
             self.assertEqual(ca._read_active(), _TOKEN)
 
     def test_save_no_args_derives_the_name_from_the_github_login(self) -> None:
-        self._write_config_token()
+        self._sign_in()
         with redirect_stdout(io.StringIO()):
             self.assertEqual(ca.main(["save"]), 0)
         self.assertTrue((self.account_dir / "testuser.json").is_file())
 
     def test_save_no_args_falls_back_to_a_per_token_name(self) -> None:
-        # No identity available (offline / revoked token): two accounts must
-        # still not collide on one label.
+        # No identity anywhere (env token only, /user offline): two accounts
+        # must still not collide on one label.
         self._install_fake_identity(None)
-        self._write_config_token()
-        with redirect_stdout(io.StringIO()):
-            self.assertEqual(ca.main(["save"]), 0)
+        with mock.patch.dict(os.environ, {"GH_TOKEN": _TOKEN}, clear=False):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(ca.main(["save"]), 0)
         first = ca._derived_name({"oauth_token": _TOKEN})
         self.assertTrue((self.account_dir / f"{first}.json").is_file())
         self.assertNotEqual(first, ca._derived_name({"oauth_token": "ghu_other"}))
@@ -157,22 +174,38 @@ class CopilotAccountsTests(unittest.TestCase):
     # ── switch / sync / remove ──────────────────────────────────────────────
 
     def test_switch_updates_both_the_config_file_and_the_keychain(self) -> None:
-        self._write_config_token("ghu_old_token")
+        self._sign_in("ghu_old_token", login="olduser")
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
 
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(ca.cmd_switch("personal"), 0)
 
         self.assertEqual(ca._read_active(), _TOKEN)
-        self.assertEqual(self.keychain[(ca._KEYCHAIN_SERVICE, ca._KEYCHAIN_ACCOUNT)], _TOKEN)
-        # rewritten in place, nested shape preserved
-        self.assertEqual(
-            ca._read_json(self.copilot_home / "config.json"),
-            {"github.com": {"oauth_token": _TOKEN}},
-        )
+        self.assertEqual(self.keychain[(ca._KEYCHAIN_SERVICE, f"{_HOST}:testuser")], _TOKEN)
+        # the old account's item is left alone — the CLI can still switch back to it
+        self.assertEqual(self.keychain[(ca._KEYCHAIN_SERVICE, f"{_HOST}:olduser")], "ghu_old_token")
+        config = ca._read_json(self.copilot_home / "config.json")
+        assert config is not None
+        self.assertEqual(config["lastLoggedInUser"], {"host": _HOST, "login": "testuser"})
+        self.assertIn({"host": _HOST, "login": "olduser"}, config["loggedInUsers"])
+        self.assertIn({"host": _HOST, "login": "testuser"}, config["loggedInUsers"])
+        # the CLI's own `//` header survives the rewrite
+        raw = (self.copilot_home / "config.json").read_text(encoding="utf-8")
+        self.assertTrue(raw.startswith("// User settings"))
+
+    def test_switch_refuses_a_profile_without_a_login(self) -> None:
+        # Pre-fix profiles carry only the token; the keyring item is keyed on
+        # the login, so there is nothing to install — ask for a re-save, don't guess.
+        self.assertTrue(ca._write_json(self.account_dir / "legacy.json", {"oauth_token": _TOKEN}))
+        self._sign_in("ghu_old_token", login="olduser")
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            self.assertEqual(ca.cmd_switch("legacy"), 1)
+        self.assertIn("no GitHub login", _ANSI_RE.sub("", err.getvalue()))
+        self.assertEqual(ca._read_active(), "ghu_old_token")  # live login untouched
 
     def test_switch_keeps_a_backup_of_the_replaced_token(self) -> None:
-        self._write_config_token("ghu_old_token")
+        self._sign_in("ghu_old_token")
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(ca.cmd_switch("personal"), 0)
@@ -180,7 +213,7 @@ class CopilotAccountsTests(unittest.TestCase):
 
     def test_switch_refuses_a_profile_with_an_empty_token(self) -> None:
         self.assertTrue(ca._write_json(self.account_dir / "broken.json", {"oauth_token": ""}))
-        self._write_config_token()
+        self._sign_in()
         err = io.StringIO()
         with redirect_stdout(io.StringIO()), redirect_stderr(err):
             self.assertEqual(ca.cmd_switch("broken"), 1)
@@ -190,7 +223,7 @@ class CopilotAccountsTests(unittest.TestCase):
     def test_write_active_never_persists_an_empty_secret(self) -> None:
         err = io.StringIO()
         with redirect_stderr(err):
-            self.assertFalse(ca._write_active("   "))
+            self.assertFalse(ca._write_active("   ", _HOST, "testuser"))
         self.assertIn("empty Copilot token", _ANSI_RE.sub("", err.getvalue()))
         self.assertEqual(self.keychain, {})
         self.assertFalse((self.copilot_home / "config.json").exists())
@@ -199,7 +232,7 @@ class CopilotAccountsTests(unittest.TestCase):
         # A profile saved before the identity lookup existed: sync must write
         # the live token without dropping what is already stored.
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
-        self._write_config_token()
+        self._sign_in()
         (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
 
         with redirect_stdout(io.StringIO()):
@@ -215,7 +248,7 @@ class CopilotAccountsTests(unittest.TestCase):
         # credential), so a rotated login is not attributable to a profile.
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
         (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
-        self._write_config_token("ghu_rotated_token")
+        self._sign_in("ghu_rotated_token")
 
         err = io.StringIO()
         with redirect_stdout(io.StringIO()), redirect_stderr(err):
@@ -280,7 +313,7 @@ class CopilotAccountsTests(unittest.TestCase):
     def test_usage_shows_only_the_active_profile(self) -> None:
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
         self.assertTrue(ca._write_json(self.account_dir / "work.json", _profile("ghu_work_token")))
-        self._write_config_token()
+        self._sign_in()
         (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
 
         out = io.StringIO()
@@ -303,7 +336,7 @@ class CopilotAccountsTests(unittest.TestCase):
 
     def test_list_json_round_trips_a_quota_reading(self) -> None:
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
-        self._write_config_token()
+        self._sign_in()
         (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
 
         snapshot = cu.UsageSnapshot(
