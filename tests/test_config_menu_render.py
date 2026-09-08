@@ -447,12 +447,17 @@ class LivePreviewAutoLayoutTests(unittest.TestCase):
             return visible_len(config_menu.render("t", cs.FIELDS, values, cursor=0)[0])
 
     def test_auto_follows_the_terminal_width_in_both_directions(self) -> None:
-        wide_reference = self._box_width("wide", columns="40")
+        # Both references are taken at 200 columns: wide clamps to the screen
+        # (see ``TerminalClampTests``), so a wide box measured at 40 columns is
+        # 40 too and could not tell the two modes apart.
+        wide_reference = self._box_width("wide", columns="200")
         narrow_reference = self._box_width("narrow", columns="200")
         self.assertLess(narrow_reference, wide_reference)
 
         self.assertEqual(self._box_width("auto", columns="200"), wide_reference)
-        self.assertEqual(self._box_width("auto", columns="40"), narrow_reference)
+        self.assertEqual(
+            self._box_width("auto", columns="40"), self._box_width("narrow", columns="40")
+        )
 
     def test_auto_ignores_the_committed_on_disk_value(self) -> None:
         """``values`` is what the user is editing; disk is stale by definition
@@ -544,6 +549,60 @@ class FieldPreviewTests(unittest.TestCase):
     def test_a_field_without_a_preview_renders_nothing_extra(self) -> None:
         field = cs.Field(key="plain", type=str, default="", label="Plain", help="no demo")
         self.assertEqual(field.display_preview("x"), [])
+
+
+class TerminalClampTests(unittest.TestCase):
+    """The wide box grows to fit its content, but never past the screen.
+
+    It used to grow unclamped: the longest English help string is ~200 columns,
+    so on a normal terminal every row of the box wrapped onto a second physical
+    row. ``run_menu``'s in-place repaint counts LOGICAL lines, so the cursor-up
+    step then landed mid-frame and the previous frame stayed on screen — most
+    visibly when switching the language row, where the shorter Traditional
+    Chinese frame did fit and left the wrapped English one above it.
+    """
+
+    def _frames(self, columns: str):
+        with mock.patch.dict(os.environ, {"COLUMNS": columns}):
+            _present.reset_layout_cache()
+            for language in ("en", "zh-TW"):
+                values = {**_default_values(), "language": language, "layout": "wide"}
+                for cursor in range(len(cs.FIELDS)):
+                    yield language, cursor, config_menu.render("t", cs.FIELDS, values, cursor=cursor)
+
+    def test_wide_box_never_exceeds_the_terminal_width(self) -> None:
+        for columns in ("60", "80", "100", "120", "200"):
+            for language, cursor, lines in self._frames(columns):
+                with self.subTest(columns=columns, language=language, cursor=cursor):
+                    widths = {visible_len(line) for line in lines}
+                    self.assertEqual(len(widths), 1, f"inconsistent widths: {widths}")
+                    self.assertLessEqual(widths.pop(), int(columns))
+
+    def test_language_switch_keeps_one_box_width(self) -> None:
+        """The two languages must render the same box, or the repaint of the
+        narrower one cannot cover the wider one it replaces."""
+        for columns in ("80", "100", "120"):
+            widths = {
+                visible_len(lines[0]) for _, _, lines in self._frames(columns)
+            }
+            with self.subTest(columns=columns):
+                self.assertEqual(len(widths), 1, f"language/cursor resized the box: {widths}")
+
+    def test_clamped_help_wraps_instead_of_being_dropped(self) -> None:
+        long_help = next(f for f in cs.FIELDS if f.key == "table_style")
+        cursor = [f.key for f in cs.FIELDS].index(long_help.key)
+        with mock.patch.dict(os.environ, {"COLUMNS": "100"}):
+            _present.reset_layout_cache()
+            lines = _clean(
+                config_menu.render(
+                    "t", cs.FIELDS, {**_default_values(), "layout": "wide"}, cursor=cursor
+                )
+            )
+        # Wrapped across rows, so the text is only contiguous once the box
+        # borders and padding are stripped and the rows are rejoined.
+        joined = " ".join(line.strip("│ ") for line in lines)
+        self.assertIn(long_help.help.split(":")[0], joined)
+        self.assertIn(long_help.help.split()[-1], joined)
 
 
 class PurityTests(unittest.TestCase):

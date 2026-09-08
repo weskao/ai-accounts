@@ -361,6 +361,10 @@ ai-accounts config set layout wide     # always the desktop table
 ai-accounts config set layout narrow   # always the stacked, phone-width layout
 ```
 
+In `wide`, the `config` menu grows its box to fit the longest label, value and
+help text, but never past the terminal — long help lines wrap inside the box
+instead of pushing it off-screen.
+
 `auto` renders the `wide` box-drawing table at 60 columns or wider, and
 switches to stacked `narrow` cards — one per profile, no column dropped —
 below that, which is the layout a phone-width SSH session or a narrow split

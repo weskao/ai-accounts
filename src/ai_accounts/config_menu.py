@@ -532,26 +532,18 @@ def render(
         notes.append((f"⚠ {error}", RED))
     notes.append(("", ""))
     notes.append((i18n.t("menu.keys", lang=lang, default=_FOOTER_HINT_EN), DIM))
-    for text, color in notes:
-        if not text:
-            body.append("")
-        elif narrow:
-            # Wrapped to the budget instead of setting the box width — the
-            # footer hint alone is ~75 columns and would otherwise decide it.
-            body.extend(_wrapped(text, color, text_width))
-        else:
-            body.append(f"{color}{text}{RESET}")
-
     if not narrow:
         # ``inner`` is the visible width of everything between the two vertical
         # borders (both the top/bottom dash rule and every content row) — kept
         # to a single number so every returned line has identical visible width.
-        # Reserve for every help message so moving the cursor never resizes the
-        # box. (Narrow fixed ``inner`` from its budget up front instead: there
-        # the box does not grow to fit the content, the content wraps to fit
-        # the box.)
+        # (Narrow fixed ``inner`` from its budget up front instead: there the
+        # box does not grow to fit the content, the content wraps to fit the
+        # box.)
+        # Reserve for every help message, not just the selected field's, so
+        # moving the cursor never resizes the box.
         max_line = max(
-            *(visible_len(line) for line in body),
+            *(visible_len(line) for line in field_rows),
+            *(visible_len(text) for text, _ in notes),
             *(
                 visible_len(field.display_help(lang, value=values.get(field.key, field.default)))
                 for field in fields
@@ -561,6 +553,35 @@ def render(
         inner = max(max_line + 3, visible_len(title) + 4, _MIN_WIDTH - 2)
         if width is not None:
             inner = max(inner, width - 2)
+        # …but never wider than the screen. A box that overflows wraps every
+        # row, so the in-place repaint's line count no longer matches the rows
+        # actually used and the previous frame survives on screen — which is
+        # what made switching to a shorter language leave the old English frame
+        # behind. The longest help strings are ~200 columns; they wrap below.
+        screen = _present.terminal_width()
+        if screen is not None:
+            inner = max(min(inner, screen - 2), _MIN_WIDTH - 2)
+        text_width = inner - 3
+
+    # Reserve the tallest help block any field can produce, so moving the
+    # cursor onto a field whose help wraps one line further does not resize the
+    # box (the pre-wrap renderer reserved this horizontally instead).
+    reserve = 0
+    if not narrow and fields:
+        reserve = max(
+            len(wrap(field.display_help(lang, value=values.get(field.key, field.default)), text_width))
+            for field in fields
+        )
+    for position, (text, color) in enumerate(notes):
+        if not text:
+            body.append("")
+            continue
+        # Wrapped to the budget instead of setting the box width — the footer
+        # hint alone is ~75 columns and would otherwise decide it.
+        rendered = _wrapped(text, color, text_width)
+        body.extend(rendered)
+        if position == 0 and reserve:  # notes[0] is the help line when fields exist
+            body.extend([""] * (reserve - len(rendered)))
 
     if demo:
         body = _with_demo(body, field_rows, demo, inner=inner, narrow=narrow)
@@ -573,10 +594,17 @@ def render(
         values.get("table_style")  # type: ignore[arg-type]
     )
     top = f"{CYAN}{top_left}─ {BOLD}{title}{RESET}{CYAN} {'─' * dashes}{top_right}{RESET}"
-    content_lines = [
-        f"{CYAN}│{RESET}  {line}{' ' * (inner - 2 - visible_len(line))}{CYAN}│{RESET}"
-        for line in body
-    ]
+    # ``elide`` is a no-op for every line that fits; it only bites when the
+    # clamp above put the box narrower than an unwrapped row (a long label plus
+    # value on a small screen), where an overflowing row would break the border.
+    content_lines = []
+    for line in body:
+        cut = elide(line, inner - 2)
+        if cut is not line:
+            cut += RESET  # the truncated tail may have taken the row's own reset
+        content_lines.append(
+            f"{CYAN}│{RESET}  {cut}{' ' * (inner - 2 - visible_len(cut))}{CYAN}│{RESET}"
+        )
     bottom = f"{CYAN}{bottom_left}{'─' * inner}{bottom_right}{RESET}"
     return [top, *content_lines, bottom]
 
