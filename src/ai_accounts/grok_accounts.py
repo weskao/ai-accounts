@@ -28,7 +28,7 @@ from ._utils import (
     oauth_token_refresh,
     resolve_account_dir,
 )
-from .usage_format import credential_status_prefix, no_quota_json_entries, print_no_active_account
+from .usage_format import credential_status_prefix, json_empty_list, no_quota_json_entries, print_no_active_account
 
 JsonDict = dict[str, Any]
 
@@ -368,8 +368,7 @@ _TABLE_COLUMNS = [
 def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
-        if json_output:
-            print(json.dumps([]))
+        if json_empty_list(json_output):
             return 0
         log_yellow("⚠️  No saved Grok profiles.")
         print(
@@ -380,8 +379,7 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
     active = _active_profile()
     if only_active:
         if active is None:
-            if json_output:
-                print(json.dumps([]))
+            if json_empty_list(json_output):
                 return 0
             print_no_active_account("Grok", "grok-accounts")
             return 0

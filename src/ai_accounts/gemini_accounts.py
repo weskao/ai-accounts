@@ -56,6 +56,7 @@ from .usage_format import (
     credential_status_prefix,
     format_unix_time_compact,
     format_usage_window,
+    json_empty_list,
     print_no_active_account,
     usage_window_to_json,
 )
@@ -944,8 +945,7 @@ def cmd_list(
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
-        if json_output:
-            print(json.dumps([]))
+        if json_empty_list(json_output):
             return 0
         log_yellow("⚠️  No saved Antigravity profiles.")
         print(
@@ -959,8 +959,7 @@ def cmd_list(
     active_profile = _active_profile(active_text)
     if only_active:
         if active_profile is None:
-            if json_output:
-                print(json.dumps([]))
+            if json_empty_list(json_output):
                 return 0
             print_no_active_account("Antigravity", "agy-accounts")
             return 0

@@ -58,7 +58,13 @@ from ._utils import (
     resolve_account_dir,
 )
 from .config_schema import mask_secret
-from .usage_format import align_usage_cells, format_usage_window, print_no_active_account, usage_window_to_json
+from .usage_format import (
+    align_usage_cells,
+    format_usage_window,
+    json_empty_list,
+    print_no_active_account,
+    usage_window_to_json,
+)
 
 JsonDict = dict[str, Any]
 
@@ -488,8 +494,7 @@ def _usage_cell(window) -> str:
 def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output: bool = False) -> int:
     profiles = _profiles()
     if not profiles:
-        if json_output:
-            print(json.dumps([]))
+        if json_empty_list(json_output):
             return 0
         log_yellow("⚠️  No saved Copilot profiles.")
         print(
@@ -501,8 +506,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
     active = _active_profile()
     if only_active:
         if active is None:
-            if json_output:
-                print(json.dumps([]))
+            if json_empty_list(json_output):
                 return 0
             print_no_active_account("Copilot", "copilot-accounts")
             return 0

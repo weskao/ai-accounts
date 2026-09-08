@@ -34,6 +34,7 @@ from .usage_format import (
     capitalize_first,
     format_unix_time_compact,
     format_usage_window,
+    json_empty_list,
     print_no_active_account,
     usage_window_to_json,
 )
@@ -731,8 +732,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
-        if json_output:
-            print(json.dumps([]))
+        if json_empty_list(json_output):
             return 0
         log_yellow("⚠️  No saved Claude profiles.")
         print(f"{DIM}   Add one with: claude-accounts save <profile_name>{RESET}", file=sys.stderr)
@@ -746,8 +746,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
     profile_oauth = [(p, _read_profile_oauth(p) or {}) for p in profiles]
     if only_active:
         if active_profile is None:
-            if json_output:
-                print(json.dumps([]))
+            if json_empty_list(json_output):
                 return 0
             print_no_active_account("Claude", "claude-accounts")
             return 0

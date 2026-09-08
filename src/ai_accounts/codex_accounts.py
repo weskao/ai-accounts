@@ -799,8 +799,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
     account_dir = _account_dir()
     profiles = sorted(account_dir.glob("*.json")) if account_dir.is_dir() else []
     if not profiles:
-        if json_output:
-            print(json.dumps([]))
+        if usage_format.json_empty_list(json_output):
             return 0
         log_yellow("⚠️  No saved Codex profiles.")
         print(f"{DIM}   Add one with: codex-accounts save <profile_name>{RESET}", file=sys.stderr)
@@ -811,8 +810,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
     active_profile = _active_profile(active_text)
     if only_active:
         if active_profile is None:
-            if json_output:
-                print(json.dumps([]))
+            if usage_format.json_empty_list(json_output):
                 return 0
             usage_format.print_no_active_account("Codex", "codex-accounts")
             return 0

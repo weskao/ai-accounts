@@ -72,6 +72,16 @@ def capitalize_first(text: str | None) -> str | None:
     return text[:1].upper() + text[1:]
 
 
+def json_empty_list(json_output: bool) -> bool:
+    """For a --json ``list``/``usage`` call with nothing to report: print ``[]``
+    and report whether the caller should return 0 immediately. No-op (returns
+    False) when not in json mode, so callers can write
+    ``if json_empty_list(json_output): return 0`` without a separate branch."""
+    if json_output:
+        print(json.dumps([]))
+    return json_output
+
+
 def print_no_active_account(provider: str, command: str) -> None:
     """Print the shared "no active account" warning + save/switch hint for a `usage` subcommand."""
     log_yellow(f"⚠️  No active {provider} account detected.")
