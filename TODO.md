@@ -160,3 +160,15 @@ CLI actually uses). Follow the same three-step shape.
   `copilot_usage.fetch_usage`/`copilot_accounts._has_quota` degrade to
   `no_quota_api: true` on any parse/HTTP failure rather than raising or failing
   `list`/`usage`.
+
+## Future work
+
+- [ ] 🔴 **High priority:** Add configurable AI quota-reset notifications: detect when a supported
+      provider's quota window rolls over and usage returns to 0%, then notify the
+      user that the quota is available again. Support provider-specific quota
+      windows, such as 5H / 1W for Codex and Claude, and Monthly AI Credits for
+      GitHub Copilot. Prevent false notifications from initial 0% readings or
+      repeated timer checks, and integrate the feature with `ai-accounts config`,
+      applicable `*-accounts config` commands, `config get/set`, notification
+      toggles, persistent state, provider capability detection, and English /
+      zh-TW localization.
