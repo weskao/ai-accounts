@@ -471,7 +471,8 @@ under it. The alert is de-duplicated by the exact set of profiles it names:
 the same set stays quiet for an hour, while a newly revoked profile alerts on
 the next tick instead of waiting out the previous alert's cooldown. Transient
 failures (a 5xx, a timeout, an unreachable token endpoint) are retried on the
-next tick and never reported here.
+next tick and never reported here. The sent notification ends with the source
+device (for example, `💻 MacBook Pro` or `🖥️ Mac mini`).
 
 ## Language
 

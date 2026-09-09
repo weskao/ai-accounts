@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import platform
 import re
 import time
 from functools import lru_cache
@@ -37,6 +38,23 @@ RESET = "\033[0m"
 IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
+
+
+def source_device() -> str:
+    """Short, human-readable label for notification provenance."""
+    name = ""
+    if IS_MACOS:
+        try:
+            name = subprocess.run(
+                ["scutil", "--get", "ComputerName"],
+                capture_output=True,
+                text=True,
+                timeout=1,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    name = name or os.environ.get("COMPUTERNAME") or platform.node() or "unknown-host"
+    return f"{'🖥️' if 'mini' in name.lower() else '💻'} {name}"
 
 
 # ── ANSI / color support ─────────────────────────────────────────────────────
