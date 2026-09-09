@@ -1,3 +1,12 @@
+## [0.9.0] - 2026-09-09
+
+### 🚀 Features
+
+- **copilot:** Show ai credit balances
+
+### 🐛 Bug Fixes
+
+- **copilot:** Avoid keychain reads in lists
 ## [0.8.0] - 2026-09-08
 
 ### 🚀 Features
@@ -23,6 +32,7 @@
 
 - Use help alias in command examples
 - Document json, doctor, and copilot support
+- **changelog:** Release v0.8.0
 
 ### ⚙️ Miscellaneous Tasks
 
