@@ -302,6 +302,28 @@ class CopilotAccountsTests(unittest.TestCase):
         fetch.assert_not_called()
         self.assertIn("personal", _ANSI_RE.sub("", out.getvalue()))
 
+    def test_list_identifies_active_profile_without_reading_keychain(self) -> None:
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+        self._sign_in()
+        with mock.patch.object(ca, "keychain_read", side_effect=AssertionError("keychain read")):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(ca.cmd_list(fetch_usage=False), 0)
+        self.assertIn("ACTIVE", _ANSI_RE.sub("", out.getvalue()))
+
+    def test_list_uses_marker_to_disambiguate_profiles_for_the_same_login(self) -> None:
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+        self.assertTrue(ca._write_json(self.account_dir / "personal-old.json", _profile("ghu_old_token")))
+        self._sign_in()
+        with mock.patch.object(ca, "keychain_read", side_effect=AssertionError("keychain read")):
+            self.assertIsNone(ca._listed_active_profile(ca._profiles()))
+            (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(ca.cmd_list(fetch_usage=False, json_output=True), 0)
+        rows = json.loads(out.getvalue())
+        self.assertEqual([row["name"] for row in rows if row["active"]], ["personal"])
+
     def test_switch_warns_once_about_an_exported_token(self) -> None:
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
         err = io.StringIO()
@@ -409,7 +431,7 @@ class CopilotAccountsTests(unittest.TestCase):
 
     def test_list_uses_credit_quota_and_live_identity_without_rewriting_profile(self) -> None:
         path = self.account_dir / "personal.json"
-        self.assertTrue(ca._write_json(path, {"oauth_token": _TOKEN}))
+        self.assertTrue(ca._write_json(path, {"oauth_token": _TOKEN, "host": _HOST, "login": "testuser"}))
         original = path.read_bytes()
         self._install_fake_identity({**_IDENTITY, "name": "Test User"})
         with mock.patch.object(cu, "_request", return_value=_CREDIT_JSON):

@@ -26,6 +26,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -391,19 +392,42 @@ def _derived_name(payload: JsonDict) -> str:
     return f"copilot-{digest[:8]}"
 
 
+def _matching_profile(profiles: list[Path], matches: Callable[[Path], bool]) -> Path | None:
+    candidates = [path for path in profiles if matches(path)]
+    if not candidates:
+        return None
+    marker = _marker_file()
+    try:
+        marked_name = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        marked_name = ""
+    marked = next((path for path in candidates if path.stem == marked_name), None)
+    return marked or (candidates[0] if len(candidates) == 1 else None)
+
+
 def _active_profile(token: str | None = None) -> Path | None:
     token = token if token is not None else _read_active()
     if not token:
         return None
-    marker = _marker_file()
-    try:
-        marked = _profile_file(marker.read_text(encoding="utf-8").strip())
-    except OSError:
-        marked = None
-    if marked is not None and _token(_read_json(marked)) == token:
-        return marked
-    matches = [path for path in _profiles() if _token(_read_json(path)) == token]
-    return matches[0] if len(matches) == 1 else None
+    return _matching_profile(
+        _profiles(),
+        lambda path: _token(_read_json(path)) == token,
+    )
+
+
+def _listed_active_profile(profiles: list[Path]) -> Path | None:
+    """Active profile for read-only listings, without unlocking the keychain."""
+    user = _logged_in_user()
+    if user is None:
+        return None
+    host, login = user
+
+    def matches(path: Path) -> bool:
+        payload = _read_json(path) or {}
+        profile_host = payload.get("host") or _DEFAULT_HOST
+        return profile_host == host and payload.get("login") == login
+
+    return _matching_profile(profiles, matches)
 
 
 def _profiles() -> list[Path]:
@@ -544,7 +568,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
         )
         return 0
 
-    active = _active_profile()
+    active = _listed_active_profile(profiles)
     if only_active:
         if active is None:
             if json_empty_list(json_output):

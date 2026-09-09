@@ -127,7 +127,9 @@ marks the active one.
 `REMAINING`, `UPDATED`, `AUTH`, and `STATE`. `copilot-accounts usage` shows the
 same details for the active saved profile. Account details are fetched from
 GitHub on each listing, with saved details as a fallback, without rewriting
-profiles. `ACCOUNT` displays `Name <email>` when available, otherwise the name,
+profiles. Listings identify the active profile from Copilot's `config.json`
+without reading the OS credential store on macOS, Windows, or Linux. `ACCOUNT`
+displays `Name <email>` when available, otherwise the name,
 GitHub login, or email. A private primary email is included only when GitHub
 allows the token to read it and reports it as verified.
 
