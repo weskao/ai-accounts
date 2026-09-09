@@ -7,6 +7,26 @@ one dependency-free Python package.
 commands for Codex, Claude Code, Antigravity, Grok Build, Mistral Vibe, and
 GitHub Copilot.
 
+[Install](#install) · [Commands](#commands) · [Auto-switch](#auto-switch) ·
+[Platform notes](#platform-notes)
+
+## See it in action
+
+### View saved profiles across providers
+
+`ai-accounts list` brings saved profiles into one provider-by-provider view,
+marks the active profile, and shows usage where the provider supports it.
+
+![ai-accounts list showing saved profiles grouped by provider and active profile markers](ai-accounts-list%20demo.png)
+
+### Configure switching and notifications
+
+`ai-accounts config` opens an interactive settings menu. Adjust auto-switch
+behavior, notifications, and display options; changes save as you make them.
+See [Auto-switch](#auto-switch) for setup and activation commands.
+
+![Interactive ai-accounts config menu for auto-switch, notifications, and display settings](ai-accounts%20config%20demo.gif)
+
 ## Requirements
 
 - Python 3.10 or newer
@@ -115,11 +135,6 @@ Platform notes below.
 `who` also answers to `current`. `login-switch <name>` runs a fresh provider
 login and saves the result as `<name>` — it is what the re-login report below
 tells you to run.
-
-`list` gives a compact, provider-by-provider view of every saved profile and
-marks the active one.
-
-![Saved profiles from every provider](ai-accounts-list%20demo.png)
 
 ### Copilot account details and balance
 
@@ -385,8 +400,6 @@ The Antigravity blind-switch and inactive-account cache options appear only in
 listings). Other provider menus omit them, and resetting those menus preserves
 the hidden settings. Explicit `config get <key>` and `config set <key> <value>`
 remain shared across all CLIs.
-
-![Interactive ai-accounts configuration](ai-accounts%20config%20demo.gif)
 
 `ai-accounts autoswitch setup` installs provider event hooks plus a low-frequency
 OS timer fallback. Re-run it after reinstalling the package so hooks point at
