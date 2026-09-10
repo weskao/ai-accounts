@@ -493,6 +493,51 @@ failures (a 5xx, a timeout, an unreachable token endpoint) are retried on the
 next tick and never reported here. The sent notification ends with the source
 device (for example, `💻 MacBook Pro` or `🖥️ Mac mini`).
 
+### Quota-reset notifications
+
+`reset_notify` (default `true`) sends a notification when a provider's quota
+window resets and full usage is available again. `reset_notify_min_used_pct`
+(default `90`) gates it: only a window that was at least that heavily used
+just before it reset triggers a notification, so a window that reset while
+barely touched stays quiet. Both are `ai-accounts config` keys (group
+"Notifications"), also available from `codex-accounts config`,
+`claude-accounts config`, and `copilot-accounts config`.
+
+Detection runs across every saved profile for a covered provider, not just
+the currently active one, so an account benched by auto-switch still gets
+its "usable again" notification. Each timer tick sends at most one grouped
+notification over the configured `notify` channel, covering every window
+that reset since the previous tick.
+
+Provider coverage:
+
+- `codex` / `claude` — hourly and weekly windows
+- `copilot` — the monthly window
+- `agy` / `grok` / `vibe` — not supported in Phase 1. For `agy` specifically,
+  an inactive profile's usage is served from a cache whose `reset_time`
+  never advances until that profile is used again, so this feature
+  intentionally excludes it rather than probing it live and risking the
+  shared credential slot.
+
+Detection only happens on a timer tick, so a notification lands up to one
+tick interval (`install-timer`'s `--interval`, default 1800 seconds) after
+the actual reset — it is not instantaneous or event-driven.
+
+**`ai-accounts install-timer` must already be installed, or this feature is
+completely inert:** with no timer running, `reset_notify` makes no extra
+`list --json` calls and sends no notifications. Turning `reset_notify` on
+does not yet prompt you to install the timer — that tie-in is deferred to a
+later phase.
+
+Because `reset_notify` defaults to on, anyone who already has the timer
+installed starts getting these notifications the next time a covered window
+resets, with no action taken on their part — this is a behavior change on
+upgrade, not just a new opt-in setting. Volume is bounded: at most one
+notification per window per reset, so a single provider/profile sitting
+above the threshold sees at most ~5 notifications a day from its hourly
+window plus at most one more from its weekly/monthly window in the same
+period.
+
 ## Language
 
 Notifications, the interactive config menu, `agy-accounts list`'s
