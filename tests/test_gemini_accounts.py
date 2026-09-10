@@ -1256,6 +1256,29 @@ class AgyUsageCacheTests(_AutoswitchMixin):
         reader.start()
         self.addCleanup(reader.stop)
 
+    def test_cached_usage_windows_reads_the_cache_without_activating_anything(
+        self,
+    ) -> None:
+        # Given: a saved profile whose per-window reading is already cached
+        self.given_active("work", "spare")
+        ga._cache_snapshot("spare", _quota(95, email="spare@example.com"))
+
+        def refuse(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("the quota-reset read must not touch the slot")
+
+        # When: the quota-reset check asks for agy's windows
+        with mock.patch.object(ga, "_write_cli_auth_text", side_effect=refuse):
+            with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=refuse):
+                windows = ga.cached_usage_windows()
+
+        # Then: the cached windows come back, with no session activated and no
+        # network call — which is what makes it safe to run on a timer
+        self.assertEqual(sorted(windows["spare"]), ["gemini_session", "gemini_weekly"])
+        self.assertEqual(windows["spare"]["gemini_session"].percentage, 95)
+        self.assertEqual(windows["spare"]["gemini_session"].window_minutes, 300)
+        # The live profile was never probed, so it has nothing cached to report.
+        self.assertNotIn("work", windows)
+
     def test_a_reading_holds_until_its_window_resets(self) -> None:
         now = int(time.time())
         # Given/Then: a full account stays full until its window turns over,
