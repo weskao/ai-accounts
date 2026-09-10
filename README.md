@@ -526,6 +526,18 @@ claude zeroes both but leaves the weekly deadline where it was. A reset time
 that moved but did not jump is the sliding-decay shape, and needs a fall of at
 least 50 points. All routes share the `reset_notify_min_used_pct` gate.
 
+An **account plan change is not a reset**, and is excluded before either
+route runs. Moving from a 1x to a 5x account (or 5x to 20x) leaves the same
+absolute usage against a larger allowance, so the reported percentage drops
+sharply while the window and its deadline carry on untouched — the exact shape
+of a cleared counter. `codex-accounts list --json` and `claude-accounts list
+--json` therefore also report each profile's `plan` (claude's includes the
+rate multiplier, e.g. `Max · 5x`, so a 5x-to-20x move on one plan is visible),
+and a window whose plan changed since the previous tick is re-baselined
+silently. A downgrade raises the percentage instead, which never looked like a
+reset. Real resets on the new plan notify as usual from the next tick on; agy
+reports no plan, so nothing changes there.
+
 Because detection is a periodic scan, **neither route needs the window to
 still read 0% when the tick lands** — you may well have started using the
 fresh quota already. The scheduled route ignores the fresh percentage

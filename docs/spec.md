@@ -263,6 +263,21 @@ be two more things to explain.
 it existed lacks the key, the jump test is skipped for that one tick, and the key appears
 on the next write.
 
+**A plan change is excluded before either route runs.** An upgrade from a 1x to a 5x
+account leaves the same absolute usage against five times the allowance, so the reported
+percentage collapses (95% becomes 19%) with the window and its deadline untouched — byte
+for byte the shape of a counter cleared in place. Percentages alone cannot separate the
+two, so `WindowSnapshot` gained a `plan` field, `list --json` reports it for codex
+(`chatgpt_plan_type`) and claude (`_plan_cell`, tier plus rate multiplier, so 5x to 20x
+on one plan is visible), and `_reset_early` returns False when a known plan differs from
+the known plan in state. That window is re-baselined and reported on from the next tick.
+
+Both fields were already parsed from the token claims for the PLAN column; only the JSON
+output and the detection path are new. Additive to `list --json`, so existing consumers
+are unaffected. A downgrade needs no special case — it raises the percentage, and a rise
+never read as a reset. agy reports no plan (its cache carries none), which leaves its
+behaviour exactly as before: an unknown plan on either side never suppresses.
+
 **Verified end to end**, both provider shapes, one notification each unless noted:
 
 | Scenario | Result |
@@ -280,6 +295,12 @@ on the next write.
 | 95%→60%, end slid by exactly one scan interval (decay) | 0 |
 | deadline jumped with no fall at all | 0 |
 | three consecutive scans after one reset | 1 total |
+| plan 1x 95% → 5x 19%, deadline held (upgrade) | 0 |
+| plan 5x 95% → 20x 24%, same plan name (upgrade) | 0 |
+| plan 20x 19% → 1x 95% (downgrade) | 0 |
+| upgrade, then a real reset on the new plan | 1 |
+| no plan change, 95%→15% (real reset) | 1 |
+| plan unknown on both sides (agy), 95%→15% | 1 |
 
 **Residual, stated plainly.** With the deadline unmoved, a reset is missed when the fresh
 window was re-consumed to within 10 points of the old reading inside a single tick — for
