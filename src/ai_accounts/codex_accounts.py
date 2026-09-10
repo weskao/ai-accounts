@@ -874,8 +874,12 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                     "error": usage.error,
                 },
                 "no_quota_api": False,
+                # Raw claim, no ANSI (_plan_cell's colored form is for the
+                # table). Quota-reset detection compares it across ticks to
+                # tell a plan upgrade's rescaled percentage from a reset.
+                "plan": claims.get("plan") if claims else None,
             }
-            for (profile_path, _claims), usage in zip(profile_claims, usages)
+            for (profile_path, claims), usage in zip(profile_claims, usages)
         ]
         print(json.dumps(entries))
         return 0

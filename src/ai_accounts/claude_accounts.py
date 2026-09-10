@@ -378,6 +378,13 @@ def _plan_cell(claims: dict | None) -> str:
     return f"{plan} · {mult}" if mult else plan
 
 
+def _json_plan(oauth: dict | None) -> str | None:
+    """``list --json``'s plan field: the same tier text the PLAN column shows,
+    without ANSI, or None when the token carries no tier at all."""
+    claims = _claims_from_oauth(oauth) if oauth else None
+    return _plan_cell(claims) if (claims or {}).get("plan") else None
+
+
 def _plan_row_cell(claims: dict | None) -> str:
     """Colored PLAN column value for the list table: Free (or an unreadable
     token) stays uncolored, paid tiers escalate pro → team → max."""
@@ -791,8 +798,14 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                     "error": usage.error,
                 },
                 "no_quota_api": False,
+                # Plain text, no ANSI (_plan_row_cell's colored form is for
+                # the table), and with the rate multiplier so a 5x-to-20x
+                # change on one plan is visible. Quota-reset detection
+                # compares it across ticks to tell such a change — which
+                # rescales every percentage — from a real reset.
+                "plan": _json_plan(oauth),
             }
-            for (profile_path, _oauth), usage in zip(profile_oauth, usages)
+            for (profile_path, oauth), usage in zip(profile_oauth, usages)
         ]
         print(json.dumps(entries))
         return 0

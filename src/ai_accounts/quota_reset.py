@@ -36,7 +36,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from . import _utils as u
 from . import autoswitch as aw
@@ -80,6 +80,11 @@ class WindowSnapshot:
     # than reported by the provider — the reset itself is certain, the next
     # deadline is not (see _collect_agy_cached).
     estimated: bool = False
+    # The account's plan as the provider reports it, e.g. "pro", "team · 5x".
+    # A change here rescales every percentage without resetting anything, so
+    # detect() needs it to tell an upgrade from a cleared counter. None when
+    # the provider does not report one (agy's cache carries no plan).
+    plan: str | None = None
 
 
 # provider key -> (profile name -> window key -> WindowSnapshot), or None when
@@ -89,9 +94,10 @@ ProviderSnapshot = dict[str, ProfileWindows]
 Snapshot = dict[str, ProviderSnapshot | None]
 
 # "<provider>/<profile>/<window>" -> {"reset_time": int, "used_pct": int,
-# "seen_at": int}. seen_at is when that reading was taken; a state file from
-# before it existed simply lacks the key, and gains it on the next write.
-State = dict[str, dict[str, int]]
+# "seen_at": int, "plan": str | None}. seen_at is when that reading was taken
+# and plan the account's tier then; a state file from before either existed
+# simply lacks the key, and gains it on the next write.
+State = dict[str, dict[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +232,9 @@ def _collect_one(provider: Provider) -> ProviderSnapshot | None:
         usage = entry.get("usage")
         if not isinstance(name, str) or not isinstance(usage, dict):
             continue
+        plan = entry.get("plan")
+        if not isinstance(plan, str) or not plan:
+            plan = None
         windows: ProfileWindows = {}
         for window in provider.reset_windows:
             raw = usage.get(window)
@@ -233,7 +242,9 @@ def _collect_one(provider: Provider) -> ProviderSnapshot | None:
                 continue
             reset_time, percent = raw.get("reset_time"), raw.get("percent")
             if isinstance(reset_time, int) and isinstance(percent, int):
-                windows[window] = WindowSnapshot(used_pct=percent, reset_time=reset_time)
+                windows[window] = WindowSnapshot(
+                    used_pct=percent, reset_time=reset_time, plan=plan
+                )
         profiles[name] = windows
     return profiles
 
@@ -273,9 +284,20 @@ def _reset_early(prev: dict[str, int], fresh: WindowSnapshot, now: int) -> bool:
     * the deadline **moved but did not jump** — the shape a sliding window's
       gradual ageing takes, so only a deep fall (``_RESET_DROP_PCT``) counts.
 
+    A **plan change** is excluded up front: it rescales every percentage
+    without resetting anything, so it mimics a cleared counter and only the
+    reported plan distinguishes them.
+
     ``seen_at`` is absent from a state file written before it existed; the
     jump test is simply skipped for that one tick.
     """
+    prev_plan = prev.get("plan")
+    if prev_plan is not None and fresh.plan is not None and prev_plan != fresh.plan:
+        # An upgrade (1x to 5x, say) leaves the same absolute usage against a
+        # bigger allowance, so the percentage falls with the window and its
+        # deadline untouched — indistinguishable from a counter cleared in
+        # place, except by the plan itself. Re-baseline, do not notify.
+        return False
     fall = prev["used_pct"] - fresh.used_pct
     if fall <= 0:
         return False
@@ -352,6 +374,7 @@ def detect(
                     "reset_time": fresh.reset_time,
                     "used_pct": fresh.used_pct,
                     "seen_at": now,
+                    "plan": fresh.plan,
                 }
         prefix = f"{provider}/"
         for key in [k for k in new_state if k.startswith(prefix) and k not in fresh_keys]:
