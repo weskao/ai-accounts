@@ -886,13 +886,18 @@ class EngineSwitchNotificationTests(_EngineMixin):
         outcome = aw.run_autoswitch(
             "codex", ["work", "spare"], "work", probe, self.record_switch
         )
-        # Then: one notification says which account was left and which is now live
+        # Then: one notification says which account was left and which is now
+        # live (plus the scutil lookup for the device label in its body)
         self.assertTrue(outcome.switched)
-        self.assertEqual(len(self.spawned), 1)
-        script = self.spawned[0][-1]
+        self.assertEqual(len(self.spawned), 2)
+        script = self.spawned[-1][-1]
         self.assertIn("work", script)
         self.assertIn("spare", script)
         self.assertIn("codex", script)
+        # The device label (source_device()'s scutil lookup is spawned[0]) rides
+        # along on the notification body so a multi-machine setup can tell
+        # which one just switched.
+        self.assertTrue(any(emoji in script for emoji in ("💻", "🖥️")))
 
     def test_the_notification_names_both_accounts_usage_not_just_the_old_one(
         self,
@@ -903,7 +908,7 @@ class EngineSwitchNotificationTests(_EngineMixin):
         aw.run_autoswitch("codex", ["work", "spare"], "work", probe, self.record_switch)
         # Then: the user can see how much room the NEW account has, which is
         # what tells them whether this switch bought an hour or a week
-        message = self.spawned[0][-1]
+        message = self.spawned[-1][-1]
         self.assertIn("93%", message)
         self.assertIn("15%", message)
 
@@ -913,7 +918,7 @@ class EngineSwitchNotificationTests(_EngineMixin):
         # When: the engine switches
         aw.run_autoswitch("codex", ["work", "spare"], "work", probe, self.record_switch)
         # Then: the notification tells the user the switch is not live yet
-        self.assertIn("Restart", self.spawned[0][-1])
+        self.assertIn("Restart", self.spawned[-1][-1])
 
     def test_the_notification_confirms_a_restart_that_actually_happened(self) -> None:
         # Given: a restart hook that succeeds
@@ -930,7 +935,7 @@ class EngineSwitchNotificationTests(_EngineMixin):
         # Then: it reports the new account as live, and does NOT ask for a
         # restart that already happened
         self.assertTrue(outcome.restarted)
-        message = self.spawned[0][-1]
+        message = self.spawned[-1][-1]
         self.assertIn("restarted", message.lower())
         self.assertNotIn("Restart your session", message)
 
@@ -948,7 +953,7 @@ class EngineSwitchNotificationTests(_EngineMixin):
         )
         # Then: the notification does not claim a restart it did not get
         self.assertFalse(outcome.restarted)
-        self.assertIn("Restart", self.spawned[0][-1])
+        self.assertIn("Restart", self.spawned[-1][-1])
 
     def test_a_failing_switch_surfaces_the_error_and_claims_no_success(self) -> None:
         # Given: a switch that reports failure (unwritable auth file, locked keychain)

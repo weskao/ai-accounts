@@ -353,7 +353,9 @@ paths with `CODEX_ACCOUNT_DIR`, `CLAUDE_ACCOUNT_DIR`,
 
 Auto-switch can refresh quota data, select another saved profile when the active
 profile crosses a configured threshold, notify you, and restart supported
-interactive sessions.
+interactive sessions. A desktop or Telegram switch notification ends with the
+source device, same as the re-login report below (for example, `💻 MacBook Pro`
+or `🖥️ Mac mini`).
 
 ```sh
 ai-accounts config

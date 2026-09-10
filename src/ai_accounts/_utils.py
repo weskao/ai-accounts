@@ -45,12 +45,15 @@ def source_device() -> str:
     name = ""
     if IS_MACOS:
         try:
-            name = subprocess.run(
-                ["scutil", "--get", "ComputerName"],
-                capture_output=True,
-                text=True,
-                timeout=1,
-            ).stdout.strip()
+            name = (
+                subprocess.run(
+                    ["scutil", "--get", "ComputerName"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1,
+                ).stdout
+                or ""
+            ).strip()
         except (OSError, subprocess.SubprocessError):
             pass
     name = name or os.environ.get("COMPUTERNAME") or platform.node() or "unknown-host"

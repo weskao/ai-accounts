@@ -411,6 +411,11 @@ def run_autoswitch(
     # account is already live or the user still has to restart, and it can
     # only know that after the restart has been attempted.
     restarted = None if restart is None else _restarted(restart)
+    body = i18n.t("notify.switched.restarted" if restarted else "notify.switched.restart_needed")
+    # source_device() shells out (scutil) — skip it when channel is "none" so
+    # an unattended poll with notifications off never spawns a subprocess.
+    if cfg.get("notify") in ("desktop", "telegram"):
+        body = f"{body}\n{u.source_device()}"
     notify(
         i18n.t(
             "notify.switched.title",
@@ -420,11 +425,7 @@ def run_autoswitch(
             used=used,
             to_used=target_used,
         ),
-        i18n.t(
-            "notify.switched.restarted"
-            if restarted
-            else "notify.switched.restart_needed"
-        ),
+        body,
     )
     return outcome("switched", to_profile=target, restarted=restarted)
 
