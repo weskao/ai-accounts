@@ -59,18 +59,13 @@ _DEFAULT_MIN_USED_PCT = 90
 # tick. Upgrade path: make configurable if a provider routinely needs longer.
 _LIST_TIMEOUT_SEC = 300
 
-# A provider can also reset off-schedule — a holiday top-up, a goodwill
-# credit — where the recorded deadline never arrives but the usage counter
-# collapses anyway. detect() treats a large enough fall as a reset in its own
-# right; firing on *any* fall would misread a sliding window's gradual
-# ageing. The fall bound is deliberately absolute rather than "back to zero":
-# ticks are minutes apart, so usage can already be climbing again by the time
-# the scan lands, and requiring a near-0% reading would miss exactly that.
+# Off-schedule resets (a holiday top-up, a goodwill credit) — see
+# _reset_early. When the deadline did not visibly jump, a fall this deep is
+# still taken as a reset provided the deadline at least moved forward, or the
+# reading is near zero (a counter cleared in place, window end unmoved).
 # ponytail: fixed thresholds, not config keys — promote them only if a
 # provider turns out to need different bounds.
 _RESET_DROP_PCT = 50
-# A fall this deep with the window's end unmoved reads as a counter cleared in
-# place, the one reset shape that shows no new deadline to corroborate it.
 _RESET_LOW_PCT = 10
 
 
@@ -92,7 +87,9 @@ ProfileWindows = dict[str, WindowSnapshot]
 ProviderSnapshot = dict[str, ProfileWindows]
 Snapshot = dict[str, ProviderSnapshot | None]
 
-# "<provider>/<profile>/<window>" -> {"reset_time": int, "used_pct": int}
+# "<provider>/<profile>/<window>" -> {"reset_time": int, "used_pct": int,
+# "seen_at": int}. seen_at is when that reading was taken; a state file from
+# before it existed simply lacks the key, and gains it on the next write.
 State = dict[str, dict[str, int]]
 
 
@@ -255,6 +252,34 @@ def collect() -> Snapshot:
 # ── detection (pure) ─────────────────────────────────────────────────────────
 
 
+def _reset_early(prev: dict[str, int], fresh: WindowSnapshot, now: int) -> bool:
+    """Did this window reset before its recorded deadline arrived?
+
+    Usage falling is the tell, but a sliding window ages out gradually, so a
+    fall alone is not proof. Two things corroborate it:
+
+    * the deadline **jumped** — moved forward by more than the time that
+      passed since the previous reading (plus 60s jitter). A derived, sliding
+      ``reset_time`` advances exactly as fast as the clock; a freshly issued
+      window lands hours further out. Any fall counts here, however far
+      usage has climbed back since — the scan may land well after the reset.
+    * or the fall is deep (``_RESET_DROP_PCT``) and the deadline at least
+      moved forward, or the reading is near zero (``_RESET_LOW_PCT``): a
+      counter cleared in place, with the window's end left where it was.
+
+    ``seen_at`` is absent from a state file written before it existed; the
+    jump test is simply skipped for that one tick.
+    """
+    fall = prev["used_pct"] - fresh.used_pct
+    if fall <= 0:
+        return False
+    seen_at = prev.get("seen_at")
+    moved = fresh.reset_time - prev["reset_time"]
+    if seen_at is not None and moved > (now - seen_at) + 60:
+        return True
+    return fall >= _RESET_DROP_PCT and (moved >= 60 or fresh.used_pct <= _RESET_LOW_PCT)
+
+
 def detect(
     state: State, snapshot: Snapshot, now: int, min_used_pct: int
 ) -> tuple[State, list[ResetEvent]]:
@@ -268,13 +293,10 @@ def detect(
     * **on schedule** — ``now >= prev.reset_time`` and ``fresh.reset_time >=
       prev.reset_time + 60`` (a 60s jitter tolerance against a provider's
       clock not lining up exactly with wall time);
-    * **off schedule** — the deadline has NOT arrived, but usage collapsed
-      anyway: the fall from ``prev.used_pct`` is at least ``_RESET_DROP_PCT``
-      and either a new deadline corroborates it (``fresh.reset_time >=
-      prev.reset_time + 60``) or the fresh reading is at most
-      ``_RESET_LOW_PCT`` (a counter cleared in place, leaving the window's end
-      where it was). A provider handing out quota early never trips the
-      scheduled route, since its recorded deadline is still in the future.
+    * **off schedule** — the deadline has NOT arrived, but usage fell and
+      something corroborates a reset: see :func:`_reset_early`. A provider
+      handing out quota early never trips the scheduled route, since its
+      recorded deadline is still in the future.
 
     Collection is a periodic scan, so the fresh reading is whatever the window
     happened to be at when the tick landed — usage may already be climbing
@@ -302,27 +324,11 @@ def detect(
                 key = f"{provider}/{profile}/{window}"
                 fresh_keys.add(key)
                 prev = state.get(key)
-                if (
-                    prev is not None
-                    and prev["used_pct"] >= min_used_pct
-                    and (
-                        # the recorded deadline arrived and a later one replaced it
-                        (
-                            now >= prev["reset_time"]
-                            and fresh.reset_time >= prev["reset_time"] + 60
-                        )
-                        # or usage collapsed before that deadline — the
-                        # provider reset early, off its own schedule
-                        or (
-                            prev["used_pct"] - fresh.used_pct >= _RESET_DROP_PCT
-                            and (
-                                # a new window was issued ...
-                                fresh.reset_time >= prev["reset_time"] + 60
-                                # ... or the counter was cleared in place
-                                or fresh.used_pct <= _RESET_LOW_PCT
-                            )
-                        )
-                    )
+                if prev is not None and prev["used_pct"] >= min_used_pct and (
+                    # the recorded deadline arrived and a later one replaced it
+                    (now >= prev["reset_time"] and fresh.reset_time >= prev["reset_time"] + 60)
+                    # or the provider reset early, off its own schedule
+                    or _reset_early(prev, fresh, now)
                 ):
                     events.append(
                         ResetEvent(
@@ -334,7 +340,11 @@ def detect(
                             fresh.estimated,
                         )
                     )
-                new_state[key] = {"reset_time": fresh.reset_time, "used_pct": fresh.used_pct}
+                new_state[key] = {
+                    "reset_time": fresh.reset_time,
+                    "used_pct": fresh.used_pct,
+                    "seen_at": now,
+                }
         prefix = f"{provider}/"
         for key in [k for k in new_state if k.startswith(prefix) and k not in fresh_keys]:
             del new_state[key]

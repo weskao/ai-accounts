@@ -34,7 +34,9 @@ class DetectTests(unittest.TestCase):
         new_state, events = qr.detect({}, snapshot, now=500, min_used_pct=90)
 
         self.assertEqual(events, [])
-        self.assertEqual(new_state["codex/work/hourly"], {"reset_time": 1000, "used_pct": 95})
+        self.assertEqual(
+            new_state["codex/work/hourly"], {"reset_time": 1000, "used_pct": 95, "seen_at": 500}
+        )
 
     def test_repeated_tick_same_reset_time_does_not_fire(self) -> None:
         state = {"codex/work/hourly": {"reset_time": 1000, "used_pct": 95}}
@@ -84,12 +86,25 @@ class DetectTests(unittest.TestCase):
 
         self.assertEqual(len(events), 1)
 
+    def test_an_early_reset_scanned_after_heavy_use_still_fires(self) -> None:
+        # Scan lands late enough that more than half the fresh window is
+        # already spent — too shallow a fall to count on its own. But the
+        # deadline jumped 5h further out while only 30 minutes passed: a new
+        # window was issued, whatever the reading has climbed back to.
+        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96, "seen_at": 3_200}}
+        snapshot = {"codex": {"work": {"hourly": _win(60, 9_000 + 18_000)}}}
+
+        _, events = qr.detect(state, snapshot, now=5_000, min_used_pct=90)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].used_pct, 96)
+
     def test_a_partial_fall_before_the_deadline_does_not_fire(self) -> None:
-        # A sliding window ageing out gradually is not a reset — and the
-        # deadline moving with it must not be enough on its own, or every
-        # derived (sliding) reset_time would read as a reset.
-        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96}}
-        snapshot = {"codex": {"work": {"hourly": _win(60, 10_800)}}}
+        # A sliding window ageing out gradually is not a reset. Its derived
+        # reset_time advances exactly as fast as the clock (here: 1800s of
+        # both), which is the signature that separates it from a new window.
+        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96, "seen_at": 3_200}}
+        snapshot = {"codex": {"work": {"hourly": _win(60, 9_000 + 1_800)}}}
 
         _, events = qr.detect(state, snapshot, now=5_000, min_used_pct=90)
 
