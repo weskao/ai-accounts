@@ -60,13 +60,14 @@ _DEFAULT_MIN_USED_PCT = 90
 _LIST_TIMEOUT_SEC = 300
 
 # Off-schedule resets (a holiday top-up, a goodwill credit) — see
-# _reset_early. When the deadline did not visibly jump, a fall this deep is
-# still taken as a reset provided the deadline at least moved forward, or the
-# reading is near zero (a counter cleared in place, window end unmoved).
+# _reset_early. With the deadline unmoved, a fixed window cannot fall at all
+# without having been cleared, so only a noise floor is needed; with the
+# deadline moved but not visibly jumped, a fall this deep is required, since a
+# sliding window's gradual ageing also moves its deadline.
 # ponytail: fixed thresholds, not config keys — promote them only if a
 # provider turns out to need different bounds.
+_RESET_MIN_FALL_PCT = 10
 _RESET_DROP_PCT = 50
-_RESET_LOW_PCT = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,17 +256,22 @@ def collect() -> Snapshot:
 def _reset_early(prev: dict[str, int], fresh: WindowSnapshot, now: int) -> bool:
     """Did this window reset before its recorded deadline arrived?
 
-    Usage falling is the tell, but a sliding window ages out gradually, so a
-    fall alone is not proof. Two things corroborate it:
+    Usage falling is the tell; what the deadline did says how much of a fall
+    is proof. Providers differ here — codex restarts the weekly window from
+    the reset moment (its deadline jumps a week ahead), claude clears both
+    windows but keeps the weekly deadline where it was — so all three shapes
+    are handled:
 
     * the deadline **jumped** — moved forward by more than the time that
       passed since the previous reading (plus 60s jitter). A derived, sliding
       ``reset_time`` advances exactly as fast as the clock; a freshly issued
       window lands hours further out. Any fall counts here, however far
       usage has climbed back since — the scan may land well after the reset.
-    * or the fall is deep (``_RESET_DROP_PCT``) and the deadline at least
-      moved forward, or the reading is near zero (``_RESET_LOW_PCT``): a
-      counter cleared in place, with the window's end left where it was.
+    * the deadline **stayed put** (within jitter) — a fixed window cannot
+      fall at all without having been cleared, so any fall beyond the noise
+      floor ``_RESET_MIN_FALL_PCT`` is a reset, whatever the reading is now.
+    * the deadline **moved but did not jump** — the shape a sliding window's
+      gradual ageing takes, so only a deep fall (``_RESET_DROP_PCT``) counts.
 
     ``seen_at`` is absent from a state file written before it existed; the
     jump test is simply skipped for that one tick.
@@ -277,7 +283,9 @@ def _reset_early(prev: dict[str, int], fresh: WindowSnapshot, now: int) -> bool:
     moved = fresh.reset_time - prev["reset_time"]
     if seen_at is not None and moved > (now - seen_at) + 60:
         return True
-    return fall >= _RESET_DROP_PCT and (moved >= 60 or fresh.used_pct <= _RESET_LOW_PCT)
+    if abs(moved) < 60:
+        return fall >= _RESET_MIN_FALL_PCT
+    return fall >= _RESET_DROP_PCT
 
 
 def detect(
