@@ -44,6 +44,11 @@ class Provider:
     # docstring for why no second display-name dict exists). Empty = the
     # provider has no quota API to watch for a reset at all (agy/grok/vibe).
     reset_windows: tuple[str, ...] = ()
+    # True when those windows can only be read from the provider's local usage
+    # cache, because querying it live would perturb the shared CLI credential
+    # slot — declared here rather than as a provider-key branch in the
+    # collector (see quota_reset._collect_one).
+    reset_windows_cached: bool = False
 
 
 PROVIDERS: list[Provider] = [
@@ -55,7 +60,14 @@ PROVIDERS: list[Provider] = [
         "claude", "claude-accounts", "ai_accounts.claude_accounts", "claude", ORANGE, MAGENTA,
         "auto-restart", reset_windows=("hourly", "weekly"),
     ),
-    Provider("agy", "agy-accounts", "ai_accounts.gemini_accounts", "agy", BLUE, BLUE, "auto-restart"),
+    # Collected from agy's local usage cache, not `list --json` — see
+    # quota_reset._collect_agy_cached for why it cannot be polled live.
+    Provider(
+        "agy", "agy-accounts", "ai_accounts.gemini_accounts", "agy", BLUE, BLUE,
+        "auto-restart",
+        reset_windows=("gemini_session", "gemini_weekly", "other_session", "other_weekly"),
+        reset_windows_cached=True,
+    ),
     Provider("grok", "grok-accounts", "ai_accounts.grok_accounts", "grok", YELLOW, YELLOW, "auto-restart"),
     Provider("vibe", "vibe-accounts", "ai_accounts.vibe_accounts", "vibe", GREEN, GREEN, None),
     # No quota API confirmed (copilot_usage.py's endpoint is unverified) and no
@@ -83,11 +95,12 @@ if __name__ == "__main__":
     assert {p.key: p.reset_windows for p in PROVIDERS} == {
         "codex": ("hourly", "weekly"),
         "claude": ("hourly", "weekly"),
-        "agy": (),
+        "agy": ("gemini_session", "gemini_weekly", "other_session", "other_weekly"),
         "grok": (),
         "vibe": (),
         "copilot": ("monthly",),
     }
+    assert {p.key for p in PROVIDERS if p.reset_windows_cached} == {"agy"}
     assert {p.key: p.binary for p in PROVIDERS} == {
         "codex": "codex",
         "claude": "claude",

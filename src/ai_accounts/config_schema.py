@@ -292,13 +292,19 @@ FIELDS: tuple[Field, ...] = (
         help="Bot API chat id that receives the notification.",
         group="Notifications",
     ),
-    # Quota-reset notifications: agy/grok/vibe have zero reset windows to
-    # watch (providers.PROVIDERS' `reset_windows`), so this has no effect for
-    # them — excluded from `programs` for the same reason agy is excluded
-    # from the four gemini_*/other_* keys elsewhere in this schema.
+    # Quota-reset notifications: grok/vibe have zero reset windows to watch
+    # (providers.PROVIDERS' `reset_windows`), so this has no effect for them.
+    # agy is included — its readings come from its local usage cache rather
+    # than a live probe, but the setting does govern them.
     Field(
         key="reset_notify",
-        programs=("ai-accounts", "claude-accounts", "codex-accounts", "copilot-accounts"),
+        programs=(
+            "ai-accounts",
+            "agy-accounts",
+            "claude-accounts",
+            "codex-accounts",
+            "copilot-accounts",
+        ),
         type=bool,
         default=True,
         label="Notify on quota reset",
@@ -307,7 +313,13 @@ FIELDS: tuple[Field, ...] = (
     ),
     Field(
         key="reset_notify_min_used_pct",
-        programs=("ai-accounts", "claude-accounts", "codex-accounts", "copilot-accounts"),
+        programs=(
+            "ai-accounts",
+            "agy-accounts",
+            "claude-accounts",
+            "codex-accounts",
+            "copilot-accounts",
+        ),
         type=int,
         default=90,
         minimum=0,

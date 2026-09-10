@@ -1641,6 +1641,37 @@ def _cached_used_pct(name: str, cache: JsonDict) -> int | None:
     return used
 
 
+def cached_usage_windows() -> dict[str, dict[str, UsageWindow]]:
+    """Every saved profile's last cached per-window reading, by profile name.
+
+    Local file reads only. Unlike :func:`cmd_list`'s live path this never
+    activates a profile, so it never writes the shared CLI credential slot —
+    which is what lets a background caller (the quota-reset check) read agy
+    usage without perturbing whichever account is currently live. The trade:
+    readings are only as fresh as the last real probe (`agy-accounts list`,
+    `list --refresh`, or an autoswitch probe) left in the cache.
+    """
+    account_dir = _account_dir()
+    if not account_dir.is_dir():
+        return {}
+    cache = _read_usage_cache()
+    windows_by_profile: dict[str, dict[str, UsageWindow]] = {}
+    for profile_path in sorted(account_dir.glob("*.json")):
+        snapshot = _cached_snapshot(profile_path.stem, cache)
+        if snapshot is None:
+            continue
+        windows = {
+            "gemini_session": snapshot.gemini_session,
+            "gemini_weekly": snapshot.gemini_weekly,
+            "other_session": snapshot.other_session,
+            "other_weekly": snapshot.other_weekly,
+        }
+        present = {key: w for key, w in windows.items() if w is not None}
+        if present:
+            windows_by_profile[profile_path.stem] = present
+    return windows_by_profile
+
+
 def _blind_candidate(name: str, active: Path | None) -> bool:
     """Whether *name* is worth a blind switch — local file reads, no network.
 

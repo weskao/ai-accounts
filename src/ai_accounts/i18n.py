@@ -274,6 +274,18 @@ MESSAGES: dict[str, dict[str, str]] = {
     "window.hourly": {"en": "hourly", "zh-TW": "每小時"},
     "window.weekly": {"en": "weekly", "zh-TW": "每週"},
     "window.monthly": {"en": "monthly", "zh-TW": "每月"},
+    # agy's four windows, named as its own list table heads them (GEMINI 5H /
+    # GEMINI 1W / CLAUDE-GPT 5H / CLAUDE-GPT 1W).
+    "window.gemini_session": {"en": "Gemini 5h", "zh-TW": "Gemini 5 小時"},
+    "window.gemini_weekly": {"en": "Gemini weekly", "zh-TW": "Gemini 每週"},
+    "window.other_session": {"en": "Claude/GPT 5h", "zh-TW": "Claude/GPT 5 小時"},
+    "window.other_weekly": {"en": "Claude/GPT weekly", "zh-TW": "Claude/GPT 每週"},
+    # Shown instead of the next-reset time when the reading came from a
+    # provider's local cache: the reset is certain, the next deadline is not.
+    "notify.reset.cached": {
+        "en": "From the last cached reading — run `agy-accounts list` for a live check.",
+        "zh-TW": "來自上次快取的讀數 — 執行 `agy-accounts list` 可即時確認。",
+    },
     # Terminal-only (log_yellow), so it keeps the provider prefix a notification
     # gets from its title instead.
     "restart.manual": {

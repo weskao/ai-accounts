@@ -4,15 +4,18 @@ item).
 
 Three layers, kept separate so the detection rule can be unit-tested with no
 subprocess and no clock: :func:`collect` gathers a fresh usage snapshot per
-watched provider (codex/claude/copilot — the only entries in
-``providers.PROVIDERS`` with a non-empty ``reset_windows``); :func:`detect` is
-a pure function comparing that snapshot against the previous tick's stored
+watched provider (every entry in ``providers.PROVIDERS`` with a non-empty
+``reset_windows`` — codex/claude/copilot through their `list --json`, agy from
+its local cache instead, see :func:`_collect_agy_cached`); :func:`detect` is a
+pure function comparing that snapshot against the previous tick's stored
 state; :func:`run_tick` wires them together and sends the notification.
 
 Import direction (leaf-ward, like the rest of this package): this module
 imports :mod:`providers`, :mod:`i18n`, :mod:`usage_format`, and
 :mod:`autoswitch` — but only ``autoswitch.load_config``/``autoswitch.notify``,
-never ``notify_once`` or the config-path/state-path helpers. ``autoswitch``
+never ``notify_once`` or the config-path/state-path helpers — plus
+:mod:`gemini_accounts` lazily, inside the one collector that needs it, so a
+provider module is not pulled in on every import of this one. ``autoswitch``
 must never import this module back.
 
 State lives in its own file beside the shared config, NOT
@@ -63,6 +66,10 @@ class WindowSnapshot:
 
     used_pct: int
     reset_time: int
+    # True when reset_time was inferred from a stale cached reading rather
+    # than reported by the provider — the reset itself is certain, the next
+    # deadline is not (see _collect_agy_cached).
+    estimated: bool = False
 
 
 # provider key -> (profile name -> window key -> WindowSnapshot), or None when
@@ -84,6 +91,7 @@ class ResetEvent:
     window: str
     used_pct: int  # usage right before the reset — what the notification shows
     reset_time: int  # the fresh window's next reset instant
+    estimated: bool = False  # next reset inferred, not reported (see WindowSnapshot)
 
 
 # ── state file ───────────────────────────────────────────────────────────────
@@ -117,6 +125,65 @@ def _write_state(state: State) -> None:
 # ── collection ───────────────────────────────────────────────────────────────
 
 
+def _next_boundary(reset_time: int, window_minutes: int | None, now: int) -> int | None:
+    """The next future end of a window whose recorded deadline already passed.
+
+    Returns None when the window length is unknown, since there is then
+    nothing to roll forward by.
+    """
+    if window_minutes is None or window_minutes <= 0:
+        return None
+    length = window_minutes * 60
+    return reset_time + ((now - reset_time) // length + 1) * length
+
+
+def _collect_agy_cached() -> ProviderSnapshot | None:
+    """agy's windows from its local usage cache — the one provider that cannot
+    be read through `list --json`.
+
+    agy's list activates each profile through the shared CLI credential slot to
+    query it, so polling it on a timer would perturb whichever account is
+    currently live. ``gemini_accounts.cached_usage_windows`` reads only local
+    files instead.
+
+    A cached deadline that has passed is treated as a reset that really
+    happened — the same one-directional-ageing inference
+    ``gemini_accounts._cached_used_pct`` already makes (and autoswitch already
+    trusts to pick accounts): nothing refreshed the cache to confirm it, but a
+    quota window does not skip its own reset. The synthesised next deadline is
+    the window boundary after ``now``, which is stable across ticks, so
+    :func:`detect` fires once for that reset and then goes quiet: the reading
+    it stores is 0% used, which the ``min_used_pct`` gate then blocks from
+    ever re-firing until a real probe refreshes the cache.
+    """
+    try:
+        from . import gemini_accounts
+    except ImportError as exc:
+        # Unlike a probe failure this is a code defect, and it would repeat on
+        # every tick forever — say so once instead of reading as "nothing new".
+        u.log_red(f"Could not read agy's usage cache: {exc}")
+        return None
+    try:
+        cached = gemini_accounts.cached_usage_windows()
+    except Exception:
+        return None
+    now = int(time.time())
+    profiles: ProviderSnapshot = {}
+    for name, windows in cached.items():
+        snapshots: ProfileWindows = {}
+        for key, window in windows.items():
+            if window.reset_time is None:
+                continue
+            if now < window.reset_time:
+                snapshots[key] = WindowSnapshot(window.percentage, window.reset_time)
+                continue
+            boundary = _next_boundary(window.reset_time, window.window_minutes, now)
+            if boundary is not None:
+                snapshots[key] = WindowSnapshot(0, boundary, estimated=True)
+        profiles[name] = snapshots
+    return profiles
+
+
 def _collect_one(provider: Provider) -> ProviderSnapshot | None:
     """*provider*'s `list --json`, parsed into a :data:`ProviderSnapshot`.
 
@@ -124,6 +191,8 @@ def _collect_one(provider: Provider) -> ProviderSnapshot | None:
     returns None instead of raising — one bad provider must never abort the
     whole :func:`collect` call.
     """
+    if provider.reset_windows_cached:
+        return _collect_agy_cached()
     try:
         result = u.run(
             [sys.executable, "-m", provider.module, "list", "--json"],
@@ -207,7 +276,14 @@ def detect(
                     and prev["used_pct"] >= min_used_pct
                 ):
                     events.append(
-                        ResetEvent(provider, profile, window, prev["used_pct"], fresh.reset_time)
+                        ResetEvent(
+                            provider,
+                            profile,
+                            window,
+                            prev["used_pct"],
+                            fresh.reset_time,
+                            fresh.estimated,
+                        )
                     )
                 new_state[key] = {"reset_time": fresh.reset_time, "used_pct": fresh.used_pct}
         prefix = f"{provider}/"
@@ -239,9 +315,13 @@ def report(events: list[ResetEvent]) -> bool:
             window=i18n.t(f"window.{event.window}", default=event.window),
             used=event.used_pct,
         )
-        body = i18n.t(
-            "notify.reset.body",
-            next=usage_format.format_unix_time_compact(event.reset_time),
+        body = (
+            i18n.t("notify.reset.cached")
+            if event.estimated
+            else i18n.t(
+                "notify.reset.body",
+                next=usage_format.format_unix_time_compact(event.reset_time),
+            )
         )
     else:
         title = i18n.t(
@@ -259,6 +339,8 @@ def report(events: list[ResetEvent]) -> bool:
             )
             for event in events
         )
+        if any(event.estimated for event in events):
+            body = f"{body}\n{i18n.t('notify.reset.cached')}"
     return aw.notify(title, f"{body}\n{source}")
 
 
