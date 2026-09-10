@@ -47,7 +47,7 @@ class DetectTests(unittest.TestCase):
     def test_an_early_reset_before_the_deadline_still_fires(self) -> None:
         # A provider can hand out quota off its own schedule — a holiday
         # top-up, a goodwill credit. The recorded deadline never arrives, so
-        # only the collapse of the usage counter reveals it.
+        # only the collapse of usage reveals it.
         state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96}}
         snapshot = {"codex": {"work": {"hourly": _win(0, 20_000)}}}
 
@@ -62,11 +62,34 @@ class DetectTests(unittest.TestCase):
         _, again = qr.detect(state, snapshot, now=6_000, min_used_pct=90)
         self.assertEqual(again, [])
 
-    def test_a_partial_fall_before_the_deadline_does_not_fire(self) -> None:
-        # A sliding window ageing out gradually is not a reset, and 60% used
-        # is not "quota is available again" — stay quiet.
+    def test_an_early_reset_already_being_used_again_still_fires(self) -> None:
+        # Collection is a periodic scan, so the tick can easily land after the
+        # user started spending the fresh window. 15% used is not 0%, but the
+        # fall is what identifies the reset — plus the new deadline.
         state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96}}
-        snapshot = {"codex": {"work": {"hourly": _win(60, 9_000)}}}
+        snapshot = {"codex": {"work": {"hourly": _win(15, 20_000)}}}
+
+        _, events = qr.detect(state, snapshot, now=5_000, min_used_pct=90)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].used_pct, 96)
+
+    def test_an_early_reset_clearing_the_counter_in_place_still_fires(self) -> None:
+        # The other off-schedule shape: usage zeroed but the window's end left
+        # where it was, so no new deadline corroborates the fall.
+        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96}}
+        snapshot = {"codex": {"work": {"hourly": _win(0, 9_000)}}}
+
+        _, events = qr.detect(state, snapshot, now=5_000, min_used_pct=90)
+
+        self.assertEqual(len(events), 1)
+
+    def test_a_partial_fall_before_the_deadline_does_not_fire(self) -> None:
+        # A sliding window ageing out gradually is not a reset — and the
+        # deadline moving with it must not be enough on its own, or every
+        # derived (sliding) reset_time would read as a reset.
+        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96}}
+        snapshot = {"codex": {"work": {"hourly": _win(60, 10_800)}}}
 
         _, events = qr.detect(state, snapshot, now=5_000, min_used_pct=90)
 
@@ -75,7 +98,7 @@ class DetectTests(unittest.TestCase):
     def test_a_small_fall_under_a_low_threshold_does_not_fire(self) -> None:
         # With min_used_pct lowered, a reading that is already low would pass
         # both the gate and the low-reading bound — the required fall is what
-        # stops a 8%-to-4% drift from reading as a reset.
+        # stops an 8%-to-4% drift from reading as a reset.
         state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 8}}
         snapshot = {"codex": {"work": {"hourly": _win(4, 9_000)}}}
 
