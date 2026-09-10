@@ -379,6 +379,81 @@ class AgyCachedCollectorTests(unittest.TestCase):
         self.assertEqual(fired, [0, 1, 0, 0, 0])
 
 
+class ProviderResetShapeTests(unittest.TestCase):
+    """The two shapes an off-schedule reset actually takes in the wild.
+
+    codex zeroes both windows and restarts the weekly one from the reset
+    moment, so its weekly deadline jumps a week ahead. claude zeroes both
+    windows too but leaves the weekly deadline where it was. Both must
+    notify, and at whatever usage the scan happens to land on — a tick is up
+    to 30 minutes wide, so the fresh window is often already being spent.
+    """
+
+    HOUR = 3600
+    DAY = 24 * HOUR
+    WEEK = 7 * DAY
+
+    def _detect(self, prev_used, prev_deadline, fresh_used, fresh_deadline, elapsed=1800):
+        now = 1_000_000
+        state = {
+            "p/work/w": {
+                "reset_time": now + prev_deadline,
+                "used_pct": prev_used,
+                "seen_at": now - elapsed,
+            }
+        }
+        snapshot = {"p": {"work": {"w": _win(fresh_used, now + fresh_deadline)}}}
+        _, events = qr.detect(state, snapshot, now=now, min_used_pct=90)
+        return events
+
+    # ── codex: both windows zeroed, weekly restarted from the reset moment ──
+
+    def test_codex_session_window_restarted(self) -> None:
+        # 5h window zeroed and reissued: its end jumps ~5h out.
+        events = self._detect(95, 2 * self.HOUR, 0, 5 * self.HOUR)
+        self.assertEqual(len(events), 1)
+
+    def test_codex_weekly_window_restarted_from_the_reset_moment(self) -> None:
+        # The weekly window had 3 days left; the reset restarts the 7-day
+        # count from now, so the deadline jumps 4 days further out.
+        events = self._detect(95, 3 * self.DAY, 0, self.WEEK)
+        self.assertEqual(len(events), 1)
+
+    def test_codex_weekly_restarted_and_already_in_use_when_scanned(self) -> None:
+        events = self._detect(95, 3 * self.DAY, 20, self.WEEK)
+        self.assertEqual(len(events), 1)
+
+    # ── claude: both windows zeroed, weekly deadline left in place ──────────
+
+    def test_claude_weekly_window_zeroed_with_its_deadline_unchanged(self) -> None:
+        # No jump to corroborate the fall — the deadline is exactly where it
+        # was. A fixed window cannot fall without having been cleared.
+        events = self._detect(95, 3 * self.DAY, 0, 3 * self.DAY)
+        self.assertEqual(len(events), 1)
+
+    def test_claude_weekly_zeroed_and_already_in_use_when_scanned(self) -> None:
+        events = self._detect(95, 3 * self.DAY, 15, 3 * self.DAY)
+        self.assertEqual(len(events), 1)
+
+    def test_claude_session_window_zeroed_and_heavily_used_when_scanned(self) -> None:
+        # A 5h window can absorb a lot inside one 30-minute tick.
+        events = self._detect(95, 2 * self.HOUR, 55, 2 * self.HOUR)
+        self.assertEqual(len(events), 1)
+
+    def test_a_deadline_that_stayed_put_still_needs_a_real_fall(self) -> None:
+        # Noise floor: a couple of points of jitter in the reported percentage
+        # is not a reset.
+        events = self._detect(95, 3 * self.DAY, 92, 3 * self.DAY)
+        self.assertEqual(events, [])
+
+    def test_the_noise_floor_boundary_with_an_unmoved_deadline(self) -> None:
+        # Exactly where the floor sits, so the residual is explicit: with the
+        # deadline unmoved, a reset is missed only when the fresh window was
+        # re-consumed to within 10 points of the old reading inside one tick.
+        self.assertEqual(len(self._detect(95, 3 * self.DAY, 85, 3 * self.DAY)), 1)
+        self.assertEqual(self._detect(95, 3 * self.DAY, 86, 3 * self.DAY), [])
+
+
 class CollectTests(unittest.TestCase):
     """_collect_one swallows its own failures and returns None — never raises."""
 
