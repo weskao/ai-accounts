@@ -219,19 +219,33 @@ future, so no amount of usage collapsing would notify.
 | Route | Evidence | Fires when |
 |---|---|---|
 | On schedule | The recorded deadline arrived and a later one replaced it | `now >= prev.reset_time` and `fresh.reset_time >= prev.reset_time + 60` |
-| Off schedule | The usage counter collapsed while the deadline was still ahead | `fresh.used_pct <= 10` and `prev.used_pct - fresh.used_pct >= 50` |
+| Off schedule | Usage collapsed while the deadline was still ahead | `prev.used_pct - fresh.used_pct >= 50` AND (`fresh.reset_time >= prev.reset_time + 60` OR `fresh.used_pct <= 10`) |
 
-**Why two bounds and not just "usage fell".** A sliding window ages out gradually, so any
-fall on its own is not evidence of a reset. The low-reading bound (`<= 10%`) makes the
-notification's own claim true — "quota is available again" is wrong at 60% used — and the
-fall bound (`>= 50` points) is what stops a small drift from firing once a user lowers
-`reset_notify_min_used_pct` far enough that a low reading would otherwise pass both the
-gate and the ceiling. At the default threshold of 90 the fall bound is implied; it only
-bites at low thresholds, which is exactly where it is needed.
+**Why the fall, and not "back to 0%".** Collection is a periodic scan (one timer tick,
+default 1800s), so the reading is whatever the window happened to be at when the tick
+landed — a fresh window is often already being spent. Keying the off-schedule route off a
+near-0% reading would therefore miss exactly the common case: reset, then 15% used by the
+time the scan runs. The size of the fall identifies the reset; where it landed does not.
+The scheduled route never looked at `fresh.used_pct` at all, and still doesn't.
 
-Both thresholds are module constants (`_RESET_LOW_PCT`, `_RESET_DROP_PCT`), deliberately
-not config keys — no evidence yet that any provider needs different bounds, and two more
-knobs would be two more things to explain.
+**Why the fall needs corroboration.** A sliding window ages out gradually, so a fall on
+its own is not proof. A genuine reset issues a new window, so a later `reset_time` is the
+natural second signal — and for codex/claude a *stable, absolute* `reset_at` is what a
+partially-aged window reports, so the two together separate a reset from ageing. The
+`fresh.used_pct <= 10` alternative covers the one reset shape that shows no new deadline:
+a counter cleared in place, leaving the window's end where it was.
+
+The 50-point fall bound also stops a small drift from firing once a user lowers
+`reset_notify_min_used_pct` far enough that a low reading would otherwise pass the gate
+on its own. Both thresholds are module constants (`_RESET_DROP_PCT`, `_RESET_LOW_PCT`),
+deliberately not config keys — no evidence yet that any provider needs different bounds,
+and two more knobs would be two more things to explain.
+
+**Residual, measured.** A fall shallower than 50 points with the deadline moved stays
+silent, so an early reset followed by burning more than half the window inside one tick
+interval is still missed — and then reported by the scheduled route when the new deadline
+arrives. Verified end to end: an early reset caught at 0%, 5%, 15% or 40% used each sends
+exactly one notification; caught at 60% used sends none.
 
 **No regression to the sliding-`reset_time` protection.** The shared `min_used_pct` gate
 still blocks a 0%-used window whichever way its `reset_time` moves, so the codex sliding

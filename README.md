@@ -507,11 +507,18 @@ A reset is recognised two ways, so one that happens **off schedule** still
 notifies. Normally the window's recorded reset time arrives and the provider
 reports a later one. But a provider can also hand out quota early — a holiday
 top-up, a goodwill credit — and then that deadline never arrives, so only the
-usage counter collapsing reveals it: a fall to 10% used or below, from a
-reading at least 50 points higher, counts as a reset in its own right. Both
-routes share the `reset_notify_min_used_pct` gate. Those two bounds are what
-keep a sliding window's gradual ageing from reading as a reset — a partial
-fall (96% to 60%, say) stays quiet, since 60% used is not "available again".
+fall in usage reveals it: a fall of at least 50 percentage points counts as a
+reset in its own right, as long as either a later reset time corroborates it
+or the fresh reading is at most 10% (a counter cleared without moving the
+window's end). Both routes share the `reset_notify_min_used_pct` gate.
+
+Because detection is a periodic scan, **neither route needs the window to
+still read 0% when the tick lands** — you may well have started using the
+fresh quota already. The scheduled route ignores the fresh percentage
+entirely, and the off-schedule route asks how far usage fell, not how low it
+landed, so an early reset caught at 5%, 15% or 40% used still notifies. What
+stays quiet is a fall too shallow to be a reset (96% to 60%, say) — that is a
+sliding window ageing out gradually, and 60% used is not "available again".
 
 Detection runs across every saved profile for a covered provider, not just
 the currently active one, so an account benched by auto-switch still gets
