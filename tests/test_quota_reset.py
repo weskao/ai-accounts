@@ -44,6 +44,45 @@ class DetectTests(unittest.TestCase):
 
         self.assertEqual(events, [])
 
+    def test_an_early_reset_before_the_deadline_still_fires(self) -> None:
+        # A provider can hand out quota off its own schedule — a holiday
+        # top-up, a goodwill credit. The recorded deadline never arrives, so
+        # only the collapse of the usage counter reveals it.
+        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96}}
+        snapshot = {"codex": {"work": {"hourly": _win(0, 20_000)}}}
+
+        # Well before the old deadline: the scheduled route cannot fire here.
+        state, events = qr.detect(state, snapshot, now=5_000, min_used_pct=90)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].used_pct, 96)
+        self.assertEqual(events[0].reset_time, 20_000)
+
+        # And it stays a one-shot: the stored 0% now fails the min_used_pct gate.
+        _, again = qr.detect(state, snapshot, now=6_000, min_used_pct=90)
+        self.assertEqual(again, [])
+
+    def test_a_partial_fall_before_the_deadline_does_not_fire(self) -> None:
+        # A sliding window ageing out gradually is not a reset, and 60% used
+        # is not "quota is available again" — stay quiet.
+        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96}}
+        snapshot = {"codex": {"work": {"hourly": _win(60, 9_000)}}}
+
+        _, events = qr.detect(state, snapshot, now=5_000, min_used_pct=90)
+
+        self.assertEqual(events, [])
+
+    def test_a_small_fall_under_a_low_threshold_does_not_fire(self) -> None:
+        # With min_used_pct lowered, a reading that is already low would pass
+        # both the gate and the low-reading bound — the required fall is what
+        # stops a 8%-to-4% drift from reading as a reset.
+        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 8}}
+        snapshot = {"codex": {"work": {"hourly": _win(4, 9_000)}}}
+
+        _, events = qr.detect(state, snapshot, now=5_000, min_used_pct=5)
+
+        self.assertEqual(events, [])
+
     def test_real_reset_fires_exactly_once_then_goes_quiet(self) -> None:
         state = {"codex/work/hourly": {"reset_time": 1000, "used_pct": 95}}
         snapshot = {"codex": {"work": {"hourly": _win(5, 2000)}}}
