@@ -38,17 +38,32 @@ class Provider:
     cli_color: str  # accent used by ai_accounts.py's stacked command blocks
     report_color: str  # accent used by refresh_report.py's re-login report
     verdict: str | None = None  # restart-ladder verdict; None = no entry at all
+    # Quota windows this provider's usage reports reset on, as the JSON window
+    # key the quota-reset-notification feature keys its i18n lookup off of
+    # (`i18n.t(f"window.{key}", default=key)` — see providers.py's module
+    # docstring for why no second display-name dict exists). Empty = the
+    # provider has no quota API to watch for a reset at all (agy/grok/vibe).
+    reset_windows: tuple[str, ...] = ()
 
 
 PROVIDERS: list[Provider] = [
-    Provider("codex", "codex-accounts", "ai_accounts.codex_accounts", "codex", CYAN, CYAN, "auto-restart"),
-    Provider("claude", "claude-accounts", "ai_accounts.claude_accounts", "claude", ORANGE, MAGENTA, "auto-restart"),
+    Provider(
+        "codex", "codex-accounts", "ai_accounts.codex_accounts", "codex", CYAN, CYAN,
+        "auto-restart", reset_windows=("hourly", "weekly"),
+    ),
+    Provider(
+        "claude", "claude-accounts", "ai_accounts.claude_accounts", "claude", ORANGE, MAGENTA,
+        "auto-restart", reset_windows=("hourly", "weekly"),
+    ),
     Provider("agy", "agy-accounts", "ai_accounts.gemini_accounts", "agy", BLUE, BLUE, "auto-restart"),
     Provider("grok", "grok-accounts", "ai_accounts.grok_accounts", "grok", YELLOW, YELLOW, "auto-restart"),
     Provider("vibe", "vibe-accounts", "ai_accounts.vibe_accounts", "vibe", GREEN, GREEN, None),
     # No quota API confirmed (copilot_usage.py's endpoint is unverified) and no
     # restart-ladder entry at all — same shape as vibe, not a new pattern.
-    Provider("copilot", "copilot-accounts", "ai_accounts.copilot_accounts", "copilot", RED, RED, None),
+    Provider(
+        "copilot", "copilot-accounts", "ai_accounts.copilot_accounts", "copilot", RED, RED,
+        None, reset_windows=("monthly",),
+    ),
 ]
 
 
@@ -65,6 +80,14 @@ if __name__ == "__main__":
         "grok": "auto-restart",
     }
     assert {"vibe", "copilot"}.isdisjoint({p.key for p in PROVIDERS if p.verdict is not None})
+    assert {p.key: p.reset_windows for p in PROVIDERS} == {
+        "codex": ("hourly", "weekly"),
+        "claude": ("hourly", "weekly"),
+        "agy": (),
+        "grok": (),
+        "vibe": (),
+        "copilot": ("monthly",),
+    }
     assert {p.key: p.binary for p in PROVIDERS} == {
         "codex": "codex",
         "claude": "claude",

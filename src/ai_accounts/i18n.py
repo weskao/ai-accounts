@@ -245,6 +245,35 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "ai-accounts refresh --all → <provider>-accounts login-switch <name>",
         "zh-TW": "ai-accounts refresh --all → 再 <provider>-accounts login-switch <name>",
     },
+    # Quota-reset notifications (see TODO.md's future-work item): a provider's
+    # window rolled over and usage is back at 0%. `.title` is the single-event
+    # headline; `.many.title` groups several resets the way
+    # `notify.revoked.grouped.many.title` groups re-logins; `.line` is one
+    # per-provider/profile row inside that grouped body; `.body` is the
+    # follow-up line shown either way.
+    "notify.reset.title": {
+        "en": "🔋 {provider}: {profile} {window} quota is available again (was {used}% used)",
+        "zh-TW": "🔋 {provider}：{profile} 的 {window} 配額已恢復可用（重置前已用 {used}%）",
+    },
+    "notify.reset.many.title": {
+        "en": "🔋 ai-accounts: {count} quota windows reset — {providers}",
+        "zh-TW": "🔋 ai-accounts：{count} 個配額視窗已重置 — {providers}",
+    },
+    "notify.reset.line": {
+        "en": "• {provider} · {profile} · {window} (was {used}%)",
+        "zh-TW": "• {provider} · {profile} · {window}（重置前已用 {used}%）",
+    },
+    "notify.reset.body": {
+        "en": "Next reset: {next}",
+        "zh-TW": "下次重置：{next}",
+    },
+    # Display names for a provider's quota-window keys (`providers.Provider`'s
+    # `reset_windows`), looked up as `i18n.t(f"window.{key}", default=key)` —
+    # keyed directly off the JSON window key so there is no second
+    # key->display-name dict to drift out of sync with `reset_windows`.
+    "window.hourly": {"en": "hourly", "zh-TW": "每小時"},
+    "window.weekly": {"en": "weekly", "zh-TW": "每週"},
+    "window.monthly": {"en": "monthly", "zh-TW": "每月"},
     # Terminal-only (log_yellow), so it keeps the provider prefix a notification
     # gets from its title instead.
     "restart.manual": {
@@ -274,6 +303,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "config.telegram_chat_id.label": {"zh-TW": "Telegram chat id"},
     "config.telegram_chat_id.help": {"zh-TW": "接收通知的 Bot API chat id。"},
+    "config.reset_notify.label": {"zh-TW": "配額重置時通知"},
+    "config.reset_notify.help": {
+        "zh-TW": "當某提供者的配額視窗重置、恢復可用時發出通知。"
+    },
+    "config.reset_notify_min_used_pct.label": {"zh-TW": "↳ 僅在重置前已用 ≥（%）時通知"},
+    "config.reset_notify_min_used_pct.help": {
+        "zh-TW": "只有重置前已用量達到至少 {value}% 才通知。"
+    },
     "config.agy_blind_switch.label": {"zh-TW": "Antigravity 盲切"},
     "config.agy_blind_switch.help": {
         "zh-TW": "agy 只回報當前 session 的配額：即使無法先確認目標帳號的配額也照切。"

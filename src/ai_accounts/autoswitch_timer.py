@@ -33,6 +33,7 @@ from . import ai_accounts
 from . import autoswitch_hooks
 from . import autoswitch as aw
 from . import i18n
+from . import quota_reset
 from . import refresh_report
 
 LABEL = "com.ai_accounts.autoswitch"
@@ -335,20 +336,31 @@ def _run_token_refresh_everywhere() -> str:
 def run_once(
     check: Callable[[], None] | None = None,
     refresh: Callable[[], str] | None = None,
+    collect: Callable[[], quota_reset.Snapshot] | None = None,
 ) -> int:
     """The scheduled job's entry point — invoked on every timer tick.
 
-    Auto-switch and token-refresh are two INDEPENDENT gates, each reading its
-    own config flag — ``enabled`` for the quota auto-switch check,
-    ``token_refresh`` for renewing tokens across all four providers. Either,
-    both, or neither run on a given tick: a user who does not want automatic
+    Three INDEPENDENT gates, each reading its own config flag, run in this
+    fixed order — ``enabled`` (quota auto-switch check), then
+    ``token_refresh`` (renewing tokens across all four providers), then
+    ``reset_notify`` (quota-reset notifications, :func:`quota_reset.run_tick`)
+    last. Any subset runs on a given tick: a user who does not want automatic
     account switching still wants live tokens (plan.md §4 phase 4 — this is
-    the fix for `enabled=false` silently disabling refresh too).
+    the fix for `enabled=false` silently disabling refresh too), and either
+    of those being off must not silently disable reset notifications either.
+    The order is fixed, not stylistic: running ``reset_notify`` last means a
+    bug in this newer, smaller feature can never delay or block the
+    established switch/refresh behavior the other two gates already provide
+    on every tick — a wedge or exception in `collect()` still lands after
+    `check`/`refresh` have already completed.
 
-    *check* / *refresh* are the actual quota-probe/switch and token-refresh
-    calls; when omitted they default to :func:`_run_autoswitch_everywhere` /
-    :func:`_run_token_refresh_everywhere` (a test may still inject its own to
-    observe the call without driving real provider subprocesses).
+    *check* / *refresh* / *collect* are the actual quota-probe/switch,
+    token-refresh, and reset-notify-snapshot calls; when omitted *check* and
+    *refresh* default to :func:`_run_autoswitch_everywhere` /
+    :func:`_run_token_refresh_everywhere`, and *collect* defaults to
+    :func:`quota_reset.run_tick`'s own default collector (a test may still
+    inject its own to observe the call without driving real provider
+    subprocesses).
 
     A refresh tick alerts via :func:`ai_accounts.autoswitch.notify_once` only
     when the refresh output mentions a revoked refresh token — never for a
@@ -360,6 +372,8 @@ def run_once(
         output = (refresh or _run_token_refresh_everywhere)()
         if any(marker in output.lower() for marker in _REVOKED_MARKERS):
             _report_revoked(output)
+    if aw.config_flag("reset_notify"):  # fail closed: same rule, own flag
+        quota_reset.run_tick(collect=collect)
     return 0
 
 
