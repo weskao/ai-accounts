@@ -61,15 +61,17 @@ _LIST_TIMEOUT_SEC = 300
 
 # A provider can also reset off-schedule — a holiday top-up, a goodwill
 # credit — where the recorded deadline never arrives but the usage counter
-# collapses anyway. That shows up as a fall in `used_pct`, so detect() treats
-# a large enough fall as a reset in its own right. Firing on *any* fall would
-# misread a sliding window's gradual ageing, hence two bounds: the fresh
-# reading must be low enough that "quota is available again" is actually true,
-# AND the fall must be big enough that no plausible ageing explains it.
+# collapses anyway. detect() treats a large enough fall as a reset in its own
+# right; firing on *any* fall would misread a sliding window's gradual
+# ageing. The fall bound is deliberately absolute rather than "back to zero":
+# ticks are minutes apart, so usage can already be climbing again by the time
+# the scan lands, and requiring a near-0% reading would miss exactly that.
 # ponytail: fixed thresholds, not config keys — promote them only if a
 # provider turns out to need different bounds.
-_RESET_LOW_PCT = 10
 _RESET_DROP_PCT = 50
+# A fall this deep with the window's end unmoved reads as a counter cleared in
+# place, the one reset shape that shows no new deadline to corroborate it.
+_RESET_LOW_PCT = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,11 +268,19 @@ def detect(
     * **on schedule** — ``now >= prev.reset_time`` and ``fresh.reset_time >=
       prev.reset_time + 60`` (a 60s jitter tolerance against a provider's
       clock not lining up exactly with wall time);
-    * **off schedule** — the deadline has NOT arrived, but the counter
-      collapsed anyway: ``fresh.used_pct <= _RESET_LOW_PCT`` and the fall from
-      ``prev.used_pct`` is at least ``_RESET_DROP_PCT``. A provider handing
-      out quota early (a holiday top-up) never trips the scheduled route,
-      since its recorded deadline is still in the future.
+    * **off schedule** — the deadline has NOT arrived, but usage collapsed
+      anyway: the fall from ``prev.used_pct`` is at least ``_RESET_DROP_PCT``
+      and either a new deadline corroborates it (``fresh.reset_time >=
+      prev.reset_time + 60``) or the fresh reading is at most
+      ``_RESET_LOW_PCT`` (a counter cleared in place, leaving the window's end
+      where it was). A provider handing out quota early never trips the
+      scheduled route, since its recorded deadline is still in the future.
+
+    Collection is a periodic scan, so the fresh reading is whatever the window
+    happened to be at when the tick landed — usage may already be climbing
+    again. Neither route requires a near-0% reading for that reason: the
+    scheduled route ignores ``fresh.used_pct`` entirely, and the off-schedule
+    route asks how far usage fell, not how low it landed.
 
     Both routes share the ``min_used_pct`` gate, so a window sitting at 0%
     stays silent whichever way its ``reset_time`` moves — which is what keeps
@@ -301,11 +311,16 @@ def detect(
                             now >= prev["reset_time"]
                             and fresh.reset_time >= prev["reset_time"] + 60
                         )
-                        # or the counter collapsed before that deadline — the
+                        # or usage collapsed before that deadline — the
                         # provider reset early, off its own schedule
                         or (
-                            fresh.used_pct <= _RESET_LOW_PCT
-                            and prev["used_pct"] - fresh.used_pct >= _RESET_DROP_PCT
+                            prev["used_pct"] - fresh.used_pct >= _RESET_DROP_PCT
+                            and (
+                                # a new window was issued ...
+                                fresh.reset_time >= prev["reset_time"] + 60
+                                # ... or the counter was cleared in place
+                                or fresh.used_pct <= _RESET_LOW_PCT
+                            )
                         )
                     )
                 ):
