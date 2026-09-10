@@ -219,7 +219,7 @@ future, so no amount of usage collapsing would notify.
 | Route | Evidence | Fires when |
 |---|---|---|
 | On schedule | The recorded deadline arrived and a later one replaced it | `now >= prev.reset_time` and `fresh.reset_time >= prev.reset_time + 60` |
-| Off schedule | Usage collapsed while the deadline was still ahead | `prev.used_pct - fresh.used_pct >= 50` AND (`fresh.reset_time >= prev.reset_time + 60` OR `fresh.used_pct <= 10`) |
+| Off schedule | Usage fell while the deadline was still ahead, and a reset corroborates it | usage fell AND ( the deadline *jumped*: `fresh.reset_time - prev.reset_time > (now - prev.seen_at) + 60` — OR the fall is `>= 50` AND (`fresh.reset_time >= prev.reset_time + 60` OR `fresh.used_pct <= 10`) ) |
 
 **Why the fall, and not "back to 0%".** Collection is a periodic scan (one timer tick,
 default 1800s), so the reading is whatever the window happened to be at when the tick
@@ -228,24 +228,40 @@ near-0% reading would therefore miss exactly the common case: reset, then 15% us
 time the scan runs. The size of the fall identifies the reset; where it landed does not.
 The scheduled route never looked at `fresh.used_pct` at all, and still doesn't.
 
-**Why the fall needs corroboration.** A sliding window ages out gradually, so a fall on
-its own is not proof. A genuine reset issues a new window, so a later `reset_time` is the
-natural second signal — and for codex/claude a *stable, absolute* `reset_at` is what a
-partially-aged window reports, so the two together separate a reset from ageing. The
-`fresh.used_pct <= 10` alternative covers the one reset shape that shows no new deadline:
-a counter cleared in place, leaving the window's end where it was.
+**Why the fall needs corroboration, and what corroborates it.** A sliding window ages
+out gradually, so a fall on its own is not proof. The strongest second signal is the
+*size* of the deadline's move relative to the clock: a derived, sliding `reset_time` is
+`now + reset_after`, so between two scans it advances by exactly the time that passed;
+a freshly issued window lands a whole window-length further out. State therefore records
+`seen_at` (when each reading was taken), and a move larger than `now - seen_at` plus the
+60s jitter tolerance is a *jump* — a new window — whatever the fresh percentage has
+climbed back to. This is what closes the "scan landed after half the fresh window was
+already spent" case without loosening anything else.
 
-The 50-point fall bound also stops a small drift from firing once a user lowers
+Without a jump, the earlier rule still applies: a fall of at least 50 points, with the
+deadline at least moved forward, or with a near-zero reading (`<= 10`, a counter cleared
+in place with the window's end left where it was — the one reset shape that offers no
+new deadline). The 50-point bound also stops a small drift from firing once a user lowers
 `reset_notify_min_used_pct` far enough that a low reading would otherwise pass the gate
 on its own. Both thresholds are module constants (`_RESET_DROP_PCT`, `_RESET_LOW_PCT`),
 deliberately not config keys — no evidence yet that any provider needs different bounds,
 and two more knobs would be two more things to explain.
 
-**Residual, measured.** A fall shallower than 50 points with the deadline moved stays
-silent, so an early reset followed by burning more than half the window inside one tick
-interval is still missed — and then reported by the scheduled route when the new deadline
-arrives. Verified end to end: an early reset caught at 0%, 5%, 15% or 40% used each sends
-exactly one notification; caught at 60% used sends none.
+`seen_at` is a backwards-compatible addition to the state file: an entry written before
+it existed lacks the key, the jump test is skipped for that one tick, and the key appears
+on the next write.
+
+**Verified end to end.** An early reset caught at 0%, 5%, 15%, 40% or 60% used sends
+exactly one notification each; a 96%-to-60% fall whose deadline slid by exactly the scan
+interval (or that plus 50s of jitter) sends none; a deadline that jumped with no fall at
+all sends none; three consecutive scans after one reset send one message total.
+
+**Boot-time first tick.** `install-timer` already ran the first tick at load on macOS
+(`RunAtLoad`) and systemd (`OnBootSec=60`); the cron fallback now adds an `@reboot` line
+under the same tag, so `uninstall-timer` removes both. A reset that happened while the
+machine was off is therefore reported on login rather than up to one interval later.
+Windows' `schtasks /SC MINUTE` task has no logon trigger and its first post-boot tick
+lands within one interval — acceptable, since that equals the feature's normal latency.
 
 **No regression to the sliding-`reset_time` protection.** The shared `min_used_pct` gate
 still blocks a 0%-used window whichever way its `reset_time` moves, so the codex sliding

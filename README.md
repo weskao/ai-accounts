@@ -426,7 +426,12 @@ Repository secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` must be
 configured before the alert can be delivered.
 
 `ai-accounts install-timer` registers only the OS timer, without the provider
-hooks, and takes `--interval <seconds>` (default 1800). Remove it with:
+hooks, and takes `--interval <seconds>` (default 1800). The first tick runs at
+login/boot, not one interval later — `RunAtLoad` on macOS, `OnBootSec=60` on
+systemd, an `@reboot` line on cron — so a quota window that reset while the
+machine was off is reported as soon as you are back, provided `reset_notify`
+is on. (Windows' scheduled task has no logon trigger; its first tick lands
+within one interval of boot instead.) Remove it with:
 
 ```sh
 ai-accounts uninstall-timer
@@ -507,18 +512,22 @@ A reset is recognised two ways, so one that happens **off schedule** still
 notifies. Normally the window's recorded reset time arrives and the provider
 reports a later one. But a provider can also hand out quota early — a holiday
 top-up, a goodwill credit — and then that deadline never arrives, so only the
-fall in usage reveals it: a fall of at least 50 percentage points counts as a
-reset in its own right, as long as either a later reset time corroborates it
-or the fresh reading is at most 10% (a counter cleared without moving the
-window's end). Both routes share the `reset_notify_min_used_pct` gate.
+fall in usage reveals it. A fall counts as a reset when the reset time
+**jumped** with it — moved further into the future than the time that passed
+since the previous scan. A freshly issued window lands hours further out; a
+window merely ageing out has a reset time that advances only as fast as the
+clock, which is the signature that keeps gradual decay from reading as a
+reset. Without such a jump, a fall of at least 50 points still counts if the
+reset time at least moved forward or the reading is at most 10% (a counter
+cleared without moving the window's end). Both routes share the
+`reset_notify_min_used_pct` gate.
 
 Because detection is a periodic scan, **neither route needs the window to
 still read 0% when the tick lands** — you may well have started using the
 fresh quota already. The scheduled route ignores the fresh percentage
-entirely, and the off-schedule route asks how far usage fell, not how low it
-landed, so an early reset caught at 5%, 15% or 40% used still notifies. What
-stays quiet is a fall too shallow to be a reset (96% to 60%, say) — that is a
-sliding window ageing out gradually, and 60% used is not "available again".
+entirely, and the off-schedule route asks whether a new window appeared, not
+how low the reading landed, so an early reset caught at 5%, 15%, 40% or even
+60% used still notifies.
 
 Detection runs across every saved profile for a covered provider, not just
 the currently active one, so an account benched by auto-switch still gets
