@@ -554,6 +554,10 @@ its "usable again" notification. Each timer tick sends at most one grouped
 notification over the configured `notify` channel, covering every window
 that reset since the previous tick.
 
+`docs/quota-reset-cases.md` is the full case table — every scenario the
+detection rule was verified against, with the number of notifications each
+one produces, including the ones that deliberately produce none.
+
 Provider coverage:
 
 - `codex` / `claude` — hourly and weekly windows
