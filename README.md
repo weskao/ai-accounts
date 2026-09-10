@@ -503,6 +503,16 @@ barely touched stays quiet. Both are `ai-accounts config` keys (group
 "Notifications"), also available from `codex-accounts config`,
 `claude-accounts config`, and `copilot-accounts config`.
 
+A reset is recognised two ways, so one that happens **off schedule** still
+notifies. Normally the window's recorded reset time arrives and the provider
+reports a later one. But a provider can also hand out quota early — a holiday
+top-up, a goodwill credit — and then that deadline never arrives, so only the
+usage counter collapsing reveals it: a fall to 10% used or below, from a
+reading at least 50 points higher, counts as a reset in its own right. Both
+routes share the `reset_notify_min_used_pct` gate. Those two bounds are what
+keep a sliding window's gradual ageing from reading as a reset — a partial
+fall (96% to 60%, say) stays quiet, since 60% used is not "available again".
+
 Detection runs across every saved profile for a covered provider, not just
 the currently active one, so an account benched by auto-switch still gets
 its "usable again" notification. Each timer tick sends at most one grouped

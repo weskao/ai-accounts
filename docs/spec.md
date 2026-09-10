@@ -204,3 +204,44 @@ computed rather than reported, agy notifications say so instead of quoting a nex
 time (`notify.reset.cached`), and the `WindowSnapshot`/`ResetEvent` `estimated` flag is
 what carries that distinction through to the notification text. Windows with no cached
 `reset_time`, or no known window length to roll forward by, are skipped.
+
+## Revision: off-schedule resets (2026-09-11)
+
+Phase 1's fire rule assumed a reset only ever happens when the window's recorded
+deadline arrives. A provider can also reset **early** — a holiday top-up, a goodwill
+credit, an apology for an outage — and the original rule missed that case entirely:
+`now >= prev.reset_time` never becomes true while the recorded deadline is still in the
+future, so no amount of usage collapsing would notify.
+
+`detect()` now recognises a reset by either of two routes, both behind the same
+`min_used_pct` gate:
+
+| Route | Evidence | Fires when |
+|---|---|---|
+| On schedule | The recorded deadline arrived and a later one replaced it | `now >= prev.reset_time` and `fresh.reset_time >= prev.reset_time + 60` |
+| Off schedule | The usage counter collapsed while the deadline was still ahead | `fresh.used_pct <= 10` and `prev.used_pct - fresh.used_pct >= 50` |
+
+**Why two bounds and not just "usage fell".** A sliding window ages out gradually, so any
+fall on its own is not evidence of a reset. The low-reading bound (`<= 10%`) makes the
+notification's own claim true — "quota is available again" is wrong at 60% used — and the
+fall bound (`>= 50` points) is what stops a small drift from firing once a user lowers
+`reset_notify_min_used_pct` far enough that a low reading would otherwise pass both the
+gate and the ceiling. At the default threshold of 90 the fall bound is implied; it only
+bites at low thresholds, which is exactly where it is needed.
+
+Both thresholds are module constants (`_RESET_LOW_PCT`, `_RESET_DROP_PCT`), deliberately
+not config keys — no evidence yet that any provider needs different bounds, and two more
+knobs would be two more things to explain.
+
+**No regression to the sliding-`reset_time` protection.** The shared `min_used_pct` gate
+still blocks a 0%-used window whichever way its `reset_time` moves, so the codex sliding
+case documented above stays silent — verified by the pre-existing
+`test_sliding_reset_time_on_an_unused_window_never_fires` and
+`test_a_sliding_tick_does_not_poison_the_next_real_reset` (`[0, 1, 0, 1]`), both still
+passing unchanged.
+
+**Residual exposure, stated plainly.** A provider API glitch that reports `0%` on partial
+data would now read as an early reset and send one notification. The scheduled route has
+always had the same exposure (it trusts whatever percentage the reading carries), the
+state machine keeps it to a single message, and no such glitch has been observed — so
+this is accepted rather than guarded with a heuristic that would cost real detections.
