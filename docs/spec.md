@@ -28,7 +28,8 @@ no provider HTTP code touched.
    repo's `CLAUDE.md` "Adding a config setting" rule).
 4. `codex` and `claude` are covered in Phase 1 (`hourly`/`weekly` windows); `copilot` is
    covered via its `monthly` window; `grok` and `vibe` are correctly inert (no quota
-   API); **`agy` is excluded from Phase 1 entirely** (see Locked decision (a)).
+   API); `agy` is covered via its four cached windows (originally excluded by Locked
+   decision (a) — see "Revision: agy via its usage cache").
 5. The feature does nothing at all — no extra `list --json` calls, no state file, no
    notification — unless the scheduled timer is installed (`ai-accounts install-timer`).
    Nothing added in Phase 1 prompts the user to install it (Locked decision (c)).
@@ -36,8 +37,9 @@ no provider HTTP code touched.
    `run_once` gate behavior (off → `collect` never called; on → called; independent of
    `enabled`/`token_refresh`).
 7. `README.md` documents: how to turn it on, what the two settings mean and their actual
-   defaults, that detection latency is bounded by the timer interval, the agy exclusion
-   and why, and the default-on notification-volume caveat (Locked decision (d)).
+   defaults, that detection latency is bounded by the timer interval, per-provider
+   coverage including what agy's cache-derived readings do and don't guarantee, and the
+   default-on notification-volume caveat (Locked decision (d)).
 8. `TODO.md`'s "Future work" quota-reset item is checked off and points at this spec.
 
 ## Locked decisions
@@ -46,6 +48,11 @@ These override or make explicit what `docs/quota-reset-notifications-plan.md` le
 suggestion, a footnote, or an implicit default. Nothing below is up for silent
 re-interpretation by an implementing task — a task that finds a reason to deviate stops
 and reports it rather than picking a different default.
+
+> **Superseded after sign-off (2026-09-11):** decision (a) below was reversed once a path
+> around *both* of its reasons was found — `agy` is now covered, from its local usage cache
+> rather than a live probe. See "Revision: agy via its usage cache" at the end of this
+> document. The original reasoning is kept intact for the record.
 
 **(a) `agy` is excluded from Phase 1 `reset_windows` entirely.**
 The plan's §2 table lists `agy` with four windows (`gemini_session`, `gemini_weekly`,
@@ -146,15 +153,54 @@ per window:
   `reset_time = int(time.time()) + reset_after` — recomputed fresh on every call, not a
   stored deadline. For a window sitting at 0% used, this is exactly what codex's API
   appears to return.
-- **Consequence for `detect()`, in scope of this note only (no code changed by this
-  task):** for a profile/window in that state, `fresh.reset_time` is always
-  `~now + window_length`, so `now >= prev.reset_time` structurally never becomes true —
-  `detect()` will never fire for it, mirroring the same structural non-firing already
-  called out for non-active `agy` profiles in Locked decision (a). This is upstream
-  parsing behavior in `usage_format.py`/the codex API response shape, not a defect in
-  `quota_reset.py`'s `detect()` itself, and fixing it would mean touching
-  `*_usage.py`/`usage_format.py` parsing — out of Phase 1's file scope (see "Not touched
-  by Phase 1" above). Tracked as a Phase 2+ follow-up, not a Phase 1 blocker: the
-  fire-on-genuine-reset acceptance criterion still holds for the common case (an absolute
-  `reset_at` present), and a window that never had any usage in it is, by definition, not
-  a case a user needs a "your quota is back" notification for.
+- **Consequence for `detect()` — double-gated, so this costs nothing** (verified by
+  `test_sliding_reset_time_on_an_unused_window_never_fires` and
+  `test_a_sliding_tick_does_not_poison_the_next_real_reset`): for a window in that
+  state `fresh.reset_time` is always `~now + window_length`, so `now >=
+  prev.reset_time` never becomes true and `detect()` cannot fire for it. That is the
+  correct outcome, not a missed feature — the window is *also* independently blocked
+  by acceptance criterion 2 (`prev.used_pct >= reset_notify_min_used_pct`), because a
+  window nothing has been drawn from sits at 0% used, and a window that was never
+  consumed is by definition not one a user needs a "your quota is back" notification
+  for. Critically, a sliding value passing *through* state does **not** poison later
+  detection: as soon as real usage exists the provider supplies an absolute `reset_at`
+  again, state self-corrects on the next tick, and the following genuine reset fires
+  normally.
+- **Residual (theoretical, not observed):** if a provider ever reported *high* usage
+  while omitting `reset_at`, that window's deadline would sit perpetually in the
+  future and its reset would go unannounced. The failure direction is a **missed**
+  notification, never a false one, and no provider was observed behaving this way (in
+  the probe, every window with usage in it carried an absolute `reset_at`). Left
+  unguarded deliberately: a heuristic to second-guess a provider's own deadline would
+  add false-positive risk to buy back a case that does not occur.
+
+## Revision: agy via its usage cache (2026-09-11)
+
+Locked decision (a) excluded `agy` for two independently-sufficient reasons. Both were
+re-checked against the code and both were real — but each has a way around it, so `agy`
+is now covered with `reset_windows = ("gemini_session", "gemini_weekly",
+"other_session", "other_weekly")`.
+
+| Original blocker | Confirmed? | Way around it |
+|---|---|---|
+| `list --json` writes the shared credential slot | Yes — `cmd_list` sets `live_query` whenever an active profile exists, even in cached mode, so the active profile is always activated to be read | Don't call the CLI at all. `gemini_accounts.cached_usage_windows()` reads `usage-cache.json` plus the saved profiles — local files only, no activation, no network |
+| A benched profile's cached `reset_time` never advances, so `detect()`'s confirmation can never be satisfied | Yes | Treat a cached deadline that has *passed* as a reset that really happened, and synthesise the next window boundary. This is the same one-directional-ageing inference `gemini_accounts._cached_used_pct` already makes — and that autoswitch already trusts to choose accounts, a higher-stakes decision than a notification |
+
+`detect()` is unchanged: the agy collector hands it a normal-looking snapshot, so the
+single confirmed fire rule still governs everything.
+
+**Why this cannot turn into notification spam.** The synthesised deadline is the window
+boundary *after* `now`, which is a stable value for every tick inside that window — so
+`detect()` fires once, not per tick. The reading stored alongside it is `0%` used, so the
+`reset_notify_min_used_pct` gate blocks any later rollforward from firing again until a
+real probe refreshes the cache with genuine usage. Pinned by
+`test_a_benched_profile_notifies_once_and_then_stays_quiet`.
+
+**The trade, stated plainly.** agy readings are only as fresh as the last real probe
+(`agy-accounts list`, `list --refresh`, or an autoswitch probe) left in the cache. A
+profile that has never been probed has nothing cached and is silently skipped; a stale
+cache means a late notification, never a wrong one. Because the next deadline is
+computed rather than reported, agy notifications say so instead of quoting a next-reset
+time (`notify.reset.cached`), and the `WindowSnapshot`/`ResetEvent` `estimated` flag is
+what carries that distinction through to the notification text. Windows with no cached
+`reset_time`, or no known window length to roll forward by, are skipped.
