@@ -54,8 +54,10 @@ each account manager must also support your operating system.
 Install the latest release:
 
 ```sh
-uv tool install --from git+https://github.com/weskao/ai-accounts.git@v0.6.0 ai-accounts
+uv tool install --from git+https://github.com/weskao/ai-accounts.git@vX.Y.Z ai-accounts
 ```
+
+Replace `X.Y.Z` with the release version you want to install.
 
 Or install the latest `main`:
 
@@ -85,15 +87,17 @@ uv tool uninstall ai-accounts
 Use the umbrella command to run the same action for all providers:
 
 ```sh
-ai-accounts list
-ai-accounts who
-ai-accounts usage
-ai-accounts refresh --all
-ai-accounts sync
-ai-accounts login-switch work
-ai-accounts doctor
-ai-accounts help
+ai-accounts list                              # List saved profiles for every provider
+ai-accounts who                               # Show the active account for every provider
+ai-accounts usage                             # Show usage for every active account
+ai-accounts refresh --all                     # Refresh every saved profile's tokens
+ai-accounts sync                              # Sync active auth back to matching profiles
+ai-accounts login-switch <profile_name>       # Log in again and save each login under this name
+ai-accounts doctor                            # Run offline health checks for every provider
+ai-accounts help                              # Show available commands
 ```
+
+Replace `<profile_name>` with a name you choose for the saved profile.
 
 `list` fetches providers concurrently. Interactive actions run providers one at
 a time so their prompts remain usable.
@@ -114,15 +118,15 @@ ai-accounts usage --json
 Every provider command supports the common profile workflow:
 
 ```sh
-codex-accounts who
-codex-accounts save work
-codex-accounts list
-codex-accounts list --json
-codex-accounts switch work
-codex-accounts refresh --all
-codex-accounts login-switch work
-codex-accounts remove work
-codex-accounts help
+codex-accounts who                            # Show the current Codex account
+codex-accounts save <profile_name>            # Save the current login as a reusable profile
+codex-accounts list                           # List saved profiles and their usage
+codex-accounts list --json                    # Print saved profiles and usage as JSON
+codex-accounts switch <profile_name>          # Switch to a saved profile
+codex-accounts refresh --all                  # Refresh tokens for every saved profile
+codex-accounts login-switch <profile_name>    # Log in again and save it as a profile
+codex-accounts remove <profile_name>          # Delete a saved profile
+codex-accounts help                           # Show available commands
 ```
 
 Every per-provider tool's `list`/`usage` also accepts `--json`, printing one
