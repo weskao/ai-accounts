@@ -59,6 +59,18 @@ _DEFAULT_MIN_USED_PCT = 90
 # tick. Upgrade path: make configurable if a provider routinely needs longer.
 _LIST_TIMEOUT_SEC = 300
 
+# A provider can also reset off-schedule — a holiday top-up, a goodwill
+# credit — where the recorded deadline never arrives but the usage counter
+# collapses anyway. That shows up as a fall in `used_pct`, so detect() treats
+# a large enough fall as a reset in its own right. Firing on *any* fall would
+# misread a sliding window's gradual ageing, hence two bounds: the fresh
+# reading must be low enough that "quota is available again" is actually true,
+# AND the fall must be big enough that no plausible ageing explains it.
+# ponytail: fixed thresholds, not config keys — promote them only if a
+# provider turns out to need different bounds.
+_RESET_LOW_PCT = 10
+_RESET_DROP_PCT = 50
+
 
 @dataclass(frozen=True, slots=True)
 class WindowSnapshot:
@@ -247,11 +259,22 @@ def detect(
     """Compare *snapshot* against *state*; return the updated state and any
     :class:`ResetEvent`\\ s. No I/O — same inputs always give the same output.
 
-    A window fires once when: the fresh reading confirms a NEW reset actually
-    happened (``now >= prev.reset_time`` and ``fresh.reset_time >=
-    prev.reset_time + 60``, a 60s jitter tolerance against a provider's clock
-    not lining up exactly with wall time) AND the usage just before it reset
-    was worth telling the user about (``prev.used_pct >= min_used_pct``).
+    A window fires once when the usage just before it reset was worth telling
+    the user about (``prev.used_pct >= min_used_pct``) AND the fresh reading
+    confirms a NEW reset actually happened, by either of two routes:
+
+    * **on schedule** — ``now >= prev.reset_time`` and ``fresh.reset_time >=
+      prev.reset_time + 60`` (a 60s jitter tolerance against a provider's
+      clock not lining up exactly with wall time);
+    * **off schedule** — the deadline has NOT arrived, but the counter
+      collapsed anyway: ``fresh.used_pct <= _RESET_LOW_PCT`` and the fall from
+      ``prev.used_pct`` is at least ``_RESET_DROP_PCT``. A provider handing
+      out quota early (a holiday top-up) never trips the scheduled route,
+      since its recorded deadline is still in the future.
+
+    Both routes share the ``min_used_pct`` gate, so a window sitting at 0%
+    stays silent whichever way its ``reset_time`` moves — which is what keeps
+    a provider's sliding ``reset_at`` on a freshly reset window from firing.
 
     A provider whose :func:`collect` failed (``snapshot[provider] is None``)
     has its state left untouched. A profile/window present in *state* but
@@ -271,9 +294,20 @@ def detect(
                 prev = state.get(key)
                 if (
                     prev is not None
-                    and now >= prev["reset_time"]
-                    and fresh.reset_time >= prev["reset_time"] + 60
                     and prev["used_pct"] >= min_used_pct
+                    and (
+                        # the recorded deadline arrived and a later one replaced it
+                        (
+                            now >= prev["reset_time"]
+                            and fresh.reset_time >= prev["reset_time"] + 60
+                        )
+                        # or the counter collapsed before that deadline — the
+                        # provider reset early, off its own schedule
+                        or (
+                            fresh.used_pct <= _RESET_LOW_PCT
+                            and prev["used_pct"] - fresh.used_pct >= _RESET_DROP_PCT
+                        )
+                    )
                 ):
                     events.append(
                         ResetEvent(
