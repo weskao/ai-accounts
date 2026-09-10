@@ -137,6 +137,10 @@ def _install_linux_cron(interval_sec: int) -> None:
         line for line in (existing.stdout or "").splitlines() if CRON_TAG not in line
     ]
     lines.append(_cron_line(interval_sec))
+    # One tick at boot too, matching launchd's RunAtLoad and systemd's
+    # OnBootSec — otherwise a reset that happened while the machine was off
+    # waits for the next */N slot. Same tag, so uninstall drops both lines.
+    lines.append(f"@reboot {_run_command()} {CRON_TAG}")
     u.run(["crontab", "-"], input="\n".join(lines) + "\n")
 
 

@@ -204,6 +204,10 @@ class LinuxInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.T
         new_crontab = set_calls[0]["kwargs"]["input"]
         self.assertIn("ai_accounts.autoswitch_timer run", new_crontab)
         self.assertIn(at.CRON_TAG, new_crontab)
+        # And: a boot-time tick as well, tagged so uninstall removes it too
+        reboot_lines = [line for line in new_crontab.splitlines() if line.startswith("@reboot ")]
+        self.assertEqual(len(reboot_lines), 1)
+        self.assertIn(at.CRON_TAG, reboot_lines[0])
 
 
 class WindowsInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
