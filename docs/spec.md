@@ -219,7 +219,14 @@ future, so no amount of usage collapsing would notify.
 | Route | Evidence | Fires when |
 |---|---|---|
 | On schedule | The recorded deadline arrived and a later one replaced it | `now >= prev.reset_time` and `fresh.reset_time >= prev.reset_time + 60` |
-| Off schedule | Usage fell while the deadline was still ahead, and a reset corroborates it | usage fell AND ( the deadline *jumped*: `fresh.reset_time - prev.reset_time > (now - prev.seen_at) + 60` — OR the fall is `>= 50` AND (`fresh.reset_time >= prev.reset_time + 60` OR `fresh.used_pct <= 10`) ) |
+| Off schedule | Usage fell while the deadline was still ahead, and what the deadline did corroborates it | usage fell AND one of: the deadline *jumped* (`fresh.reset_time - prev.reset_time > (now - prev.seen_at) + 60`) · the deadline *stayed put* (`abs(moved) < 60`) and the fall is `>= 10` · the deadline moved but did not jump, and the fall is `>= 50` |
+
+**The two provider shapes this has to cover.** Both were confirmed against real behaviour:
+
+| Provider | On an off-schedule reset | Which route catches it |
+|---|---|---|
+| codex | 5h and weekly both zeroed, **and the weekly window restarts from the reset moment** | The deadline jumps (a weekly window with 3 days left suddenly ends 7 days out), so any fall fires — at any fresh reading |
+| claude | 5h and weekly both zeroed, **weekly deadline left where it was** | The deadline stayed put, so the fall itself is the proof: a fixed window cannot fall without having been cleared |
 
 **Why the fall, and not "back to 0%".** Collection is a periodic scan (one timer tick,
 default 1800s), so the reading is whatever the window happened to be at when the tick
@@ -238,23 +245,47 @@ a freshly issued window lands a whole window-length further out. State therefore
 climbed back to. This is what closes the "scan landed after half the fresh window was
 already spent" case without loosening anything else.
 
-Without a jump, the earlier rule still applies: a fall of at least 50 points, with the
-deadline at least moved forward, or with a near-zero reading (`<= 10`, a counter cleared
-in place with the window's end left where it was — the one reset shape that offers no
-new deadline). The 50-point bound also stops a small drift from firing once a user lowers
-`reset_notify_min_used_pct` far enough that a low reading would otherwise pass the gate
-on its own. Both thresholds are module constants (`_RESET_DROP_PCT`, `_RESET_LOW_PCT`),
-deliberately not config keys — no evidence yet that any provider needs different bounds,
-and two more knobs would be two more things to explain.
+**An unmoved deadline needs only a noise floor, not a deep fall.** This is the claude
+shape, and the earlier `fresh.used_pct <= 10` requirement was wrong for it: a scan lands
+up to a tick late, and burning 11% of even a weekly window inside 30 minutes is ordinary,
+so requiring a near-zero *reading* missed real resets. A fixed window whose end did not
+move cannot fall at all unless it was cleared — nothing else decreases it — so the fall
+itself is the proof, and `_RESET_MIN_FALL_PCT` (10) exists only to absorb jitter in a
+reported percentage. It also keeps a small drift from firing once a user lowers
+`reset_notify_min_used_pct` far enough that a low reading would otherwise pass the gate.
+
+A deadline that moved but did not jump is the sliding-decay shape, and still needs
+`_RESET_DROP_PCT` (50). Both thresholds are module constants, deliberately not config
+keys — no evidence yet that any provider needs different bounds, and two more knobs would
+be two more things to explain.
 
 `seen_at` is a backwards-compatible addition to the state file: an entry written before
 it existed lacks the key, the jump test is skipped for that one tick, and the key appears
 on the next write.
 
-**Verified end to end.** An early reset caught at 0%, 5%, 15%, 40% or 60% used sends
-exactly one notification each; a 96%-to-60% fall whose deadline slid by exactly the scan
-interval (or that plus 50s of jitter) sends none; a deadline that jumped with no fall at
-all sends none; three consecutive scans after one reset send one message total.
+**Verified end to end**, both provider shapes, one notification each unless noted:
+
+| Scenario | Result |
+|---|---|
+| codex 5h 95%→0%, end +5h | 1 |
+| codex weekly 95%→0%, end 3d→7d | 1 |
+| codex weekly 95%→20%, end 3d→7d | 1 |
+| claude weekly 95%→0%, end unchanged | 1 |
+| claude weekly 95%→11%, end unchanged | 1 |
+| claude weekly 95%→46%, end unchanged | 1 |
+| claude 5h 95%→55%, end unchanged | 1 |
+| claude 5h 95%→85%, end unchanged | 1 |
+| claude 5h 95%→86%, end unchanged | **0 — the noise-floor residual** |
+| 95%→92%, end unchanged (reporting jitter) | 0 |
+| 95%→60%, end slid by exactly one scan interval (decay) | 0 |
+| deadline jumped with no fall at all | 0 |
+| three consecutive scans after one reset | 1 total |
+
+**Residual, stated plainly.** With the deadline unmoved, a reset is missed when the fresh
+window was re-consumed to within 10 points of the old reading inside a single tick — for
+a weekly window that means burning >80% of a week's quota in 30 minutes, and for a 5h
+window it means a user who is plainly not waiting to be told the quota came back. The
+window's own scheduled deadline still fires later.
 
 **Boot-time first tick.** `install-timer` already ran the first tick at load on macOS
 (`RunAtLoad`) and systemd (`OnBootSec=60`); the cron fallback now adds an `@reboot` line

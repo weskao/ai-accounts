@@ -518,16 +518,23 @@ since the previous scan. A freshly issued window lands hours further out; a
 window merely ageing out has a reset time that advances only as fast as the
 clock, which is the signature that keeps gradual decay from reading as a
 reset. Without such a jump, a fall of at least 50 points still counts if the
-reset time at least moved forward or the reading is at most 10% (a counter
-cleared without moving the window's end). Both routes share the
-`reset_notify_min_used_pct` gate.
+reset time **stayed put**, any fall beyond a 10-point noise floor counts — a
+fixed window cannot fall at all without having been cleared. Providers differ
+here and both shapes are handled: codex zeroes its 5h and weekly windows and
+restarts the weekly count from the reset moment (its deadline jumps), while
+claude zeroes both but leaves the weekly deadline where it was. A reset time
+that moved but did not jump is the sliding-decay shape, and needs a fall of at
+least 50 points. All routes share the `reset_notify_min_used_pct` gate.
 
 Because detection is a periodic scan, **neither route needs the window to
 still read 0% when the tick lands** — you may well have started using the
 fresh quota already. The scheduled route ignores the fresh percentage
-entirely, and the off-schedule route asks whether a new window appeared, not
-how low the reading landed, so an early reset caught at 5%, 15%, 40% or even
-60% used still notifies.
+entirely, and the off-schedule route asks what the window's end did, not how
+low the reading landed, so an early reset caught at 5%, 15%, 40% or 60% used
+still notifies. The one gap left: with the deadline unmoved, a reset is missed
+if the fresh window was re-consumed to within 10 points of the old reading
+inside a single tick (95% down to 86%, say) — at that point the fall is
+indistinguishable from reporting jitter.
 
 Detection runs across every saved profile for a covered provider, not just
 the currently active one, so an account benched by auto-switch still gets
