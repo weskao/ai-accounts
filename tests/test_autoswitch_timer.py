@@ -56,7 +56,25 @@ class _HomeMixin:
 
 
 class _ConfigMixin:
-    """Point the autoswitch config store at a throwaway temp file."""
+    """Point the autoswitch config store at a throwaway temp file.
+
+    `reset_notify` defaults to True in `config_schema`, so this setUp pins it
+    False for every test using this mixin — the same no-op treatment
+    `TimerEntryPointTests` gives `token_refresh` via `_clean_refresh`, one
+    layer up so it covers every class built on this mixin. Without it, each
+    of the ~15 existing `run_once()` call sites across this file would
+    otherwise fire `quota_reset.run_tick`'s own real codex/claude/copilot
+    `list --json` subprocesses against the real `~/.ai-accounts` store on
+    every future `pytest` run. A test exercising the `reset_notify` gate
+    itself turns it back on explicitly via `aw.save_config`.
+
+    This pin is MERGE-based (`aw.save_config` merges onto the stored file) —
+    a test that instead writes the whole config file with
+    `self.config_path.write_text(json.dumps({...}), ...)` erases it and must
+    carry its own `"reset_notify": False` (or mock `quota_reset.run_tick`) or
+    it silently regains the real subprocess calls this setUp exists to
+    prevent.
+    """
 
     def setUp(self):
         super().setUp()
@@ -68,6 +86,7 @@ class _ConfigMixin:
         )
         env.start()
         self.addCleanup(env.stop)
+        aw.save_config({"reset_notify": False})
 
 
 class _SubprocessMixin:
@@ -343,7 +362,10 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
     """`refresh` is stubbed with a clean no-op in every test that isn't
     specifically exercising the token-refresh gate — `token_refresh` defaults
     to True, so leaving it unstubbed would spawn four real provider
-    subprocesses against the real ``~/.ai-accounts`` store."""
+    subprocesses against the real ``~/.ai-accounts`` store. `reset_notify`
+    gets the analogous treatment via `_ConfigMixin.setUp`, which pins it
+    False by default (it too defaults to True in `config_schema`), so this
+    class's tests never need their own explicit stub for it."""
 
     _clean_refresh = staticmethod(lambda: "")
 
@@ -362,9 +384,13 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
     def test_run_once_treats_a_hand_edited_string_false_as_off(self) -> None:
         # Given: `enabled` hand-edited to the STRING "false" — valid JSON, and
         # truthy to bool(), so a bare truthiness check would let the scheduled
-        # job run while the user believes the feature is off.
+        # job run while the user believes the feature is off. Writing the
+        # whole file (rather than merging via aw.save_config) erases
+        # _ConfigMixin.setUp's `reset_notify: False` pin, so it must be
+        # carried here too or this test would fire quota_reset.run_tick's
+        # real provider subprocesses.
         self.config_path.write_text(
-            json.dumps({"enabled": "false"}), encoding="utf-8"
+            json.dumps({"enabled": "false", "reset_notify": False}), encoding="utf-8"
         )
         probe = mock.Mock()
 
@@ -648,6 +674,141 @@ class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
 
         # Then: it returns instead of hanging, carrying whatever was captured
         self.assertIn("partial output before the hang", output)
+
+
+class ResetNotifyGateTests(_ConfigMixin, unittest.TestCase):
+    """`reset_notify` is a THIRD independent gate (see `run_once`'s
+    docstring) — `_ConfigMixin.setUp` pins it False by default, so every test
+    here that wants it exercised turns it back on explicitly.
+
+    Each test patches `quota_reset.run_tick` itself (the seam `run_once`
+    actually calls) rather than the `collect` callable passed through it:
+    `run_tick` carries its own internal `reset_notify` check
+    (`quota_reset.py`'s fail-closed guard, same contract), so asserting on
+    `collect` alone cannot tell `run_once`'s own gate apart from that inner
+    one — a mutation deleting `run_once`'s gate would still leave every
+    `collect`-based assertion green.
+    """
+
+    def test_reset_notify_off_does_not_call_run_tick(self) -> None:
+        # Given: the default from _ConfigMixin.setUp (reset_notify: False)
+        with mock.patch.object(at.quota_reset, "run_tick") as run_tick:
+            # When: the scheduled job's entry point fires
+            result = at.run_once(check=lambda: None, refresh=lambda: "")
+
+        # Then: it exits cleanly and never calls run_tick
+        self.assertEqual(result, 0)
+        run_tick.assert_not_called()
+
+    def test_reset_notify_treats_a_hand_edited_string_true_as_off(self) -> None:
+        # Given: `reset_notify` hand-edited to the STRING "true" — valid
+        # JSON, and truthy to bool(), so a bare truthiness check would let
+        # the gate run while the user's config was never actually set to the
+        # JSON boolean `true`.
+        self.config_path.write_text(
+            json.dumps({"reset_notify": "true"}), encoding="utf-8"
+        )
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(at.quota_reset, "run_tick") as run_tick:
+            result = at.run_once(check=lambda: None, refresh=lambda: "")
+
+        # Then: the gate fails CLOSED — a silent no-op, per config_flag's contract
+        self.assertEqual(result, 0)
+        run_tick.assert_not_called()
+
+    def test_reset_notify_runs_run_tick_when_enabled(self) -> None:
+        # Given: the gate explicitly turned on
+        aw.save_config({"reset_notify": True})
+        collect = mock.Mock(return_value={})
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(at.quota_reset, "run_tick") as run_tick:
+            result = at.run_once(check=lambda: None, refresh=lambda: "", collect=collect)
+
+        # Then: run_tick runs, receiving the injected collect through
+        self.assertEqual(result, 0)
+        run_tick.assert_called_once_with(collect=collect)
+
+    def test_reset_notify_defaults_to_on(self) -> None:
+        # Given: no explicit reset_notify setting written — bypass
+        # _ConfigMixin's own pinned-off default by writing a fresh config
+        # file directly, the same way test_token_refresh_defaults_to_on does
+        # for its own flag.
+        self.config_path.write_text(
+            json.dumps({"enabled": False, "token_refresh": False}), encoding="utf-8"
+        )
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(at.quota_reset, "run_tick") as run_tick:
+            result = at.run_once(check=lambda: None, refresh=lambda: "")
+
+        # Then: run_tick still runs — "on by default" per config_schema
+        self.assertEqual(result, 0)
+        run_tick.assert_called_once_with(collect=None)
+
+    def test_reset_notify_fires_even_when_the_other_two_gates_are_off(self) -> None:
+        # Given: enabled and token_refresh both off, reset_notify on
+        aw.save_config({"enabled": False, "token_refresh": False, "reset_notify": True})
+        check = mock.Mock()
+        refresh = mock.Mock(return_value="")
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(at.quota_reset, "run_tick") as run_tick:
+            result = at.run_once(check=check, refresh=refresh)
+
+        # Then: reset_notify runs on its own; the other two stay off
+        self.assertEqual(result, 0)
+        check.assert_not_called()
+        refresh.assert_not_called()
+        run_tick.assert_called_once_with(collect=None)
+
+    def test_reset_notify_off_while_the_other_two_gates_run(self) -> None:
+        # Given: enabled and token_refresh both on, reset_notify left at its
+        # off-by-default value from _ConfigMixin.setUp
+        aw.save_config({"enabled": True, "token_refresh": True})
+        check = mock.Mock()
+        refresh = mock.Mock(return_value="")
+
+        # When: the scheduled job's entry point fires
+        with mock.patch.object(at.quota_reset, "run_tick") as run_tick:
+            result = at.run_once(check=check, refresh=refresh)
+
+        # Then: the other two run; reset_notify stays off on its own
+        self.assertEqual(result, 0)
+        check.assert_called_once_with()
+        refresh.assert_called_once_with()
+        run_tick.assert_not_called()
+
+
+class GateOrderingTests(_ConfigMixin, unittest.TestCase):
+    """The three gates' relative order within one tick is fixed (see
+    `run_once`'s docstring): `reset_notify` runs last so a bug in it can
+    never delay or block the established `check`/`refresh` behavior the
+    other two gates already provide on every tick."""
+
+    def test_gates_fire_in_enabled_then_token_refresh_then_reset_notify_order(
+        self,
+    ) -> None:
+        # Given: all three gates on
+        aw.save_config({"enabled": True, "token_refresh": True, "reset_notify": True})
+        order: list[str] = []
+        check = mock.Mock(side_effect=lambda: order.append("enabled"))
+
+        def refresh() -> str:
+            order.append("token_refresh")
+            return ""
+
+        def collect() -> dict:
+            order.append("reset_notify")
+            return {}
+
+        # When: the scheduled job's entry point fires
+        result = at.run_once(check=check, refresh=refresh, collect=collect)
+
+        # Then: they ran in the fixed, documented sequence
+        self.assertEqual(result, 0)
+        self.assertEqual(order, ["enabled", "token_refresh", "reset_notify"])
 
 
 class MainRunInstallDispatchTests(
