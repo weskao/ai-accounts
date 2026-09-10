@@ -528,6 +528,9 @@ class ProfileCommandTests(_HomeMixin):
                         "error": None,
                     },
                     "no_quota_api": False,
+                    # Tier included, so a 5x-to-20x change on the same plan is
+                    # still visible to quota-reset detection.
+                    "plan": "Max · 20x",
                 }
             ],
         )

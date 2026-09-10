@@ -21,8 +21,8 @@ from ai_accounts.providers import Provider
 from ai_accounts.usage_format import UsageWindow
 
 
-def _win(used_pct: int, reset_time: int) -> qr.WindowSnapshot:
-    return qr.WindowSnapshot(used_pct=used_pct, reset_time=reset_time)
+def _win(used_pct: int, reset_time: int, plan: str | None = None) -> qr.WindowSnapshot:
+    return qr.WindowSnapshot(used_pct=used_pct, reset_time=reset_time, plan=plan)
 
 
 class DetectTests(unittest.TestCase):
@@ -35,7 +35,8 @@ class DetectTests(unittest.TestCase):
 
         self.assertEqual(events, [])
         self.assertEqual(
-            new_state["codex/work/hourly"], {"reset_time": 1000, "used_pct": 95, "seen_at": 500}
+            new_state["codex/work/hourly"],
+            {"reset_time": 1000, "used_pct": 95, "seen_at": 500, "plan": None},
         )
 
     def test_repeated_tick_same_reset_time_does_not_fire(self) -> None:
@@ -454,6 +455,101 @@ class ProviderResetShapeTests(unittest.TestCase):
         self.assertEqual(self._detect(95, 3 * self.DAY, 86, 3 * self.DAY), [])
 
 
+class PlanChangeTests(unittest.TestCase):
+    """A plan upgrade rescales the percentage without resetting anything.
+
+    Going from a 1x to a 5x account leaves the same absolute usage against a
+    five-times-larger allowance, so the reported percentage drops sharply
+    while the window itself — and its deadline — carry on unchanged. That is
+    the exact shape of a counter cleared in place, so without the plan
+    identity to tell them apart it would notify about a reset that never
+    happened.
+    """
+
+    DAY = 24 * 3600
+
+    def _tick(self, state, used, deadline, plan, now):
+        snapshot = {"claude": {"work": {"weekly": _win(used, deadline, plan)}}}
+        return qr.detect(state, snapshot, now=now, min_used_pct=90)
+
+    def test_a_plan_upgrade_is_not_a_reset(self) -> None:
+        now = 1_000_000
+        deadline = now + 3 * self.DAY
+        state = {
+            "claude/work/weekly": {
+                "reset_time": deadline,
+                "used_pct": 95,
+                "seen_at": now - 1800,
+                "plan": "pro",
+            }
+        }
+
+        # 1x at 95% becomes 5x at 19%: same usage, five times the allowance.
+        new_state, events = self._tick(state, 19, deadline, "team · 5x", now)
+
+        self.assertEqual(events, [])
+        # And the new plan is what later ticks compare against.
+        entry = new_state["claude/work/weekly"]
+        self.assertEqual(entry["used_pct"], 19)
+        self.assertEqual(entry["plan"], "team · 5x")
+
+    def test_a_real_reset_after_a_plan_upgrade_still_fires(self) -> None:
+        now = 1_000_000
+        deadline = now + 3 * self.DAY
+        state = {
+            "claude/work/weekly": {
+                "reset_time": deadline,
+                "used_pct": 95,
+                "seen_at": now - 1800,
+                "plan": "pro",
+            }
+        }
+        state, events = self._tick(state, 19, deadline, "team · 5x", now)
+        self.assertEqual(events, [])
+
+        # The bigger allowance gets used up too, and then really resets.
+        state, events = self._tick(state, 93, deadline, "team · 5x", now + 3600)
+        self.assertEqual(events, [])
+        _, events = self._tick(state, 0, deadline, "team · 5x", now + 7200)
+        self.assertEqual(len(events), 1)
+
+    def test_the_same_plan_still_reads_a_cleared_window_as_a_reset(self) -> None:
+        # Guard: the suppression must key off the plan actually changing, not
+        # merely being present.
+        now = 1_000_000
+        deadline = now + 3 * self.DAY
+        state = {
+            "claude/work/weekly": {
+                "reset_time": deadline,
+                "used_pct": 95,
+                "seen_at": now - 1800,
+                "plan": "pro",
+            }
+        }
+
+        _, events = self._tick(state, 15, deadline, "pro", now)
+
+        self.assertEqual(len(events), 1)
+
+    def test_an_unknown_plan_does_not_suppress_detection(self) -> None:
+        # agy is read from a cache that carries no plan, and a state entry
+        # written before this existed has no plan either. Neither may block a
+        # real reset from being reported.
+        now = 1_000_000
+        deadline = now + 3 * self.DAY
+        state = {
+            "claude/work/weekly": {
+                "reset_time": deadline,
+                "used_pct": 95,
+                "seen_at": now - 1800,
+            }
+        }
+
+        _, events = self._tick(state, 15, deadline, None, now)
+
+        self.assertEqual(len(events), 1)
+
+
 class CollectTests(unittest.TestCase):
     """_collect_one swallows its own failures and returns None — never raises."""
 
@@ -502,6 +598,41 @@ class CollectTests(unittest.TestCase):
 
         self.assertEqual(set(result), {"work"})
         self.assertEqual(result["work"]["hourly"], qr.WindowSnapshot(used_pct=42, reset_time=1000))
+
+    def test_carries_the_reported_plan_onto_every_window(self) -> None:
+        # detect() needs the plan to tell an upgrade's rescaled percentage
+        # from a real reset, so collection has to carry it through.
+        provider = Provider(
+            "codex", "codex-accounts", "ai_accounts.codex_accounts", "codex", "", "",
+            reset_windows=("hourly", "weekly"),
+        )
+        payload = [
+            {
+                "name": "work",
+                "no_quota_api": False,
+                "plan": "team · 5x",
+                "usage": {
+                    "hourly": {"percent": 42, "reset_time": 1000},
+                    "weekly": {"percent": 10, "reset_time": 2000},
+                },
+            },
+            {
+                "name": "no-plan",
+                "no_quota_api": False,
+                "usage": {"hourly": {"percent": 7, "reset_time": 1000}},
+            },
+        ]
+        with mock.patch.object(
+            qr.u,
+            "run",
+            return_value=subprocess.CompletedProcess([], returncode=0, stdout=json.dumps(payload)),
+        ):
+            result = qr._collect_one(provider)
+
+        self.assertEqual(result["work"]["hourly"].plan, "team · 5x")
+        self.assertEqual(result["work"]["weekly"].plan, "team · 5x")
+        # A provider that reports no plan leaves it None rather than guessing.
+        self.assertIsNone(result["no-plan"]["hourly"].plan)
 
 
 class StateFileTests(unittest.TestCase):

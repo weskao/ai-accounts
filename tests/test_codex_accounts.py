@@ -1298,8 +1298,10 @@ class UsageRequestTests(_CodexHomeMixin):
         fetch_usage.assert_called_once()
 
     def test_list_json_round_trips_profile_and_usage(self):
-        self.write_auth(_auth_payload("acct-w", "work@example.com"))
-        self.write_profile("work", _auth_payload("acct-w", "work@example.com"))
+        # The plan rides along because quota-reset detection needs it to tell
+        # a plan upgrade's rescaled percentage from a real reset.
+        self.write_auth(_auth_payload("acct-w", "work@example.com", plan="pro"))
+        self.write_profile("work", _auth_payload("acct-w", "work@example.com", plan="pro"))
         usage = usage_format.UsageSnapshot(
             hourly=usage_format.UsageWindow(percentage=12, reset_time=1_800_000_000, window_minutes=300),
             weekly=usage_format.UsageWindow(percentage=34, reset_time=1_800_003_600, window_minutes=10_080),
@@ -1335,6 +1337,7 @@ class UsageRequestTests(_CodexHomeMixin):
                         "error": None,
                     },
                     "no_quota_api": False,
+                    "plan": "pro",
                 }
             ],
         )
