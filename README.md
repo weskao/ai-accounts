@@ -340,7 +340,11 @@ Saved profiles and shared settings live under `~/.ai-accounts`:
 profile — quota windows, plan and timestamp, but no credentials (see below for
 why it is kept). Profile JSON files do contain live credentials: do not commit,
 publish, or share this directory. Writes use owner-only permissions and atomic
-replacement where the provider format allows it.
+replacement where the provider format allows it. Windows has no POSIX
+permission bits, so there the protection comes from the parent directory's
+inherited ACL: the default location under your user profile is already
+owner-only, but an override pointing outside it inherits whatever that
+directory allows.
 
 Provider-native legacy stores such as `~/.codex/accounts` and
 `~/.claude/accounts` are moved into the central directory on first use. Override
