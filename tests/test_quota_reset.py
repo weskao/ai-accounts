@@ -647,6 +647,7 @@ class StateFileTests(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
+    @unittest.skipIf(os.name == "nt", "Windows has no POSIX permission bits")
     def test_state_file_created_with_0600_permissions(self) -> None:
         qr._write_state({"codex/work/hourly": {"reset_time": 1000, "used_pct": 95}})
 

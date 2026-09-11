@@ -1543,7 +1543,8 @@ class AgyBlindSwitchGateTests(_AutoswitchMixin):
         # usable alternative sorting *behind* three unusable ones
         self.write_config(enabled=True, agy_blind_switch=True)
         self._given_unusable_neighbours()
-        self.write_profile("dd-good", _creds("sub-dd", "dd@example.com"))
+        dd_creds = _creds("sub-dd", "dd@example.com")
+        self.write_profile("dd-good", dd_creds)
 
         # When: autoswitch runs
         with mock.patch.object(
@@ -1557,7 +1558,7 @@ class AgyBlindSwitchGateTests(_AutoswitchMixin):
         self.assertEqual(
             (self.home / "accounts" / ".current-profile").read_text(), "dd-good"
         )
-        self.assertEqual((self.active or {})["id_token"], _creds("sub-dd", "dd@example.com")["id_token"])
+        self.assertEqual((self.active or {})["id_token"], dd_creds["id_token"])
 
     def test_all_candidates_unusable_says_so_instead_of_the_opt_in_hint(self) -> None:
         # Given: blind switching already on, and every alternative unusable
