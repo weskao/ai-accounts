@@ -647,14 +647,13 @@ class StateFileTests(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
-    @unittest.skipIf(os.name == "nt", "Windows has no POSIX permission bits")
     def test_state_file_created_with_0600_permissions(self) -> None:
         qr._write_state({"codex/work/hourly": {"reset_time": 1000, "used_pct": 95}})
 
         path = qr.state_path()
         self.assertTrue(path.is_file())
-        mode = path.stat().st_mode & 0o777
-        self.assertEqual(mode, 0o600)
+        if os.name == "posix":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_state_file_lives_beside_config_not_autoswitch_state(self) -> None:
         path = qr.state_path()
