@@ -394,12 +394,11 @@ def _report_revoked(output: str) -> None:
     changed under the parser.
     """
     records = refresh_report.parse(output)
-    source = u.source_device()
     if not records:
         aw.notify_once(
             "token-refresh:revoked",
             i18n.t("notify.revoked.title"),
-            f"{i18n.t('notify.revoked.body')}\n{source}",
+            i18n.t("notify.revoked.body"),
         )
         return
     refresh_report.print_report(records)
@@ -407,7 +406,7 @@ def _report_revoked(output: str) -> None:
     aw.notify_once(
         f"token-refresh:revoked:{key}",
         refresh_report.title(records),
-        f"{refresh_report.message(records)}\n{source}",
+        refresh_report.message(records),
     )
 
 

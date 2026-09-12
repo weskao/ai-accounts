@@ -9,7 +9,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import platform
 import re
 import time
 from functools import lru_cache
@@ -22,6 +21,8 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Sequence
+
+from . import host_identity
 
 YELLOW = "\033[1;33m"
 GREEN = "\033[1;32m"
@@ -41,23 +42,9 @@ IS_LINUX = sys.platform.startswith("linux")
 
 
 def source_device() -> str:
-    """Short, human-readable label for notification provenance."""
-    name = ""
-    if IS_MACOS:
-        try:
-            name = (
-                subprocess.run(
-                    ["scutil", "--get", "ComputerName"],
-                    capture_output=True,
-                    text=True,
-                    timeout=1,
-                ).stdout
-                or ""
-            ).strip()
-        except (OSError, subprocess.SubprocessError):
-            pass
-    name = name or os.environ.get("COMPUTERNAME") or platform.node() or "unknown-host"
-    return f"{'🖥️' if 'mini' in name.lower() else '💻'} {name}"
+    """Short, human-readable label for notification provenance, e.g.
+    '🖥️ Mac mini · d011********'."""
+    return host_identity.device_label()
 
 
 # ── ANSI / color support ─────────────────────────────────────────────────────

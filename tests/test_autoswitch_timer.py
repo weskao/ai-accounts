@@ -592,9 +592,7 @@ class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
         )
 
         # When: the scheduled job's entry point fires
-        with mock.patch.object(aw, "notify_once") as notify_once, mock.patch.object(
-            at.u, "source_device", return_value="💻 TestBook"
-        ):
+        with mock.patch.object(aw, "notify_once") as notify_once:
             result = at.run_once(refresh=refresh)
 
         # Then: exactly one alert, keyed by the profiles it names — repeated
@@ -608,7 +606,8 @@ class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
         self.assertIn("claude", title)
         self.assertIn("• test — revoked: refresh token rejected (invalid_grant)", message)
         self.assertIn("claude-accounts login-switch test", message)
-        self.assertTrue(message.endswith("💻 TestBook"))
+        # The device label is notify()'s job now, not this call site's — it is
+        # asserted where it is added (NotifyChannelTests, TelegramPayloadTests).
 
     def test_bulk_revoked_summary_alone_still_triggers_notification(self) -> None:
         # Given: codex's bulk-only wording (a profile with no refresh_token to

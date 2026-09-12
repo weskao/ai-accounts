@@ -21,6 +21,7 @@ Before writing any new helper, **first check [`src/ai-accounts/_utils.py`](src/a
 - **Account stores**: `resolve_account_dir(env_var, default_dir, legacy_dir)` — env override → central `~/.ai-accounts/` default, auto-migrating a legacy in-dotdir store.
 - **macOS keychain**: `keychain_read(service, account)`, `keychain_write(service, account, secret)` — `security` generic-password access (no-op off macOS, hex-decoding `security`'s encoded reads). Used by `codex_accounts`, `claude_accounts` and `vibe_accounts`; per-tool service/account derivation stays in the tool.
 - **Git**: `is_git_repo(path)`, `git_sync(repo_dir, file_path, commit_msg)` (add → commit → pull --rebase → push, with union-conflict auto-resolution).
+- **Device label (notification provenance)**: `source_device()` returns e.g. `🖥️ Mac mini · d011********` — delegates to [`host_identity.py`](src/ai_accounts/host_identity.py)'s `device_label()` (scutil/`gethostname` name + masked macOS serial or Windows/Linux OS-ID digest, picking 🖥️ vs 💻 by whether "mini" is in the name; unavailable IDs show `unknown`). Called in exactly one place: `autoswitch.notify()`, the funnel every notification goes through, which appends the label as the message's last line whenever the channel is `desktop` or `telegram`. **Call sites must not append it themselves** — a per-site `f"{body}\n{u.source_device()}"` now double-labels the message, and the one site that forgot is the bug this centralization fixed. Never re-shell out to `scutil`/`gethostname` or hand-roll the emoji pick.
 
 ### Rules
 

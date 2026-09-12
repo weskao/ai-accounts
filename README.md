@@ -357,9 +357,18 @@ paths with `CODEX_ACCOUNT_DIR`, `CLAUDE_ACCOUNT_DIR`,
 
 Auto-switch can refresh quota data, select another saved profile when the active
 profile crosses a configured threshold, notify you, and restart supported
-interactive sessions. A desktop or Telegram switch notification ends with the
-source device, same as the re-login report below (for example, `💻 MacBook Pro`
-or `🖥️ Mac mini`).
+interactive sessions. Every notification ai-accounts sends — a switch, a dead
+end with no account left to switch to, the re-login report, a quota reset —
+ends with the source device (for example, `💻 MacBook Pro · d011********` or
+`🖥️ Mac mini · d011********`), over desktop and Telegram alike.
+
+The device code uses the hardware serial on macOS (`ioreg`), and an
+application-specific HMAC-SHA256 digest of Windows `MachineGuid` or Linux
+`/etc/machine-id` (falling back to `/var/lib/dbus/machine-id`). Only the first
+four characters are shown; the rest are masked. These IDs do not depend on
+network interfaces. Windows/Linux IDs identify the OS installation and may
+change after reinstalling or be duplicated by cloning an image. If no valid ID
+is readable, the label shows `unknown` and notifications still work.
 
 ```sh
 ai-accounts config
@@ -499,8 +508,8 @@ under it. The alert is de-duplicated by the exact set of profiles it names:
 the same set stays quiet for an hour, while a newly revoked profile alerts on
 the next tick instead of waiting out the previous alert's cooldown. Transient
 failures (a 5xx, a timeout, an unreachable token endpoint) are retried on the
-next tick and never reported here. The sent notification ends with the source
-device (for example, `💻 MacBook Pro` or `🖥️ Mac mini`).
+next tick and never reported here. Like every notification, it ends with the
+source device (see [Auto-switch](#auto-switch)).
 
 ### Quota-reset notifications
 

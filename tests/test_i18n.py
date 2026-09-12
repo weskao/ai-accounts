@@ -340,10 +340,15 @@ class MenuPreviewTests(_ConfigMixin):
 class TelegramPayloadTests(_ConfigMixin):
     """The Bot API payload — plain text, no frame, no parse mode."""
 
+    DEVICE_LABEL = "💻 TestBook · abcd********"
+
     def _capture(self) -> list[object]:
         aw.save_config(
             {"notify": "telegram", "telegram_bot_token": "t", "telegram_chat_id": "1"}
         )
+        label = mock.patch.object(aw.u, "source_device", return_value=self.DEVICE_LABEL)
+        label.start()
+        self.addCleanup(label.stop)
         opened: list[object] = []
 
         class _Response:
@@ -377,17 +382,18 @@ class TelegramPayloadTests(_ConfigMixin):
         self.assertNotIn("%E2%94%8C", body)  # ┌ — the old frame
         self.assertIn("codex", urllib.parse.unquote_plus(body))
         self.assertIn(
-            "🔄 codex: work → personal\n⚠️ restart needed",
+            f"🔄 codex: work → personal\n⚠️ restart needed\n{self.DEVICE_LABEL}",
             urllib.parse.unquote_plus(body),
         )
 
-    def test_an_empty_body_sends_the_title_alone(self) -> None:
+    def test_an_empty_body_sends_the_title_and_the_device_label_alone(self) -> None:
         # Given: a title with no follow-up line
         opened = self._capture()
         self.assertTrue(aw.notify("only a title", ""))
-        # Then: no trailing newline left dangling
+        # Then: the device label still rides along, and the empty body leaves
+        # no blank line dangling between it and the title
         text = urllib.parse.parse_qs(opened[0].data.decode("utf-8"))["text"][0]
-        self.assertEqual(text, "only a title")
+        self.assertEqual(text, f"only a title\n{self.DEVICE_LABEL}")
 
 
 if __name__ == "__main__":

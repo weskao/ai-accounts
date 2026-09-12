@@ -168,12 +168,20 @@ def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
 def notify(title: str, message: str) -> bool:
     """Send *title*/*message* over the configured channel.
 
+    Every outgoing notification carries the device label as its last line —
+    appended here, the one funnel all callers route through, so a new call
+    site cannot forget it. ``source_device()`` shells out (scutil), so it is
+    only consulted once a real channel is known: an unattended poll with
+    notifications off never spawns a subprocess.
+
     Returns True when the message went out. A missing notifier, bad
     credentials or a dead network is reported as False — notification is
     never allowed to take down its caller.
     """
     cfg = load_config()
     channel = cfg.get("notify")
+    if channel in ("desktop", "telegram"):
+        message = "\n".join(part for part in (message, u.source_device()) if part)
     if channel == "desktop":
         return u.desktop_notify(title, message)
     if channel == "telegram":
@@ -412,10 +420,6 @@ def run_autoswitch(
     # only know that after the restart has been attempted.
     restarted = None if restart is None else _restarted(restart)
     body = i18n.t("notify.switched.restarted" if restarted else "notify.switched.restart_needed")
-    # source_device() shells out (scutil) — skip it when channel is "none" so
-    # an unattended poll with notifications off never spawns a subprocess.
-    if cfg.get("notify") in ("desktop", "telegram"):
-        body = f"{body}\n{u.source_device()}"
     notify(
         i18n.t(
             "notify.switched.title",

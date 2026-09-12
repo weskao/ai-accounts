@@ -21,6 +21,7 @@ from unittest import mock
 
 from ai_accounts import _utils as u
 from ai_accounts import autoswitch as aw
+from ai_accounts import host_identity
 from ai_accounts.usage_format import UsageWindow
 
 
@@ -166,6 +167,19 @@ class _PlatformMixin:
             patch.start()
             self.addCleanup(patch.stop)
 
+    DEVICE_LABEL = "💻 TestBook · abcd********"
+
+    def stub_device_label(self) -> None:
+        """Pin the device label notify() appends to every message.
+
+        Without this the label's scutil lookup lands in ``record_subprocess``'s
+        list too, and every "one notification" count would have to encode how
+        the label happens to be derived.
+        """
+        patch = mock.patch.object(u, "source_device", return_value=self.DEVICE_LABEL)
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def record_subprocess(self) -> list:
         calls: list = []
 
@@ -176,6 +190,11 @@ class _PlatformMixin:
         patch = mock.patch.object(u.subprocess, "run", side_effect=fake_run)
         patch.start()
         self.addCleanup(patch.stop)
+        # host_name() is process-lifetime cached (real ComputerName never
+        # changes mid-run) — clear it so each test sees its own fake_run's
+        # scutil call instead of a name cached by an earlier test.
+        host_identity.host_name.cache_clear()
+        self.addCleanup(host_identity.host_name.cache_clear)
         return calls
 
 
@@ -418,6 +437,7 @@ class NotifyChannelTests(_ConfigMixin, _PlatformMixin):
         super().setUp()
         self.force_platform(macos=True)
         self.spawned = self.record_subprocess()
+        self.stub_device_label()
         self.requests: list = []
 
         def fake_urlopen(request, *a, **k):
@@ -548,6 +568,7 @@ class NotifyOnceTests(_ConfigMixin, _PlatformMixin):
         super().setUp()
         self.force_platform(macos=True)
         self.spawned = self.record_subprocess()
+        self.stub_device_label()
         aw.save_config({"notify": "desktop"})
 
     def test_the_same_exhausted_state_notifies_exactly_once(self) -> None:
@@ -725,6 +746,7 @@ class _EngineMixin(_ConfigMixin, _PlatformMixin):
         super().setUp()
         self.force_platform(macos=True)
         self.spawned = self.record_subprocess()
+        self.stub_device_label()
         aw.save_config({"enabled": True, "notify": "desktop", "language": "en"})
         self.probed: list[str] = []
         self.switched: list[str] = []
@@ -864,6 +886,9 @@ class EngineNoCandidateTests(_EngineMixin):
         self.assertEqual(self.switched, [])
         self.assertEqual(len(self.spawned), 1)
         self.assertIn("codex", self.spawned[0][-1])
+        # And: it names the machine, like every other notification — this is
+        # the one alert that used to go out without a device label.
+        self.assertIn(self.DEVICE_LABEL, self.spawned[0][-1])
 
     def test_the_dead_end_message_does_not_claim_a_quota_it_never_read(self) -> None:
         # Given: the active profile out of quota and the only alternative unreadable
@@ -887,17 +912,16 @@ class EngineSwitchNotificationTests(_EngineMixin):
             "codex", ["work", "spare"], "work", probe, self.record_switch
         )
         # Then: one notification says which account was left and which is now
-        # live (plus the scutil lookup for the device label in its body)
+        # live
         self.assertTrue(outcome.switched)
-        self.assertEqual(len(self.spawned), 2)
+        self.assertEqual(len(self.spawned), 1)
         script = self.spawned[-1][-1]
         self.assertIn("work", script)
         self.assertIn("spare", script)
         self.assertIn("codex", script)
-        # The device label (source_device()'s scutil lookup is spawned[0]) rides
-        # along on the notification body so a multi-machine setup can tell
-        # which one just switched.
-        self.assertTrue(any(emoji in script for emoji in ("💻", "🖥️")))
+        # The device label rides along on the notification body so a
+        # multi-machine setup can tell which one just switched.
+        self.assertIn(self.DEVICE_LABEL, script)
 
     def test_the_notification_names_both_accounts_usage_not_just_the_old_one(
         self,

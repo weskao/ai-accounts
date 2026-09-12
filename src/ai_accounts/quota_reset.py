@@ -395,7 +395,6 @@ def report(events: list[ResetEvent]) -> bool:
     """
     if not events:
         return False
-    source = u.source_device()
     if len(events) == 1:
         event = events[0]
         title = i18n.t(
@@ -431,7 +430,7 @@ def report(events: list[ResetEvent]) -> bool:
         )
         if any(event.estimated for event in events):
             body = f"{body}\n{i18n.t('notify.reset.cached')}"
-    return aw.notify(title, f"{body}\n{source}")
+    return aw.notify(title, body)
 
 
 # ── one tick ─────────────────────────────────────────────────────────────────
