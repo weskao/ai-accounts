@@ -271,7 +271,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     # `reset_windows`), looked up as `i18n.t(f"window.{key}", default=key)` —
     # keyed directly off the JSON window key so there is no second
     # key->display-name dict to drift out of sync with `reset_windows`.
-    "window.hourly": {"en": "hourly", "zh-TW": "每小時"},
+    "window.hourly": {"en": "5h", "zh-TW": "5 小時"},
     "window.weekly": {"en": "weekly", "zh-TW": "每週"},
     "window.monthly": {"en": "monthly", "zh-TW": "每月"},
     # agy's four windows, named as its own list table heads them (GEMINI 5H /
