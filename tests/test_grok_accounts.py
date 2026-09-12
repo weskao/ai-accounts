@@ -57,6 +57,19 @@ class GrokAccountsTests(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
+    def test_profile_name_rejects_control_characters(self) -> None:
+        # Profile names with newlines or other control chars (ord < 0x20 or 0x7f) are rejected
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertIsNone(ga._profile_file("personal\nwork"))
+        self.assertIn("invalid characters", _ANSI_RE.sub("", err.getvalue()))
+
+        # DEL (0x7f) is also rejected
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertIsNone(ga._profile_file("personal\x7fwork"))
+        self.assertIn("invalid characters", _ANSI_RE.sub("", err.getvalue()))
+
     def test_save_switch_and_sync_manage_real_auth_shape(self) -> None:
         self.assertTrue(ga._write_json(ga._auth_file(), _auth()))
         with redirect_stdout(io.StringIO()):
@@ -411,6 +424,19 @@ class GrokDirectRefreshTests(unittest.TestCase):
     def test_token_endpoint_returns_none_when_discovery_fails(self) -> None:
         with mock.patch("urllib.request.urlopen", side_effect=OSError("boom")):
             self.assertIsNone(ga._token_endpoint("https://auth.example.test"))
+
+    def test_token_endpoint_rejects_http_issuer(self) -> None:
+        # Issuer must be HTTPS to protect against downgrade attacks
+        self.assertIsNone(ga._token_endpoint("http://auth.example.test"))
+
+    def test_token_endpoint_rejects_mismatched_netloc(self) -> None:
+        # Token endpoint must belong to same host as issuer
+        document = mock.MagicMock()
+        document.__enter__.return_value.read.return_value = (
+            b'{"token_endpoint": "https://evil.example.test/oauth2/token"}'
+        )
+        with mock.patch("urllib.request.urlopen", return_value=document):
+            self.assertIsNone(ga._token_endpoint("https://auth.example.test/"))
 
     # ── classification ───────────────────────────────────────────────────
 

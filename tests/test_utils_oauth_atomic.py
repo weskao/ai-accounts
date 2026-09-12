@@ -125,5 +125,24 @@ class ClaudeRefreshExpiryClaimTests(unittest.TestCase):
         self.assertIsNone(claims["refresh_expires_str"])
 
 
+class SecurityQuoteTests(unittest.TestCase):
+    """Keychain secret escaping for `security -i` batch mode."""
+
+    def test_escapes_backslashes_and_quotes(self) -> None:
+        self.assertEqual(_utils._security_quote('a"b'), 'a\\"b')
+        self.assertEqual(_utils._security_quote('a\\b'), 'a\\\\b')
+        self.assertEqual(_utils._security_quote('a"b\\c'), 'a\\"b\\\\c')
+
+    def test_rejects_newline_in_value(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            _utils._security_quote("value\nwith\nnewline")
+        self.assertIn("newline", str(ctx.exception))
+
+    def test_rejects_carriage_return_in_value(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            _utils._security_quote("value\rwith\rreturn")
+        self.assertIn("newline", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

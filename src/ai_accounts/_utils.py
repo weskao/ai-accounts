@@ -273,6 +273,11 @@ def email_local_part(email: str) -> str:
     return email.split("@", 1)[0]
 
 
+def has_control_chars(name: str) -> bool:
+    """True if ``name`` contains a C0 control character (0x00-0x1f) or DEL (0x7f)."""
+    return any(ord(char) < 0x20 or ord(char) == 0x7f for char in name)
+
+
 # ── dependency management ────────────────────────────────────────────────────
 
 # Per-platform install instructions for the external binaries ai-accounts shells
@@ -572,7 +577,13 @@ def keychain_read(service: str, account: str) -> str | None:
 
 
 def _security_quote(value: str) -> str:
-    """Escape a value for a double-quoted argument in `security -i` batch mode."""
+    """Escape a value for a double-quoted argument in `security -i` batch mode.
+
+    Raises ValueError if the value contains newlines or carriage returns,
+    which would allow command injection through the batch input.
+    """
+    if "\n" in value or "\r" in value:
+        raise ValueError("security_quote: value contains a newline")
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 

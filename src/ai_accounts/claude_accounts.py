@@ -61,6 +61,7 @@ from ._utils import (
     email_local_part,
     ensure_tool,
     fetch_parallel,
+    has_control_chars,
     have,
     keychain_read,
     keychain_write,
@@ -144,6 +145,9 @@ def _config_json() -> Path:
 
 
 def _profile_file(name: str) -> Path | None:
+    if has_control_chars(name):
+        log_red("❌ Profile name contains invalid characters (control characters)")
+        return None
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
     if not safe:
         log_red("❌ Profile name cannot be empty")

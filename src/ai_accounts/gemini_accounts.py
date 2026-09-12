@@ -43,6 +43,7 @@ from ._utils import (
     go_keyring_delete,
     go_keyring_read,
     go_keyring_write,
+    has_control_chars,
     have,
     log_red,
     log_yellow,
@@ -246,6 +247,9 @@ def _restore_cli_auth(auth_text: str | None) -> None:
 
 
 def _profile_file(name: str) -> Path | None:
+    if has_control_chars(name):
+        log_red("❌ Profile name contains invalid characters (control characters)")
+        return None
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
     if not safe:
         log_red("❌ Profile name cannot be empty")

@@ -54,6 +54,7 @@ from ._utils import (
     Spinner,
     email_local_part,
     fetch_parallel,
+    has_control_chars,
     keychain_read,
     keychain_write,
     log_red,
@@ -154,6 +155,9 @@ def _account_dir() -> Path:
 
 
 def _profile_file(name: str) -> Path | None:
+    if has_control_chars(name):
+        log_red("❌ Profile name contains invalid characters (control characters)")
+        return None
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
     if not safe:
         log_red("❌ Profile name cannot be empty")
@@ -674,8 +678,10 @@ def _backup_active() -> bool:
 
 def cmd_switch(name: str) -> int:
     profile = _profile_file(name)
-    payload = _read_json(profile) if profile is not None else None
-    if profile is None or payload is None:
+    if profile is None:
+        return 1
+    payload = _read_json(profile)
+    if payload is None:
         log_red(f"❌ Profile is unreadable or missing: {name}")
         return 1
     if not _token(payload):
@@ -723,7 +729,9 @@ def cmd_switch_interactive() -> int:
 
 def cmd_remove(name: str) -> int:
     profile = _profile_file(name)
-    if profile is None or not profile.is_file():
+    if profile is None:
+        return 1
+    if not profile.is_file():
         log_red(f"❌ Profile not found: {name}")
         return 1
     try:
