@@ -1,3 +1,55 @@
+## [0.10.0] - 2026-09-12
+
+### 🚀 Features
+
+- **refresh:** Add notification source device
+- **autoswitch:** Add device label to switch notifications
+- **quota-reset:** Detect and notify on quota window reset
+- **quota-reset:** Watch agy via its usage cache
+- **quota-reset:** Detect off-schedule resets
+- **timer:** Add a boot-time tick to the cron path
+- **quota-reset:** Ignore plan changes as resets
+- **notifications:** Add source device labels
+- **usage:** Right-align remaining quantity column
+
+### 🐛 Bug Fixes
+
+- **quota-reset:** Catch an early reset already in use
+- **quota-reset:** Corroborate early resets by jump
+- **quota-reset:** Trust a fall when the deadline held
+- **test:** Stop two windows CI flakes
+- **i18n:** Label hourly quota window as 5h
+- **security:** Harden OIDC discovery, security-quote, and profile sanitization
+- **usage:** Align entitlement fractions in usage cells
+
+### 📚 Documentation
+
+- Lead readme with demos and quick links
+- **TODO:** Add future work item for quota-reset notifications
+- **readme:** Clarify profile command examples
+- **quota-reset:** Plan, spec, and README/TODO updates
+- Document agy quota-reset coverage
+- Document off-schedule reset detection
+- Explain reset detection under periodic scans
+- Cover deadline jumps and boot-time ticks
+- Record the per-provider reset shapes
+- Record plan changes as a non-reset case
+- Add the quota-reset case table
+- Clarify windows profile permissions behavior
+
+### 🧪 Testing
+
+- **quota-reset:** Cover detection engine and timer gate
+- **quota-reset:** Cover agy cache collection
+- **quota-reset:** Cover off-schedule resets
+- **quota-reset:** Cover a reset already being used
+- **quota-reset:** Pin both providers' reset shapes
+- **quota-reset:** Pin plan changes as not-a-reset
+- **quota-reset:** Guard the mode check, not the whole test
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Finalize 0.9.0 metadata
 ## [0.9.0] - 2026-09-09
 
 ### 🚀 Features
@@ -7,6 +59,10 @@
 ### 🐛 Bug Fixes
 
 - **copilot:** Avoid keychain reads in lists
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.9.0
 ## [0.8.0] - 2026-09-08
 
 ### 🚀 Features
