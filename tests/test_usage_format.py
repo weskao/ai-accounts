@@ -38,5 +38,29 @@ class TestAlignUsageCells(unittest.TestCase):
         self.assertEqual(rows[1]["usage_premium"], "10% · 3h 1m")
 
 
+class TestAlignNumericCells(unittest.TestCase):
+    def test_right_aligns_numbers_to_the_widest(self) -> None:
+        rows = [
+            {"remaining": "0 AIC"},
+            {"remaining": "49 AIC"},
+            {"remaining": "152.4 AIC"},
+        ]
+        uf.align_numeric_cells(rows, "remaining")
+        self.assertEqual(rows[0]["remaining"], "    0 AIC")
+        self.assertEqual(rows[1]["remaining"], "   49 AIC")
+        self.assertEqual(rows[2]["remaining"], "152.4 AIC")
+
+    def test_leaves_non_numeric_cells_alone(self) -> None:
+        rows = [
+            {"remaining": "unlimited"},
+            {"remaining": "—"},
+            {"remaining": "7 AIC"},
+        ]
+        uf.align_numeric_cells(rows, "remaining")
+        self.assertEqual(rows[0]["remaining"], "unlimited")
+        self.assertEqual(rows[1]["remaining"], "—")
+        self.assertEqual(rows[2]["remaining"], "7 AIC")
+
+
 if __name__ == "__main__":
     unittest.main()

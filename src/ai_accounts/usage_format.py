@@ -72,6 +72,33 @@ def align_usage_cells(rows: list[dict[str, str]], key: str) -> None:
         )
 
 
+_NUMERIC_CELL_RE: Final = re.compile(
+    r"^(?P<color>(?:\033\[[0-9;]*m)*)(?P<number>\d+(?:\.\d+)?)(?P<rest>.*)$"
+)
+
+
+def align_numeric_cells(rows: list[dict[str, str]], key: str) -> None:
+    """Right-align the leading number of every ``<number><rest>`` cell in ``key``
+    to the widest number in the column, so a quantity column reads down its digits
+    (``  0 AIC`` above ``152.4 AIC``) instead of down its left edge.
+
+    Only the number is padded — the unit that trails it keeps its single space, so
+    the units line up too. Cells that don't start with a number (``unlimited``,
+    ``—``, an error string) are left exactly as they are and the table renderer
+    pads them as usual, same as :func:`align_usage_cells` skips non-matching cells.
+    Meant for a quantity column; identifier columns (an account id) are not
+    quantities and should keep their natural left alignment.
+    """
+    matches = [match for row in rows if (match := _NUMERIC_CELL_RE.match(row[key]))]
+    if not matches:
+        return
+    width = max(len(match.group("number")) for match in matches)
+    for row, match in zip(rows, (_NUMERIC_CELL_RE.match(row[key]) for row in rows), strict=True):
+        if match is None:
+            continue
+        row[key] = f"{match.group('color')}{match.group('number').rjust(width)}{match.group('rest')}"
+
+
 def capitalize_first(text: str | None) -> str | None:
     """Upper-case only the first character, leaving the rest untouched — unlike
     ``str.capitalize()``, which would lower-case "Google AI Pro" to "Google ai pro"."""

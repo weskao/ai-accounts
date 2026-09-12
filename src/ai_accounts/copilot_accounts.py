@@ -63,6 +63,7 @@ from ._utils import (
 )
 from .config_schema import mask_secret
 from .usage_format import (
+    align_numeric_cells,
     align_usage_cells,
     format_usage_window,
     json_empty_list,
@@ -659,6 +660,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
             }
         )
     align_usage_cells(rows, "usage_premium")
+    align_numeric_cells(rows, "remaining")
 
     if only_active:
         print(f"{BOLD}Current Copilot account{RESET}")
