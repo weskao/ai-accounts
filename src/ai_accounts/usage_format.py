@@ -20,7 +20,8 @@ JsonDict: TypeAlias = dict[str, JsonValue]
 USAGE_URL: Final = "https://chatgpt.com/backend-api/wham/usage"
 _USAGE_CELL_RE: Final = re.compile(
     r"^(?P<color>(?:\033\[[0-9;]*m)*)(?P<percent>\d+)%(?P<reset>\033\[0m)? · "
-    r"(?:(?P<days>\d+)d )?(?P<hours>\d+)h (?P<minutes>\d+)m$"
+    r"(?:(?P<days>\d+)d )?(?P<hours>\d+)h (?P<minutes>\d+)m"
+    r"(?: · (?P<used>\d+(?:\.\d+)?)/(?P<entitlement>\d+(?:\.\d+)?) (?P<unit>\S+))?$"
 )
 
 
@@ -50,17 +51,24 @@ def align_usage_cells(rows: list[dict[str, str]], key: str) -> None:
         return
     widths = {
         name: max(len(match.group(name) or "") for match in matches)
-        for name in ("percent", "days", "hours", "minutes")
+        for name in ("percent", "days", "hours", "minutes", "used", "entitlement")
     }
     for row, match in zip(rows, (_USAGE_CELL_RE.match(row[key]) for row in rows), strict=True):
         if match is None:
             continue
         days = f"{(match.group('days') or '').rjust(widths['days'])}d " if widths["days"] else ""
+        fraction = (
+            f" · {match.group('used').rjust(widths['used'])}/"
+            f"{match.group('entitlement').rjust(widths['entitlement'])} {match.group('unit')}"
+            if match.group("used") is not None
+            else ""
+        )
         row[key] = (
             f"{match.group('color')}{match.group('percent').rjust(widths['percent'])}%"
             f"{match.group('reset') or ''} · {days}"
             f"{match.group('hours').rjust(widths['hours'])}h "
             f"{match.group('minutes').rjust(widths['minutes'])}m"
+            f"{fraction}"
         )
 
 
