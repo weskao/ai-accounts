@@ -572,7 +572,7 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
   agy-accounts current               `who` 的別名
   agy-accounts save [<name>]         儲存目前的登入為可重複使用的帳號；
                                      不給名稱 = 依作用中帳號的 email 決定
-                                     （需要查一次配額）
+                                     （查不到 email 時用穩定的 token 名稱）
   agy-accounts list [--refresh] [--json]
                                      列出已存帳號（表格檢視）；--refresh
                                      會在快取模式下強制抓取即時配額；

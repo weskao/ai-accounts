@@ -293,6 +293,12 @@ class KeyringTests(unittest.TestCase):
 
 
 class UsageTests(unittest.TestCase):
+    def test_terminal_email_ignores_adjacent_ansi_mode_sequence(self) -> None:
+        self.assertEqual(
+            gu._terminal_email(b"\x1b[?166mtestuser@example.com"),
+            "testuser@example.com",
+        )
+
     def test_rpc_requests_overlap_and_stop_after_complete_port(self) -> None:
         both_started = threading.Barrier(2)
 
@@ -415,6 +421,31 @@ class UsageTests(unittest.TestCase):
     def test_fetch_usage_without_agy_reports_error(self) -> None:
         with mock.patch.object(gu.shutil, "which", return_value=None):
             self.assertEqual(gu.fetch_usage().error, "agy not found")
+
+    @unittest.skipIf(os.name == "nt", "Windows returns the platform error first")
+    def test_fetch_usage_keeps_terminal_email_when_quota_rpc_is_unavailable(self) -> None:
+        class ImmediateThread:
+            def __init__(self, *, target, args, daemon):
+                self.target, self.args = target, args
+
+            def start(self) -> None:
+                self.target(*self.args)
+
+        process = mock.Mock(pid=123)
+        process.poll.side_effect = [None, 0, 0]
+        with (
+            mock.patch.object(gu.shutil, "which", return_value="/fake/agy"),
+            mock.patch.object(gu, "_open_pty", return_value=(10, 11)),
+            mock.patch.object(gu.subprocess, "Popen", return_value=process),
+            mock.patch.object(gu.os, "close"),
+            mock.patch.object(gu, "_drain", side_effect=lambda _fd, output: output.extend(b"user@example.com")),
+            mock.patch.object(gu.threading, "Thread", ImmediateThread),
+            mock.patch.object(gu, "fetch_usage_from_pid", return_value=None),
+            mock.patch.object(gu.time, "sleep"),
+        ):
+            snapshot = gu.fetch_usage(timeout=1)
+        self.assertEqual(snapshot.email, "user@example.com")
+        self.assertEqual(snapshot.error, "agy unavailable")
 
     def test_relogin_error_has_an_actionable_label(self) -> None:
         snapshot = _usage(error="re-login required")
@@ -841,15 +872,13 @@ class ProfileCommandTests(_HomeMixin):
         self.assertEqual(saved["refresh_token"], "rt-live")
         self.assertEqual(saved["email"], "person@example.com")
 
-    def test_save_no_args_without_email_creates_no_profile(self) -> None:
+    def test_save_no_args_without_email_falls_back_to_a_per_token_name(self) -> None:
         self.set_active(_creds("sub-w", "person@example.com", refresh_token="rt-live"))
         with mock.patch.object(
             ga.gemini_usage, "fetch_usage", return_value=_usage(email="")
         ):
-            result, _, err = self.capture(ga.cmd_save)
-        self.assertEqual(result, 1)
-        self.assertIn("Could not derive a name", ga._ANSI_RE.sub("", err))
-        self.assertEqual(list((self.home / "accounts").glob("*.json")), [])
+            self.assertEqual(self.quiet(ga.cmd_save), 0)
+        self.assertTrue((self.home / "accounts" / "agy-80f301d7.json").is_file())
 
     def test_save_with_name_still_fetches_exactly_once(self) -> None:
         self.set_active(_creds("sub-w", "w@x.com", refresh_token="rt-live"))

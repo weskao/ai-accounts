@@ -32,6 +32,8 @@ JsonValue: TypeAlias = (
 JsonDict: TypeAlias = dict[str, JsonValue]
 
 _SERVICE = "/exa.language_server_pb.LanguageServerService/"
+_CSI_ESCAPE = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
+_TERMINAL_EMAIL = re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +46,11 @@ class UsageSnapshot:
     plan: str | None
     refreshed_at: int | None
     error: str | None
+
+
+def _terminal_email(output: bytes) -> str | None:
+    matches = _TERMINAL_EMAIL.findall(_CSI_ESCAPE.sub(b"", output))
+    return matches[-1].decode("ascii") if matches else None
 
 
 def _reset_time(value: object) -> int | None:
@@ -288,12 +295,26 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
                 process.wait(timeout=2)
         os.close(master)
 
+    terminal_email = _terminal_email(bytes(output))
     if usage is None:
         if b"Select login method:" in output:
             return UsageSnapshot(
                 None, None, None, None, None, None, None, "re-login required"
             )
-        return UsageSnapshot(None, None, None, None, None, None, None, "agy unavailable")
+        return UsageSnapshot(
+            None, None, None, None, terminal_email, None, None, "agy unavailable"
+        )
+    if usage.email is None and terminal_email:
+        return UsageSnapshot(
+            usage.gemini_weekly,
+            usage.gemini_session,
+            usage.other_weekly,
+            usage.other_session,
+            terminal_email,
+            usage.plan,
+            usage.refreshed_at,
+            usage.error,
+        )
     return usage
 
 

@@ -136,6 +136,12 @@ which have no quota API). Copilot attempts a real quota lookup and only
 degrades to the same `no_quota_api: true` shape when that lookup fails — see
 Platform notes below.
 
+### Antigravity profile names
+
+`agy-accounts save [<profile_name>]` uses the active email when available. If
+Antigravity cannot report an email, it still saves the account under a stable
+`agy-<token-digest>` label; pass a name to choose your own label.
+
 `who` also answers to `current`. `login-switch <name>` runs a fresh provider
 login and saves the result as `<name>` — it is what the re-login report below
 tells you to run.

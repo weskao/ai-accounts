@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import nullcontext
+import hashlib
 import json
 import os
 import re
@@ -85,7 +86,7 @@ USAGE
   agy-accounts current               Alias for `who`
   agy-accounts save [<name>]         Save the current login as a reusable profile;
                                      no name = derive it from the active account's
-                                     email (needs one quota lookup)
+                                     email, falling back to a stable token label
   agy-accounts list [--refresh] [--json]
                                      List saved profiles (table view); --refresh
                                      fetches live quota when cached-list mode is on;
@@ -850,7 +851,7 @@ def _backfill_email(profile_file: Path, email: str | None = None) -> None:
     ``email`` short-circuits that fetch for callers that already know it —
     name-less ``save`` has to look the email up *before* it can pick a filename,
     and must not pay for the same RPC twice."""
-    if not email:
+    if email is None:
         email = gemini_usage.fetch_usage(timeout=8).email
     if not email:
         return
@@ -884,7 +885,7 @@ def _save_profile_auth(name: str, auth_text: str, known_email: str | None = None
 
     # Name-less `save` already paid for the identity lookup; skip both the second
     # RPC and the spinner that would advertise one.
-    with nullcontext() if known_email else Spinner("Fetching account identity…"):
+    with nullcontext() if known_email is not None else Spinner("Fetching account identity…"):
         _backfill_email(profile_file, known_email)
 
     success_panel(
@@ -905,19 +906,19 @@ def cmd_save(name: str | None = None) -> int:
         return 1
     known_email: str | None = None
     if name is None:
-        # Unlike the other providers, agy's session carries no email, so the
-        # filename can only come from the usage RPC — fetch before writing
-        # anything (a failed lookup must leave no half-named profile behind) and
-        # hand the result to _save_profile_auth so the backfill doesn't re-fetch.
+        # Unlike the other providers, agy's session carries no email. Prefer
+        # the usage RPC, but retain a token-derived fallback if it cannot reply.
         with Spinner("Fetching account identity…"):
             known_email = gemini_usage.fetch_usage(timeout=8).email
-        if not known_email:
-            log_red(
-                "❌ Could not derive a name from the active account (no email found) "
-                "-- pass a name explicitly."
-            )
-            return 1
-        name = email_local_part(known_email)
+        if known_email:
+            name = email_local_part(known_email)
+        else:
+            token = _token_key_from_auth(json.loads(auth_text))
+            if token is None:
+                log_red("❌ Could not derive a name from the active account.")
+                return 1
+            name = f"agy-{hashlib.sha256(token.encode()).hexdigest()[:8]}"
+            known_email = ""
     return _save_profile_auth(name, auth_text, known_email)
 
 
