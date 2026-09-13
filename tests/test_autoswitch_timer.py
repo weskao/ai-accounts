@@ -614,7 +614,7 @@ class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
         # even attempt never prints "Refresh token revoked" inline — only the
         # end-of-run "❌ Revoked (re-login required): <names>" summary)
         aw.save_config({"enabled": False, "token_refresh": True})
-        refresh = mock.Mock(return_value="❌ Revoked (re-login required): gkm85664")
+        refresh = mock.Mock(return_value="❌ Revoked (re-login required): testuser")
 
         # When: the scheduled job's entry point fires
         with mock.patch.object(aw, "notify_once") as notify_once:
