@@ -365,7 +365,7 @@ class TelegramPayloadTests(_ConfigMixin):
             opened.append(request)
             return _Response()
 
-        self.urlopen = mock.patch.object(aw.urllib.request, "urlopen", fake_urlopen)
+        self.urlopen = mock.patch("urllib.request.urlopen", fake_urlopen)
         self.urlopen.start()
         self.addCleanup(self.urlopen.stop)
         return opened

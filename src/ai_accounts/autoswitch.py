@@ -20,13 +20,9 @@ switch_when_used_pct = 90 means: switch once 90% of the quota is USED, i.e. when
 
 from __future__ import annotations
 
-import http.client
 import json
 import os
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +31,7 @@ from . import _utils as u
 from . import config_schema
 from . import i18n
 from .providers import PROVIDERS
+from .telegram_notify import send_telegram
 from .usage_format import UsageWindow
 
 CONFIG_ENV = "AI_ACCOUNTS_CONFIG_JSON"
@@ -141,28 +138,15 @@ def masked_config() -> dict:
     return cfg
 
 
-_TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
-
-
 def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
-    """POST one sendMessage to the Bot API. False on any failure."""
+    """Send *title*/*message* over the Bot API. False on missing credentials or any failure."""
     token = str(cfg.get("telegram_bot_token", ""))
     chat_id = str(cfg.get("telegram_chat_id", ""))
     if not token or not chat_id:
         u.log_red("Telegram notifications need telegram_bot_token and telegram_chat_id")
         return False
-    data = urllib.parse.urlencode(
-        {"chat_id": chat_id, "text": "\n".join(part for part in (title, message) if part)}
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        _TELEGRAM_API.format(token=token), data=data, method="POST"
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            response.read()
-    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException):
-        return False  # incl. InvalidURL from a hand-corrupted token
-    return True
+    text = "\n".join(part for part in (title, message) if part)
+    return send_telegram(token, chat_id, text)
 
 
 def notify(title: str, message: str) -> bool:
