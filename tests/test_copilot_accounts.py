@@ -535,6 +535,16 @@ class CopilotUsageTests(unittest.TestCase):
         self.assertEqual(snapshot.used, 225)
         self.assertEqual(snapshot.remaining, 75)
 
+    def test_spent_quota_reads_full_not_blank(self) -> None:
+        """`has_quota: false` on an entitled bucket means spent, not absent."""
+        spent = {"has_quota": False, "percent_remaining": 0.0, "token_based_billing": True,
+                 "credits_used": 200, "entitlement": 200, "remaining": -1, "quota_remaining": -0.5}
+        snapshot = self._fetch({**_CREDIT_JSON, "quota_snapshots": {"chat": spent}})
+        self.assertEqual(snapshot.plan_usage.percentage, 100)
+        self.assertEqual(snapshot.used, 200)
+        self.assertEqual(snapshot.entitlement, 200)
+        self.assertEqual(snapshot.remaining, 0)  # never negative
+
     def test_unavailable_and_malformed_quotas_do_not_report_exhaustion(self) -> None:
         for quota in ({"has_quota": False, "percent_remaining": 0},
                       {"percent_remaining": float("nan")},

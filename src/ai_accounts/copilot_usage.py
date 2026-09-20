@@ -96,10 +96,24 @@ def _reset_epoch(value: Any) -> int | None:
         return None
 
 
-def _window(data: Any, reset_fallback: Any) -> UsageWindow | None:
+def _live(data: Any) -> bool:
+    """Does this snapshot describe a quota the account actually has?
+
+    Verified live (2026-09-20): an *exhausted* account sends
+    ``has_quota: false`` next to ``entitlement: 200`` / ``remaining: -1`` — the
+    quota is spent, not absent, and the row must read 100%, not "—". Only an
+    entitlement of 0 (Copilot's premium bucket on a token-billed plan) means
+    the account has no such quota at all.
+    """
     if not isinstance(data, dict):
-        return None
-    if data.get("has_quota") is False:
+        return False
+    if data.get("has_quota") is not False:
+        return True
+    return (_number(data.get("entitlement")) or 0.0) > 0
+
+
+def _window(data: Any, reset_fallback: Any) -> UsageWindow | None:
+    if not _live(data):
         return None
     reset_time = _reset_epoch(data.get("quota_reset_date")) or _reset_epoch(reset_fallback)
 
@@ -173,11 +187,13 @@ def fetch_usage(token: str | None, *, timeout: float = 20) -> UsageSnapshot:
         isinstance(chat, dict) and chat.get("token_based_billing") is True
     )
     quota = snapshots.get(_CHAT_KEY if token_based else _PREMIUM_KEY)
-    quota = quota if isinstance(quota, dict) and quota.get("has_quota") is not False else {}
+    quota = quota if _live(quota) else {}
     entitlement = _number(quota.get("entitlement"))
     remaining = _number(quota.get("quota_remaining"))
     if remaining is None:
         remaining = _number(quota.get("remaining"))
+    if remaining is not None:
+        remaining = max(0.0, remaining)
     used = _number(quota.get("credits_used")) if token_based else None
     if used is None and entitlement is not None and remaining is not None:
         used = max(0.0, entitlement - remaining)
