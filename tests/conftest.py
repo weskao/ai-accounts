@@ -30,7 +30,7 @@ os.environ.pop("LC_MESSAGES", None)
 
 import pytest
 
-from ai_accounts import _present, i18n
+from ai_accounts import _present, i18n, secrets_store
 
 # Comfortably above NARROW_BELOW so this stays a wide pin even if that
 # threshold is ever raised.
@@ -89,3 +89,46 @@ def _isolate_real_config(monkeypatch, tmp_path):
     i18n.refresh()
     yield
     i18n.refresh()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_real_keychain(monkeypatch):
+    """Back the secret store with a per-test dict instead of the real keychain.
+
+    Same reasoning as ``_isolate_real_config`` above, with teeth: secrets now
+    round-trip through :mod:`ai_accounts.secrets_store`, so without this a test
+    calling ``save_config({"telegram_bot_token": ...})`` would write a
+    placeholder into the developer's own login keychain (and prompt for access
+    on CI). Patching the three backend calls rather than the module's public
+    functions keeps the env-var precedence and refuse-when-unavailable logic
+    under test — only the storage underneath is faked.
+
+    Only ``secrets_store``'s own handle on ``_utils`` is swapped, never
+    ``_utils`` itself — ``test_cross_platform.py`` tests the real
+    ``go_keyring_*`` dispatchers and must still see them.
+
+    A test that wants the "no credential store on this machine" branch sets
+    ``fake.unavailable = "reason"``.
+    """
+
+    class _FakeStore:
+        def __init__(self) -> None:
+            self.slots: dict[tuple[str, str], str] = {}
+            self.unavailable = ""
+
+        def go_keyring_available(self):
+            return (False, self.unavailable) if self.unavailable else (True, "")
+
+        def go_keyring_read(self, service, account):
+            return self.slots.get((service, account))
+
+        def go_keyring_write(self, service, account, secret):
+            self.slots[(service, account)] = secret
+            return True
+
+        def go_keyring_delete(self, service, account):
+            return self.slots.pop((service, account), None) is not None
+
+    fake = _FakeStore()
+    monkeypatch.setattr(secrets_store, "u", fake)
+    return fake

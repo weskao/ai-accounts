@@ -654,7 +654,10 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
         stored = self.stored()
         self.assertIs(stored["enabled"], False)
         self.assertEqual(stored["switch_when_used_pct"], 90)
-        self.assertEqual(stored["telegram_bot_token"], "")
+        # The secret lives in the credential store now, so the reset shows up in
+        # the effective config; the file never carries the key at all.
+        self.assertNotIn("telegram_bot_token", stored)
+        self.assertEqual(autoswitch.load_config()["telegram_bot_token"], "")
 
     def test_a_cancelled_reset_leaves_the_file_byte_identical(self) -> None:
         autoswitch.save_config({"switch_when_used_pct": 42})
@@ -853,7 +856,8 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
 
         rc, _, _ = self.run_menu(read)
         self.assertEqual(rc, 0)
-        self.assertEqual(self.stored()["telegram_bot_token"], other)
+        self.assertEqual(autoswitch.load_config()["telegram_bot_token"], other)
+        self.assertNotIn("telegram_bot_token", self.stored())
         self.assertIs(self.stored()["enabled"], True)
 
     def test_an_untouched_key_is_never_written_to_the_file(self) -> None:
@@ -963,7 +967,7 @@ class FallbackTest(_ConfigFileMixin, unittest.TestCase):
         token_number = str(index_of("telegram_bot_token") + 1)
         rc, out, _ = self.fallback([token_number, ""])
         self.assertEqual(rc, 0)
-        self.assertEqual(self.stored()["telegram_bot_token"], TOKEN)
+        self.assertEqual(autoswitch.load_config()["telegram_bot_token"], TOKEN)
         self.assertNotIn(TOKEN, out)
 
     def test_a_blank_value_for_a_plain_field_still_clears_it(self) -> None:
@@ -1161,7 +1165,8 @@ class CmdConfigLegacyTest(_ConfigFileMixin, unittest.TestCase):
         rc, out, _ = self.call(["set", "telegram_bot_token", TOKEN])
         self.assertEqual(rc, 0)
         self.assertNotIn(TOKEN, out)
-        self.assertEqual(self.stored()["telegram_bot_token"], TOKEN)
+        self.assertEqual(autoswitch.load_config()["telegram_bot_token"], TOKEN)
+        self.assertNotIn(TOKEN, self.config_path.read_text(encoding="utf-8"))
 
     def test_a_future_key_present_only_in_defaults_still_parses_strictly(self) -> None:
         defaults = {**autoswitch.DEFAULTS, "future_flag": False}

@@ -30,6 +30,7 @@ from pathlib import Path
 from . import _utils as u
 from . import config_schema
 from . import i18n
+from . import secrets_store
 from .providers import PROVIDERS
 from .telegram_notify import send_telegram
 from .usage_format import UsageWindow
@@ -79,9 +80,44 @@ def _write_private(path: Path, text: str) -> None:
         raise
 
 
+def _secret_keys() -> tuple[str, ...]:
+    """Which settings are secrets, read off the schema rather than named here.
+
+    A newly masked field in ``config_schema.FIELDS`` must start being kept out
+    of the config file automatically; a hand-maintained list here would drift.
+    """
+    return tuple(field.key for field in config_schema.FIELDS if field.masked)
+
+
+def _no_store_message(key: str) -> str:
+    """Why a secret could not be saved, and the one thing the user can do instead."""
+    reason = secrets_store.unavailable_reason()
+    return i18n.t(
+        "error.no_credential_store",
+        default=(
+            "{key} was not saved: this machine has no credential store"
+            "{reason} and a secret is never written to the config file. "
+            "Export {env} instead."
+        ),
+        key=key,
+        reason=f" ({reason})" if reason else "",
+        env=secrets_store.env_var(key),
+    )
+
+
 def load_config() -> dict:
-    """Stored settings layered over :data:`DEFAULTS` (unknown keys included)."""
-    return {**DEFAULTS, **_read_json(config_path())}
+    """Stored settings layered over :data:`DEFAULTS` (unknown keys included).
+
+    Secrets come from the credential store (or the environment) and are laid
+    over whatever the file holds, so a legacy plaintext token keeps working
+    until the next :func:`save_config` migrates it out.
+    """
+    cfg = {**DEFAULTS, **_read_json(config_path())}
+    for key in _secret_keys():
+        stored = secrets_store.get(key)
+        if stored:
+            cfg[key] = stored
+    return cfg
 
 
 def config_flag(key: str, cfg: dict | None = None) -> bool:
@@ -101,7 +137,14 @@ def save_config(updates: dict) -> dict:
 
     Keys already in the file that this module knows nothing about are kept —
     a newer ai-accounts's settings must survive an older one's write. Raises
-    ``ValueError`` (before touching the file) on an unknown notify channel.
+    ``ValueError`` (before touching the file) on an unknown notify channel, or
+    when a secret was given but no credential store can hold it.
+
+    Secrets never reach the JSON: they are routed to the OS credential store
+    and dropped from the payload. A legacy plaintext token found in the file
+    is migrated the same way, so the first save after upgrading is what gets
+    it off disk. The returned dict still carries the secret — callers use it
+    as the effective config, and it is never printed unmasked.
     """
     stored = {**_read_json(config_path()), **updates}
     channel = stored.get("notify", DEFAULTS["notify"])
@@ -114,7 +157,22 @@ def save_config(updates: dict) -> dict:
                 channels=", ".join(NOTIFY_CHANNELS),
             )
         )
-    _write_private(config_path(), json.dumps(stored, indent=2) + "\n")
+    payload = dict(stored)
+    for key in _secret_keys():
+        if key not in payload:
+            continue
+        value = str(payload[key] or "")
+        if not secrets_store.available():
+            # Refuse a NEW secret rather than write it plaintext. A legacy one
+            # already in the file is left exactly where it is: popping it here
+            # would destroy the only copy the user has.
+            if key in updates and value:
+                raise ValueError(_no_store_message(key))
+            continue
+        if not secrets_store.set(key, value) and value:
+            raise ValueError(_no_store_message(key))
+        payload.pop(key)
+    _write_private(config_path(), json.dumps(payload, indent=2) + "\n")
     i18n.refresh()  # `language` may have just changed — drop the cached answer
     return stored
 

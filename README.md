@@ -342,6 +342,19 @@ Saved profiles and shared settings live under `~/.ai-accounts`:
 └── copilot/accounts/
 ```
 
+`config.json` never holds a secret. `telegram_bot_token` goes to the OS
+credential store instead — macOS Keychain, the Secret Service (`secret-tool`)
+on Linux, Credential Manager on Windows — under the service name
+`ai-accounts`. On a machine with no credential store, saving a token is
+**refused** rather than written as plaintext or scrambled with something
+reversible; export `AI_ACCOUNTS_TELEGRAM_BOT_TOKEN` there instead. That
+variable also overrides the stored value whenever it is set, so the read order
+is environment → credential store → config file.
+
+That last rung exists only for upgrades: a token already sitting in an older
+`config.json` keeps working, and the next save moves it into the credential
+store and drops it from the file.
+
 `antigravity/usage-cache.json` holds the last quota reading seen for each agy
 profile — quota windows, plan and timestamp, but no credentials (see below for
 why it is kept). Profile JSON files do contain live credentials: do not commit,
