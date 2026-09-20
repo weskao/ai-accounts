@@ -302,7 +302,7 @@ class UsageTests(unittest.TestCase):
     def test_rpc_requests_overlap_and_stop_after_complete_port(self) -> None:
         both_started = threading.Barrier(2)
 
-        def post(port, method, context):
+        def post(port, method, context, csrf_token):
             both_started.wait(timeout=2)
             if method == "RetrieveUserQuotaSummary":
                 return {"groups": [{"displayName": "Gemini", "buckets": [
@@ -322,7 +322,7 @@ class UsageTests(unittest.TestCase):
         tls.assert_called_once_with(100)
 
     def test_rpc_retries_only_missing_response_on_next_port(self) -> None:
-        def post(port, method, context):
+        def post(port, method, context, csrf_token):
             if method == "RetrieveUserQuotaSummary":
                 return {"groups": []}
             return None if port == 100 else {"userStatus": {"email": "b@x.com"}}
@@ -386,6 +386,41 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(other_week.percentage, 0)
         self.assertIsNone(other_session)
 
+    def test_spent_bucket_omits_its_fraction_and_reads_full(self) -> None:
+        """agy answers in proto3 JSON, which drops default values: a fully
+        spent bucket carries no ``remainingFraction`` at all (0.0 is the
+        default), so the absent field means 100% used, not "no data"."""
+        payload: gu.JsonDict = {
+            "groups": [
+                {
+                    "displayName": "Gemini Models",
+                    "buckets": [
+                        {
+                            "bucketId": "gemini-weekly",
+                            "displayName": "Weekly Limit Remaining",
+                            "window": "weekly",
+                            "resetTime": "2099-01-01T00:00:00Z",
+                        }
+                    ],
+                }
+            ]
+        }
+        gemini_week, gemini_session, _, _ = gu._parse_summary(payload)
+        self.assertIsNotNone(gemini_week)
+        if gemini_week is None:
+            self.fail("expected a spent weekly window")
+        self.assertEqual(gemini_week.percentage, 100)
+        self.assertEqual(gemini_week.window_minutes, 7 * 24 * 60)
+        self.assertEqual(gemini_week.reset_time, gu._reset_time("2099-01-01T00:00:00Z"))
+        self.assertIsNone(gemini_session)
+
+    def test_unidentifiable_bucket_is_not_reported_as_spent(self) -> None:
+        """Only a recognisable bucket may read as spent — a malformed payload
+        must stay blank rather than cry "100% used"."""
+        for bucket in ({}, {"displayName": "Weekly Limit Remaining"}):
+            with self.subTest(bucket=bucket):
+                self.assertIsNone(gu._window(bucket))
+
     def test_identity_labels_free_tier_not_pro(self) -> None:
         # Antigravity's free preview reports planName "Pro" for everyone;
         # userTier is the real subscription and must win.
@@ -446,6 +481,33 @@ class UsageTests(unittest.TestCase):
             snapshot = gu.fetch_usage(timeout=1)
         self.assertEqual(snapshot.email, "user@example.com")
         self.assertEqual(snapshot.error, "agy unavailable")
+
+    @unittest.skipIf(os.name == "nt", "Windows returns the platform error first")
+    def test_fetch_usage_spawns_agy_with_the_csrf_token_it_then_sends(self) -> None:
+        class ImmediateThread:
+            def __init__(self, *, target, args, daemon):
+                self.target, self.args = target, args
+
+            def start(self) -> None:
+                self.target(*self.args)
+
+        process = mock.Mock(pid=123)
+        process.poll.side_effect = [None, 0, 0]
+        with (
+            mock.patch.object(gu.shutil, "which", return_value="/fake/agy"),
+            mock.patch.object(gu, "_open_pty", return_value=(10, 11)),
+            mock.patch.object(gu.subprocess, "Popen", return_value=process) as popen,
+            mock.patch.object(gu.os, "close"),
+            mock.patch.object(gu, "_drain"),
+            mock.patch.object(gu.threading, "Thread", ImmediateThread),
+            mock.patch.object(gu, "fetch_usage_from_pid", return_value=None) as rpc,
+            mock.patch.object(gu.time, "sleep"),
+        ):
+            gu.fetch_usage(timeout=1)
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv[0], "/fake/agy")
+        self.assertTrue(argv[1].startswith("--csrf_token="))
+        self.assertEqual(rpc.call_args.args, (123, argv[1].split("=", 1)[1]))
 
     def test_relogin_error_has_an_actionable_label(self) -> None:
         snapshot = _usage(error="re-login required")

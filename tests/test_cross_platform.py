@@ -387,13 +387,16 @@ class GeminiUsageTransportTests(unittest.TestCase):
         with mock.patch.object(
             gu.urllib.request, "urlopen", return_value=response
         ) as open_url:
-            self.assertEqual(gu._post(1234, "GetUserStatus", context), {"ok": True})
+            self.assertEqual(
+                gu._post(1234, "GetUserStatus", context, "tok"), {"ok": True}
+            )
         request = open_url.call_args.args[0]
         self.assertEqual(
             request.full_url,
             "https://localhost:1234/exa.language_server_pb.LanguageServerService/GetUserStatus",
         )
         self.assertIs(open_url.call_args.kwargs["context"], context)
+        self.assertEqual(request.get_header("X-codeium-csrf-token"), "tok")
         open_url.assert_called_once()
 
 

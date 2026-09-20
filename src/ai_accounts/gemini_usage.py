@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 import os
 import re
+import secrets
 import shutil
 import ssl
 import struct
@@ -32,6 +33,7 @@ JsonValue: TypeAlias = (
 JsonDict: TypeAlias = dict[str, JsonValue]
 
 _SERVICE = "/exa.language_server_pb.LanguageServerService/"
+_CSRF_HEADER = "x-codeium-csrf-token"
 _CSI_ESCAPE = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 _TERMINAL_EMAIL = re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
@@ -62,13 +64,25 @@ def _reset_time(value: object) -> int | None:
         return None
 
 
+# Fields that only a real quota bucket carries. A bucket whose quota is fully
+# spent has `remainingFraction` 0.0, and agy answers in proto3 JSON, which
+# omits default values — so the field vanishes exactly when the number matters
+# most. Verified live (2026-09-21): a 30 KB `GetUserStatus` reply contained 618
+# `true` values and not one `false`, `0` or `""`. These markers tell that
+# "spent bucket" apart from a malformed payload, which must stay blank rather
+# than claim 100% used.
+_BUCKET_MARKERS: tuple[str, ...] = ("bucketId", "window", "resetTime")
+
+
 def _window(bucket: JsonDict) -> UsageWindow | None:
     remaining = bucket.get("remainingFraction")
     if isinstance(remaining, bool) or not isinstance(remaining, int | float):
         nested = bucket.get("remaining")
         remaining = nested.get("remainingFraction") if isinstance(nested, dict) else None
     if isinstance(remaining, bool) or not isinstance(remaining, int | float):
-        return None
+        if not any(bucket.get(marker) for marker in _BUCKET_MARKERS):
+            return None
+        remaining = 0.0
     used = round((1 - max(0.0, min(1.0, float(remaining)))) * 100)
     bucket_id = str(bucket.get("bucketId", "")).lower()
     display_name = str(bucket.get("displayName", "")).lower()
@@ -173,13 +187,19 @@ def _tls_context(port: int) -> ssl.SSLContext | None:
         return None
 
 
-def _post(port: int, method: str, context: ssl.SSLContext) -> JsonDict | None:
+def _post(
+    port: int, method: str, context: ssl.SSLContext, csrf_token: str
+) -> JsonDict | None:
     request = urllib.request.Request(
         f"https://localhost:{port}{_SERVICE}{method}",
         data=b"{}",
         headers={
             "Content-Type": "application/json",
             "Connect-Protocol-Version": "1",
+            # agy's language server rejects every RPC without this (401
+            # "missing CSRF token"); the token is the one we handed the
+            # process on spawn via --csrf_token.
+            _CSRF_HEADER: csrf_token,
         },
         method="POST",
     )
@@ -208,7 +228,7 @@ def _open_pty() -> tuple[int, int]:
     return master, slave
 
 
-def fetch_usage_from_pid(pid: int) -> UsageSnapshot | None:
+def fetch_usage_from_pid(pid: int, csrf_token: str = "") -> UsageSnapshot | None:
     summary = status = None
     for port in _ports(pid):
         context = _tls_context(port)
@@ -217,11 +237,11 @@ def fetch_usage_from_pid(pid: int) -> UsageSnapshot | None:
         # Both read the same PID's session; no shared keyring writes here.
         with ThreadPoolExecutor(max_workers=2) as pool:
             summary_request = (
-                pool.submit(_post, port, "RetrieveUserQuotaSummary", context)
+                pool.submit(_post, port, "RetrieveUserQuotaSummary", context, csrf_token)
                 if not summary else None
             )
             status_request = (
-                pool.submit(_post, port, "GetUserStatus", context)
+                pool.submit(_post, port, "GetUserStatus", context, csrf_token)
                 if not status else None
             )
             if summary_request is not None:
@@ -262,8 +282,9 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
     if not binary:
         return UsageSnapshot(None, None, None, None, None, None, None, "agy not found")
     master, slave = _open_pty()
+    csrf_token = secrets.token_hex(16)
     process = subprocess.Popen(
-        [binary],
+        [binary, f"--csrf_token={csrf_token}"],
         stdin=slave,
         stdout=slave,
         stderr=slave,
@@ -278,7 +299,7 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
     usage = None
     try:
         while time.monotonic() < deadline and process.poll() is None:
-            usage = fetch_usage_from_pid(process.pid)
+            usage = fetch_usage_from_pid(process.pid, csrf_token)
             if usage is not None:
                 break
             # ponytail: poll cost is ~0 (lsof + localhost conn-refused), so a

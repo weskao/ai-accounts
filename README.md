@@ -159,8 +159,11 @@ GitHub login, or email. A private primary email is included only when GitHub
 allows the token to read it and reports it as verified.
 
 For AI-credit billing, the monthly balance comes from GitHub's `chat` quota,
-matching the plan allowance used by Copilot `/usage`. The obsolete premium
-quota marked `has_quota: false` is unavailable, not 100% used. Legacy billing
+matching the plan allowance used by Copilot `/usage`. A quota marked
+`has_quota: false` with an entitlement of `0` — such as the obsolete premium
+bucket on a credit plan — is unavailable, not 100% used; the same flag on an
+entitled bucket means the quota is *spent*, so an exhausted account reads
+`100% · 200/200 AIC` with `0 AIC` remaining instead of `—`. Legacy billing
 still shows premium requests. For example, `2% · 22d 4h 35m · 12/500 AIC`
 shows percent used, time until reset, and used/total credits; `487.5 AIC` in
 `REMAINING` preserves GitHub's fractional balance. GitHub's percentage and
@@ -270,7 +273,15 @@ retain the same no-quota result shape as Grok/Vibe.
 Antigravity queries different credentials **sequentially**: each query switches
 the shared OS keyring session, launches `agy`, waits for authentication and
 quota data, then closes it. The original session is restored after listing.
-Within each launch, quota and account-status RPCs run concurrently. Profiles
+Within each launch, quota and account-status RPCs run concurrently. `agy` is
+launched with a freshly generated `--csrf_token` and every RPC carries it as
+`x-codeium-csrf-token`; the language server answers `401 missing CSRF token`
+without it, which would surface as `ERR agy` in the `UPDATED` column. Its
+replies are proto3 JSON, which omits default values, so a fully spent bucket
+carries no `remainingFraction` at all — an identifiable bucket (one with a
+`bucketId`, `window`, or `resetTime`) that is missing the fraction reads as
+100% used, while a bucket with none of those markers stays blank rather than
+claiming exhaustion from a malformed payload. Profiles
 with identical credential file contents reuse a successful result within that
 invocation; different credentials and failed lookups are not reused.
 
