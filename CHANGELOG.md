@@ -1,3 +1,26 @@
+## [0.11.0] - 2026-09-20
+
+### 🚀 Features
+
+- **config:** Keep the telegram bot token in the OS credential store
+
+### 🐛 Bug Fixes
+
+- **agy:** Derive names from terminal identity
+- **copilot:** Report 100% usage for spent quotas
+- **gemini:** Pass csrf token to agy for rpcs
+
+### 🚜 Refactor
+
+- **telegram:** Extract send into standalone module
+
+### 🧪 Testing
+
+- Anonymize refresh fixture
+
+### ⚙️ Miscellaneous Tasks
+
+- Add codex-resets.com research task
 ## [0.10.0] - 2026-09-12
 
 ### 🚀 Features
@@ -50,6 +73,7 @@
 ### ⚙️ Miscellaneous Tasks
 
 - **release:** Finalize 0.9.0 metadata
+- **release:** Bump version to 0.10.0
 ## [0.9.0] - 2026-09-09
 
 ### 🚀 Features
