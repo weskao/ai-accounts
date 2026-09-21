@@ -1,3 +1,8 @@
+## [0.11.1] - 2026-09-21
+
+### 🚀 Features
+
+- **cli:** Support --version for ai-accounts
 ## [0.11.0] - 2026-09-20
 
 ### 🚀 Features
@@ -13,6 +18,10 @@
 ### 🚜 Refactor
 
 - **telegram:** Extract send into standalone module
+
+### 📚 Documentation
+
+- **changelog:** Release v0.11.0
 
 ### 🧪 Testing
 
