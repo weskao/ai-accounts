@@ -34,6 +34,7 @@ from ai_accounts import claude_accounts as cla
 from ai_accounts import codex_accounts as coa
 from ai_accounts import gemini_accounts as gea
 from ai_accounts import grok_accounts as gra
+from ai_accounts import grok_usage as gru
 from ai_accounts._utils import GREEN
 
 SENTINEL_ACCESS = "SENTINEL_LEAK_ACCESS_xyz"
@@ -216,10 +217,11 @@ class GrokSentinelLeakTests(_NoLeakMixin, unittest.TestCase):
                 }
                 gra._write_json(gra._auth_file(), payload)
 
-                _, out1 = _run(gra.cmd_who)
-                _, out2 = _run(gra.cmd_save, "s1")
-                _, out3 = _run(gra.cmd_switch, "s1")
-                _, out4 = _run(gra.cmd_list)
+                with mock.patch.object(gru, "fetch_usage", return_value=gru.empty_usage()):
+                    _, out1 = _run(gra.cmd_who)
+                    _, out2 = _run(gra.cmd_save, "s1")
+                    _, out3 = _run(gra.cmd_switch, "s1")
+                    _, out4 = _run(gra.cmd_list, fetch_usage=False)
         self.assert_no_leak(out1 + out2 + out3 + out4)
 
 

@@ -131,10 +131,10 @@ codex-accounts help                           # Show available commands
 
 Every per-provider tool's `list`/`usage` also accepts `--json`, printing one
 JSON array of `{"name", "active", "usage", "no_quota_api"}` objects instead of
-the table (`usage` is `null` and `no_quota_api` is `true` for Grok and Vibe,
-which have no quota API). Copilot attempts a real quota lookup and only
-degrades to the same `no_quota_api: true` shape when that lookup fails — see
-Platform notes below.
+the table (`usage` is `null` and `no_quota_api` is `true` for Vibe, which has
+no quota API). Grok and Copilot attempt a real quota lookup and only degrade
+to the same `no_quota_api: true` shape when that lookup fails — see Platform
+notes below.
 
 ### Antigravity profile names
 
@@ -145,6 +145,20 @@ Antigravity cannot report an email, it still saves the account under a stable
 `who` also answers to `current`. `login-switch <name>` runs a fresh provider
 login and saves the result as `<name>` — it is what the re-login report below
 tells you to run.
+
+### Grok plan and usage
+
+`grok-accounts list` shows `PROFILE`, `ACCOUNT`, `PLAN`, `ID`, `1W USED`,
+`BUILD USED`, `UPDATED`, `EXPIRES`, and `STATE`. `PLAN` is the consumer
+subscription (`SuperGrok`, `SuperGrok Plus`, `SuperGrok Heavy`, or `Free`)
+from the Grok Build CLI billing proxy — not the OIDC `principal_type`, which
+is `User` for every personal login. A successful `/user` reply with a null
+`subscriptionTier` is `Free`. `1W USED` is the weekly SuperGrok credit
+pool; `BUILD USED` is the Grok Build slice of that same week. Both come from
+`GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` plus
+`GET …/v1/user?include=subscription`, authenticated with the profile's OAuth
+access token. A failed lookup degrades to the no-quota JSON shape rather than
+failing `list`.
 
 ### Copilot account details and balance
 
@@ -264,11 +278,11 @@ ai-accounts doctor --json | python3 -m json.tool
 ### List performance
 
 `ai-accounts list` runs providers concurrently and displays each provider's
-table as it finishes. Codex and Claude also fetch usage concurrently across
-profiles; Grok and Vibe list local profile data without quota network requests.
-Copilot fetches quota and GitHub identity per profile (plus the primary email
-when permitted), with profiles queried concurrently. Failed quota requests
-retain the same no-quota result shape as Grok/Vibe.
+table as it finishes. Codex, Claude, Grok, and Copilot also fetch usage
+concurrently across profiles. Vibe lists local profile data without quota
+network requests. Copilot additionally fetches GitHub identity per profile
+(plus the primary email when permitted). Failed quota requests retain the
+same no-quota result shape as Vibe.
 
 Antigravity queries different credentials **sequentially**: each query switches
 the shared OS keyring session, launches `agy`, waits for authentication and
@@ -292,7 +306,7 @@ Measured on **2026-09-07 (Asia/Taipei)**, on a local macOS machine:
 | `codex-accounts list` | 5 | 0.944 s | 0.189 s | Concurrent usage requests |
 | `claude-accounts list` | 1 | 0.739 s | 0.739 s | Concurrent usage requests when multiple profiles exist |
 | `agy-accounts list` | 6 | 24.484 s | 4.081 s | Sequential credential sessions; concurrent RPCs within each session |
-| `grok-accounts list` | 7 | 0.003 s | <0.001 s | Local profile reads |
+| `grok-accounts list` | 7 | 0.003 s | <0.001 s | Concurrent SuperGrok billing requests (was local-only before quota lookup) |
 | `vibe-accounts list` | 1 | 0.028 s | 0.028 s | Local profile and credential-store reads |
 
 These are single-run measurements of each provider's `cmd_list()`, with the
@@ -764,7 +778,7 @@ plain, same as it leaves tables unbanded.
 | Codex | `~/.codex/auth.json` and the native credential store | `codex` is required for login flows |
 | Claude Code | `~/.claude/.credentials.json` and macOS Keychain when used | `claude` is required for login flows |
 | Antigravity | macOS Keychain, Windows Credential Manager, or Linux Secret Service | Linux needs `secret-tool` from libsecret |
-| Grok Build | `$GROK_HOME/auth.json` | Quota switching is skipped when no quota API is available |
+| Grok Build | `$GROK_HOME/auth.json` | SuperGrok plan and weekly/Grok Build usage come from the CLI billing proxy. Autoswitch is still skipped (no ranking/switch path yet) |
 | Mistral Vibe | macOS Keychain or `$VIBE_HOME/.env` | On Windows and Linux, `$VIBE_HOME/.env` is used; `vibe` is required for login flows |
 | GitHub Copilot | macOS Keychain item `copilot-cli` keyed `<host>:<login>`, with the signed-in login read from `~/.copilot/config.json` (JSONC); `$COPILOT_GITHUB_TOKEN`/`$GH_TOKEN`/`$GITHUB_TOKEN` as fallback | `copilot` is required for login flows. Store layout and monthly AI-credit quota verified on macOS; the quota endpoint is undocumented. Linux/Windows stores and env-var precedence remain unverified. |
 

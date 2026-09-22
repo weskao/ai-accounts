@@ -619,10 +619,11 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
   grok-accounts who                   顯示目前登入的 Grok 帳號
   grok-accounts current               `who` 的別名
   grok-accounts save [<name>]         儲存目前的登入；不給名稱 = 依 email 決定
-  grok-accounts list [--json]         列出已存帳號；--json 改印一份 JSON 陣列，取代表格
-                                       （沒有配額 API：usage 一律為 null，
+  grok-accounts list [--json]         列出已存帳號與 SuperGrok 方案／週用量；
+                                       --json 改印一份 JSON 陣列，取代表格
+                                       （CLI billing 端點失敗時退回 usage: null、
                                        no_quota_api: true）
-  grok-accounts usage [--json]        只顯示作用中帳號（session 與到期時間）；
+  grok-accounts usage [--json]        只顯示作用中帳號（方案與週用量）；
                                        --json 改印一份 JSON 陣列，取代表格
   grok-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
   grok-accounts remove [<name>]       刪除已存帳號；不給名稱 = 互動式選擇器
@@ -649,7 +650,8 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
   grok-4.5（旗艦版，50 萬 token 上下文）— 具備 agentic 工具呼叫、幻覺極低、
   可調整推理強度；xAI 用於程式與其他任務的首選。
   API：每 100 萬輸入 token $2.00，每 100 萬輸出 token $6.00。
-  消費方案：Free（每月 $0）、SuperGrok（每月 $30，解鎖 Grok 4.5 與更高限額）。
+  消費方案：Free（每月 $0）、SuperGrok（每月 $30，解鎖 Grok 4.5 與更高限額）、
+  SuperGrok Plus、SuperGrok Heavy。
   Grok Build CLI 文件：docs.x.ai/build/
 
 帳號存放於 ~/.ai-accounts/grok/accounts/<name>.json（可用

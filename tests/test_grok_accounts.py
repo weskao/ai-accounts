@@ -11,7 +11,9 @@ from unittest import mock
 
 from ai_accounts import autoswitch as aw
 from ai_accounts import grok_accounts as ga
+from ai_accounts import grok_usage as gu
 from ai_accounts._present import _ANSI_RE
+from ai_accounts.usage_format import UsageWindow
 
 
 def _auth(
@@ -56,6 +58,11 @@ class GrokAccountsTests(unittest.TestCase):
         )
         environment.start()
         self.addCleanup(environment.stop)
+        # list/usage hit the CLI-proxy billing API; keep unit tests offline
+        # unless a case installs its own snapshot.
+        usage = mock.patch.object(gu, "fetch_usage", return_value=gu.empty_usage())
+        usage.start()
+        self.addCleanup(usage.stop)
 
     def test_profile_name_rejects_control_characters(self) -> None:
         # Profile names with newlines or other control chars (ord < 0x20 or 0x7f) are rejected
@@ -141,6 +148,90 @@ class GrokAccountsTests(unittest.TestCase):
             [{"name": "personal", "active": True, "usage": None, "no_quota_api": True}],
         )
 
+    def test_list_replaces_type_user_with_supergrok_plan_and_usage(self) -> None:
+        self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
+        snapshot = gu.UsageSnapshot(
+            weekly=UsageWindow(percentage=12, reset_time=1894060800, window_minutes=10080),
+            build=UsageWindow(percentage=12, reset_time=1894060800, window_minutes=10080),
+            plan="SuperGrok",
+            subscription_tier="GrokPro",
+            refreshed_at=1700000000,
+            error=None,
+        )
+        output = io.StringIO()
+        with mock.patch.object(gu, "fetch_usage", return_value=snapshot):
+            with redirect_stdout(output):
+                self.assertEqual(ga.cmd_list(), 0)
+        text = _ANSI_RE.sub("", output.getvalue())
+        self.assertIn("PLAN", text)
+        self.assertIn("SuperGrok", text)
+        self.assertIn("1W USED", text)
+        self.assertIn("BUILD USED", text)
+        self.assertNotIn("TYPE", text)
+        self.assertNotRegex(text, r"\bTYPE\b.*\bUser\b")
+        # principal_type "User" is no longer a table cell
+        self.assertNotRegex(text, r"│ User │")
+
+    def test_list_json_includes_plan_and_weekly_usage(self) -> None:
+        self.assertTrue(ga._write_json(ga._auth_file(), _auth()))
+        self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
+        (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
+        snapshot = gu.UsageSnapshot(
+            weekly=UsageWindow(percentage=12, reset_time=1894060800, window_minutes=10080),
+            build=UsageWindow(percentage=12, reset_time=1894060800, window_minutes=10080),
+            plan="SuperGrok",
+            subscription_tier="GrokPro",
+            refreshed_at=1700000000,
+            error=None,
+        )
+        output = io.StringIO()
+        with mock.patch.object(gu, "fetch_usage", return_value=snapshot):
+            with redirect_stdout(output):
+                self.assertEqual(ga.main(["list", "--json"]), 0)
+        text = output.getvalue()
+        self.assertNotIn("\033[", text)
+        self.assertEqual(
+            json.loads(text),
+            [
+                {
+                    "name": "personal",
+                    "active": True,
+                    "plan": "SuperGrok",
+                    "usage": {
+                        "weekly": {
+                            "percent": 12,
+                            "remaining_percent": 88,
+                            "reset_time": 1894060800,
+                            "window_minutes": 10080,
+                        },
+                        "build": {
+                            "percent": 12,
+                            "remaining_percent": 88,
+                            "reset_time": 1894060800,
+                            "window_minutes": 10080,
+                        },
+                        "plan": "SuperGrok",
+                        "subscription_tier": "GrokPro",
+                        "refreshed_at": 1700000000,
+                        "error": None,
+                    },
+                    "no_quota_api": False,
+                }
+            ],
+        )
+
+    def test_list_json_degrades_when_quota_endpoint_fails(self) -> None:
+        self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
+        failed = gu.UsageSnapshot(None, None, None, None, None, "HTTP 404 from usage endpoint")
+        output = io.StringIO()
+        with mock.patch.object(gu, "fetch_usage", return_value=failed):
+            with redirect_stdout(output):
+                self.assertEqual(ga.main(["list", "--json"]), 0)
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            [{"name": "personal", "active": False, "usage": None, "no_quota_api": True}],
+        )
+
     def test_usage_json_empty_array_when_no_active_profile(self) -> None:
         self.assertTrue(ga._write_json(self.account_dir / "saved.json", _auth()))
         output = io.StringIO()
@@ -156,9 +247,6 @@ class GrokAccountsTests(unittest.TestCase):
         listing = output.getvalue()
         self.assertIn("person@example.test", listing)
         self.assertIn("principal-1", listing)
-        self.assertIn("team-1", listing)
-        self.assertIn("OIDC · refresh", listing)
-        self.assertIn("opt-out", listing)
         self.assertNotIn("secret-access-token", listing)
         self.assertNotIn("secret-refresh-token", listing)
 
@@ -400,6 +488,9 @@ class GrokDirectRefreshTests(unittest.TestCase):
         self.addCleanup(environment.stop)
         ga._TOKEN_ENDPOINTS.clear()
         self.addCleanup(ga._TOKEN_ENDPOINTS.clear)
+        usage = mock.patch.object(gu, "fetch_usage", return_value=gu.empty_usage())
+        usage.start()
+        self.addCleanup(usage.stop)
 
     # ── discovery ────────────────────────────────────────────────────────
 

@@ -287,10 +287,11 @@ def format_usage_window(window: UsageWindow | None, window_kind: str, percentage
 
 
 def no_quota_json_entries(profiles: list[Path], active: Path | None) -> list[dict[str, object]]:
-    """``--json`` entries for a provider with no quota API at all (grok/vibe):
-    every profile gets ``usage: null`` and ``no_quota_api: true`` rather than
-    silently omitting the field. Shared so the two providers' JSON shape can't
-    drift apart — see :func:`usage_window_to_json` for the quota-API side."""
+    """``--json`` entries for a provider with no quota API at all (vibe, or
+    grok/copilot when their lookup fails): every profile gets ``usage: null``
+    and ``no_quota_api: true`` rather than silently omitting the field. Shared
+    so those providers' JSON shape can't drift apart — see
+    :func:`usage_window_to_json` for the quota-API side."""
     return [
         {"name": path.stem, "active": path == active, "usage": None, "no_quota_api": True}
         for path in profiles
@@ -301,8 +302,8 @@ def usage_window_to_json(window: UsageWindow | None) -> dict[str, int | None] | 
     """Plain-dict form of one usage window for ``--json`` output: percent used,
     percent remaining, the raw reset epoch, and the window length — no ANSI, no
     formatting. Shared by every provider whose quota API backs onto
-    :class:`UsageWindow` (codex/claude/agy); providers with no quota API at all
-    (grok/vibe) never call this — they set ``no_quota_api`` instead."""
+    :class:`UsageWindow` (codex/claude/agy/grok/copilot); vibe, which has no
+    quota API, sets ``no_quota_api`` instead."""
     if window is None:
         return None
     return {

@@ -13,8 +13,18 @@ from pathlib import Path
 from typing import Any
 
 from . import config_menu as cm
+from . import grok_usage
 from . import i18n
-from ._present import accounts_table, choose_and_run, choose_profile, format_help, ok, panel, success_panel
+from ._present import (
+    accounts_table,
+    choose_and_run,
+    choose_profile,
+    format_help,
+    ok,
+    panel,
+    success_panel,
+    usage_color,
+)
 from ._utils import (
     BOLD,
     DIM,
@@ -22,14 +32,24 @@ from ._utils import (
     RED,
     RESET,
     YELLOW,
+    Spinner,
     email_local_part,
+    fetch_parallel,
     has_control_chars,
     log_red,
     log_yellow,
     oauth_token_refresh,
+    plan_tier_color,
     resolve_account_dir,
 )
-from .usage_format import credential_status_prefix, json_empty_list, no_quota_json_entries, print_no_active_account
+from .usage_format import (
+    align_usage_cells,
+    credential_status_prefix,
+    format_usage_window,
+    json_empty_list,
+    print_no_active_account,
+    usage_window_to_json,
+)
 
 JsonDict = dict[str, Any]
 
@@ -39,11 +59,14 @@ USAGE
   grok-accounts who                   Show the current logged-in Grok account
   grok-accounts current               Alias for `who`
   grok-accounts save [<name>]         Save the current login; no name = derive from email
-  grok-accounts list [--json]         List saved profiles; --json prints one JSON
-                                       array instead of the table (no quota API: usage
-                                       is always null, no_quota_api: true)
-  grok-accounts usage [--json]        Show only the active account (session & expiry);
-                                       --json prints one JSON array instead of the table
+  grok-accounts list [--json]         List saved profiles with SuperGrok plan and
+                                       weekly/Grok Build usage; --json prints one JSON
+                                       array instead of the table (degrades to
+                                       usage: null, no_quota_api: true if the CLI
+                                       billing endpoint is unreachable)
+  grok-accounts usage [--json]        Show only the active account (plan & weekly
+                                       usage); --json prints one JSON array instead of
+                                       the table
   grok-accounts switch [<name>]       Switch by name; no name = interactive picker
   grok-accounts remove [<name>]       Delete a saved profile; no name = interactive picker
   grok-accounts refresh [<name>]      Renew the active/named session's token
@@ -70,7 +93,7 @@ MODEL
   hallucinations, configurable reasoning; xAI's pick for code and everything
   else. API: $2.00 / 1M input tokens, $6.00 / 1M output tokens.
   Consumer plans: Free ($0/mo), SuperGrok ($30/mo, unlocks Grok 4.5 + higher
-  limits). Grok Build CLI docs: docs.x.ai/build/
+  limits), SuperGrok Plus, SuperGrok Heavy. Grok Build CLI docs: docs.x.ai/build/
 
 Profiles live under ~/.ai-accounts/grok/accounts/<name>.json (override with
 $GROK_ACCOUNT_DIR). Treat that directory as secrets — profiles contain OAuth
@@ -203,6 +226,14 @@ def _identity(payload: JsonDict | None) -> tuple[str, str, str]:
     )
 
 
+def _access_token(payload: JsonDict | None) -> str | None:
+    record = _record(payload) if payload else None
+    if record is None:
+        return None
+    token = record.get("key")
+    return token if isinstance(token, str) and token else None
+
+
 def _active_profile(active: JsonDict | None = None) -> Path | None:
     active = active if active is not None else _read_json(_auth_file())
     if active is None:
@@ -253,26 +284,11 @@ def _expiry_status(claims: JsonDict) -> tuple[str, str]:
     return when.astimezone().strftime("%b %d %H:%M"), GREEN
 
 
-def _timestamp(value: str) -> str:
-    try:
-        return (
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
-            .astimezone()
-            .strftime("%b %d %H:%M")
-        )
-    except ValueError:
-        return "—"
-
-
 def _short_id(value: object) -> str:
     if not value or value == "—":
         return f"{DIM}—{RESET}"
     text = str(value)
     return f"{text[:8]}…{text[-4:]}" if len(text) > 16 else text
-
-
-def _retention(value: object) -> str:
-    return "opt-out" if value is True else "standard" if value is False else "—"
 
 
 def _identity_label(claims: JsonDict) -> str | None:
@@ -285,7 +301,11 @@ def _identity_label(claims: JsonDict) -> str | None:
     return f"{name} <{email}>" if name else email
 
 
-def _claims_lines(claims: JsonDict, profile: Path | None) -> list[str]:
+def _claims_lines(
+    claims: JsonDict,
+    profile: Path | None,
+    usage: grok_usage.UsageSnapshot | None = None,
+) -> list[str]:
     if not claims:
         return [f"{YELLOW}No readable account claims found.{RESET}"]
     if claims.get("malformed"):
@@ -298,20 +318,23 @@ def _claims_lines(claims: JsonDict, profile: Path | None) -> list[str]:
     account = f"{name} <{claims['email']}>" if name else claims["email"]
     session = f"{GREEN}refreshable{RESET}" if claims["refreshable"] else "browser login"
     expires_text, expires_color = _expiry_status(claims)
-    return [
+    lines = [
         f"{BOLD}Account{RESET}       : {account}",
+        f"{DIM}Plan{RESET}          : {_plan_cell(usage.plan if usage else None)}",
         f"{DIM}Principal{RESET}     : {claims['principal_id']}",
         f"{DIM}Team{RESET}          : {claims['team_id']}",
         f"{DIM}Session{RESET}       : {session}",
         f"{DIM}Expires{RESET}       : {expires_color}{expires_text}{RESET}",
         f"{DIM}Profile{RESET}       : {profile.stem if profile else 'untracked'}",
     ]
+    return lines
 
 
 def cmd_who() -> int:
     payload = _read_json(_auth_file())
     claims = _claims(payload) if payload else {}
     profile = _active_profile(payload) if payload else None
+    usage = grok_usage.fetch_usage(_access_token(payload)) if payload else grok_usage.empty_usage()
 
     if claims:
         status_lines = [
@@ -325,7 +348,7 @@ def cmd_who() -> int:
     panel("Grok Login Status", status_lines)
 
     print()
-    panel("Current Auth Claims", _claims_lines(claims, profile))
+    panel("Current Auth Claims", _claims_lines(claims, profile, usage))
     return 0 if claims else 1
 
 
@@ -355,21 +378,49 @@ def cmd_save(name: str | None = None) -> int:
     return 0
 
 
+def _plan_cell(plan: str | None) -> str:
+    """Colored PLAN column. Free stays uncolored; every paid SuperGrok tier
+    gets the same top accent (Plus/Heavy share the SuperGrok prefix, so a
+    ranked palette would mis-color them)."""
+    if not plan:
+        return f"{DIM}—{RESET}"
+    if plan.lower() == "free":
+        return plan
+    return f"{plan_tier_color(plan)}{plan}{RESET}"
+
+
+def _usage_cell(window) -> str:
+    if window is None:
+        return f"{DIM}—{RESET}"
+    percent = f"{usage_color(window.percentage)}{window.percentage}%{RESET}"
+    return format_usage_window(window, "1w", percent)
+
+
+def _has_quota(usage: grok_usage.UsageSnapshot) -> bool:
+    return usage.weekly is not None or usage.build is not None
+
+
+def _fetch_profile(path: Path) -> tuple[JsonDict | None, grok_usage.UsageSnapshot]:
+    payload = _read_json(path)
+    return payload, grok_usage.fetch_usage(_access_token(payload))
+
+
 _TABLE_COLUMNS = [
     ("PROFILE", "profile"),
     ("ACCOUNT", "account"),
-    ("TYPE", "type"),
+    ("PLAN", "plan"),
     ("ID", "id"),
-    ("TEAM", "team"),
-    ("CREATED", "created"),
+    ("1W USED", "usage_1w"),
+    ("BUILD USED", "usage_build"),
+    ("UPDATED", "usage_updated"),
     ("EXPIRES", "expires"),
-    ("DATA", "data"),
-    ("SESSION", "session"),
     ("STATE", "state"),
 ]
 
 
-def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
+def cmd_list(
+    *, only_active: bool = False, json_output: bool = False, fetch_usage: bool = True
+) -> int:
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
         if json_empty_list(json_output):
@@ -389,13 +440,55 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
             return 0
         profiles = [active]
 
+    empty = grok_usage.empty_usage()
+    if fetch_usage:
+        spinner = Spinner("Fetching Grok quota…")
+        with spinner:
+            readings = fetch_parallel(
+                profiles,
+                _fetch_profile,
+                spinner,
+                "Fetching Grok quota…",
+                labels=[path.stem for path in profiles],
+            )
+    else:
+        readings = [(_read_json(path), empty) for path in profiles]
+
     if json_output:
-        print(json.dumps(no_quota_json_entries(profiles, active)))
+        entries = []
+        for path, (_payload, usage) in zip(profiles, readings):
+            if _has_quota(usage):
+                entries.append(
+                    {
+                        "name": path.stem,
+                        "active": path == active,
+                        "plan": usage.plan,
+                        "usage": {
+                            "weekly": usage_window_to_json(usage.weekly),
+                            "build": usage_window_to_json(usage.build),
+                            "plan": usage.plan,
+                            "subscription_tier": usage.subscription_tier,
+                            "refreshed_at": usage.refreshed_at,
+                            "error": usage.error,
+                        },
+                        "no_quota_api": False,
+                    }
+                )
+            else:
+                entries.append(
+                    {
+                        "name": path.stem,
+                        "active": path == active,
+                        "usage": None,
+                        "no_quota_api": True,
+                    }
+                )
+        print(json.dumps(entries))
         return 0
 
     rows = []
-    for path in profiles:
-        claims = _claims(_read_json(path))
+    for path, (payload, usage) in zip(profiles, readings):
+        claims = _claims(payload)
         malformed = claims.get("malformed")
         account = f"{YELLOW}malformed{RESET}" if malformed else claims.get("email", "unreadable")
         if not malformed and claims.get("name"):
@@ -406,16 +499,17 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
             {
                 "profile": f"{GREEN}{BOLD}{path.stem}{RESET}" if is_active else path.stem,
                 "account": account,
-                "type": claims.get("principal_type", "—"),
+                "plan": _plan_cell(usage.plan),
                 "id": _short_id(claims.get("principal_id")),
-                "team": _short_id(claims.get("team_id")),
-                "created": _timestamp(str(claims.get("created_at", ""))),
+                "usage_1w": _usage_cell(usage.weekly),
+                "usage_build": _usage_cell(usage.build),
+                "usage_updated": grok_usage.format_refreshed_at(usage),
                 "expires": f"{expires_color}{expires_text}{RESET}",
-                "data": _retention(claims.get("retention_opt_out")),
-                "session": f"{claims.get('auth_mode', '—')} · {'refresh' if claims.get('refreshable') else 'browser'}",
                 "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
             }
         )
+    align_usage_cells(rows, "usage_1w")
+    align_usage_cells(rows, "usage_build")
 
     if only_active:
         print(f"{BOLD}Current Grok account{RESET}")
