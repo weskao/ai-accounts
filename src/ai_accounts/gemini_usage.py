@@ -228,7 +228,7 @@ def _open_pty() -> tuple[int, int]:
     return master, slave
 
 
-def fetch_usage_from_pid(pid: int, csrf_token: str = "") -> UsageSnapshot | None:
+def fetch_usage_from_pid(pid: int, csrf_token: str) -> UsageSnapshot | None:
     summary = status = None
     for port in _ports(pid):
         context = _tls_context(port)

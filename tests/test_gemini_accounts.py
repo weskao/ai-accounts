@@ -313,7 +313,7 @@ class UsageTests(unittest.TestCase):
         with mock.patch.object(gu, "_ports", return_value=[100, 200]), mock.patch.object(
             gu, "_tls_context", return_value=mock.sentinel.context
         ) as tls, mock.patch.object(gu, "_post", side_effect=post) as rpc:
-            usage = gu.fetch_usage_from_pid(123)
+            usage = gu.fetch_usage_from_pid(123, "tok")
         self.assertIsNotNone(usage)
         self.assertEqual(usage.email, "a@x.com")
         self.assertEqual(usage.plan, "Free")
@@ -330,7 +330,7 @@ class UsageTests(unittest.TestCase):
         with mock.patch.object(gu, "_ports", return_value=[100, 200]), mock.patch.object(
             gu, "_tls_context", return_value=mock.sentinel.context
         ), mock.patch.object(gu, "_post", side_effect=post) as rpc:
-            usage = gu.fetch_usage_from_pid(123)
+            usage = gu.fetch_usage_from_pid(123, "tok")
         self.assertEqual(usage.email, "b@x.com")
         self.assertEqual(rpc.call_count, 3)
 
