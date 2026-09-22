@@ -1,8 +1,21 @@
+## [0.12.0] - 2026-09-22
+
+### 🚀 Features
+
+- **grok:** [**breaking**] Show SuperGrok plan and weekly usage
+
+### 🐛 Bug Fixes
+
+- **gemini:** Require csrf token for agy pid lookup
 ## [0.11.1] - 2026-09-21
 
 ### 🚀 Features
 
 - **cli:** Support --version for ai-accounts
+
+### 📚 Documentation
+
+- **changelog:** Release v0.11.1
 ## [0.11.0] - 2026-09-20
 
 ### 🚀 Features
