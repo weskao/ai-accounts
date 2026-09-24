@@ -1,4 +1,4 @@
-"""GitHub update hint: version compare, daily cache, and silent failure."""
+"""GitHub update hint: version compare, short-TTL cache, background check, silent failure."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def test_newer_release_found_and_cached(tmp_path, monkeypatch):
     assert uc.newer_release("0.12.0", now=1000, fetch=fetch) == "v0.13.0"
     assert json.loads(cache.read_text())["latest"] == "v0.13.0"
     # Within the TTL: answered from the cache, no second request.
-    assert uc.newer_release("0.12.0", now=2000, fetch=fetch) == "v0.13.0"
+    assert uc.newer_release("0.12.0", now=1000 + uc.TTL_SECONDS - 1, fetch=fetch) == "v0.13.0"
     assert calls == [1]
 
 
@@ -58,14 +58,43 @@ def test_claim_only_once(monkeypatch):
     assert uc.claim() is False
 
 
+def test_new_release_seen_after_ttl(tmp_path, monkeypatch):
+    _cfg(tmp_path, monkeypatch)
+    assert uc.newer_release("0.12.0", now=0, fetch=lambda: "v0.12.0") is None
+    # Several releases can land in one day: the next one is seen within the hour.
+    assert uc.newer_release("0.12.0", now=uc.TTL_SECONDS, fetch=lambda: "v0.13.0") == "v0.13.0"
+    assert uc.TTL_SECONDS <= 3600
+
+
 def _fake_tty(monkeypatch):
     monkeypatch.setattr(uc.sys.stderr, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(uc, "_check", None)
+    monkeypatch.setattr(uc, "_latest", [])
+
+
+def test_background_fetch_feeds_hint(tmp_path, monkeypatch, capsys):
+    _cfg(tmp_path, monkeypatch)
+    _fake_tty(monkeypatch)
+    real = uc.newer_release
+    monkeypatch.setattr(uc, "newer_release", lambda current: real(current, fetch=lambda: "v9.9.0"))
+    uc.start_check()
+    assert uc._check is not None
+    uc.maybe_hint()
+    assert "ai-accounts 9.9.0 is available" in capsys.readouterr().err
+
+
+def test_hint_without_start_is_silent(tmp_path, monkeypatch, capsys):
+    _cfg(tmp_path, monkeypatch)
+    _fake_tty(monkeypatch)
+    uc.maybe_hint()
+    assert capsys.readouterr().err == ""
 
 
 def test_hint_printed_on_a_tty(tmp_path, monkeypatch, capsys):
     cache = _cfg(tmp_path, monkeypatch)
     cache.write_text(json.dumps({"checked_at": uc.time.time(), "latest": "v9.9.0"}))
     _fake_tty(monkeypatch)
+    uc.start_check()
     uc.maybe_hint()
     err = capsys.readouterr().err
     assert "ai-accounts 9.9.0 is available" in err
@@ -77,6 +106,7 @@ def test_hint_respects_config_off(tmp_path, monkeypatch, capsys):
     cache.write_text(json.dumps({"checked_at": uc.time.time(), "latest": "v9.9.0"}))
     (tmp_path / "config.json").write_text('{"update_check": false}')
     _fake_tty(monkeypatch)
+    uc.start_check()
     uc.maybe_hint()
     assert capsys.readouterr().err == ""
 
@@ -84,5 +114,7 @@ def test_hint_respects_config_off(tmp_path, monkeypatch, capsys):
 def test_no_hint_without_a_tty(tmp_path, monkeypatch, capsys):
     cache = _cfg(tmp_path, monkeypatch)
     cache.write_text(json.dumps({"checked_at": uc.time.time(), "latest": "v9.9.0"}))
-    uc.maybe_hint()  # pytest's captured stderr is not a TTY
+    monkeypatch.setattr(uc, "_check", None)
+    uc.start_check()  # pytest's captured stderr is not a TTY
+    uc.maybe_hint()
     assert capsys.readouterr().err == ""

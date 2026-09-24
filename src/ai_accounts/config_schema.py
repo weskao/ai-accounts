@@ -392,7 +392,7 @@ FIELDS: tuple[Field, ...] = (
         type=bool,
         default=True,
         label="Check for updates",
-        help="After a command, say when a newer ai-accounts release is on GitHub (checked once a day).",
+        help="After a command, say when a newer ai-accounts release is on GitHub (checked in the background, at most every 10 minutes).",
         group="General",
     ),
 )

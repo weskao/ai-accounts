@@ -64,6 +64,8 @@ def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
         from . import update_check
 
         outermost = update_check.claim()
+        if outermost:
+            update_check.start_check()
         try:
             return func(*args, **kwargs)
         except KeyboardInterrupt:

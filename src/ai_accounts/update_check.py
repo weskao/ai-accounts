@@ -2,10 +2,12 @@
 
 ai-accounts is installed from git tags (``uv tool install --from
 git+https://github.com/weskao/ai-accounts.git@vX.Y.Z``), not PyPI, so the
-source of truth is the repo's latest GitHub release. One request per day at
-most (cached next to ``config.json``), a sub-second timeout, and every failure
-— offline, rate-limited, junk payload — is silence: a hint must never slow a
-command noticeably or change its exit code.
+source of truth is the repo's latest GitHub release. The request starts in a
+background thread when the command starts, so it overlaps the command's own
+work; at most one per ``TTL_SECONDS`` (cached next to ``config.json``, short
+because several releases can land in one day), a sub-second timeout, and every
+failure — offline, rate-limited, junk payload — is silence: a hint must never
+slow a command noticeably or change its exit code.
 
 Only a human sees it: stderr has to be a TTY, which rules out the scheduled
 timer, the vendor-CLI hooks and ``ai-accounts list``'s captured children.
@@ -16,12 +18,16 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 import urllib.request
 
 REPO = "weskao/ai-accounts"
-TTL_SECONDS = 86_400
+#: Unauthenticated GitHub API allows 60 requests/hour per IP; 6/hour is polite.
+TTL_SECONDS = 600
 TIMEOUT_SECONDS = 0.8
+_check: threading.Thread | None = None
+_latest: list[str | None] = []
 #: Set by the outermost entry point so the provider tools that
 #: ``ai-accounts <provider> …`` forwards to (sharing its TTY) stay quiet.
 _CLAIMED_ENV = "AI_ACCOUNTS_UPDATE_CHECK_CLAIMED"
@@ -93,22 +99,46 @@ def newer_release(current: str, *, now: float | None = None, fetch=fetch_latest_
     return latest
 
 
-def maybe_hint() -> None:
-    """Print the upgrade hint on stderr when one applies. Never raises."""
+def start_check() -> None:
+    """Begin the check in a daemon thread so it overlaps the command. Never raises."""
+    global _check
     try:
         if not sys.stderr.isatty():
             return
         from . import _utils as u
         from . import autoswitch as aw
-        from . import i18n
 
         # The file alone: load_config() would also read the keychain.
         if not aw.config_flag("update_check", {**aw.DEFAULTS, **aw._read_json(aw.config_path())}):
             return
         current = u.package_version()
-        latest = newer_release(current)
+
+        def run() -> None:
+            try:
+                _latest.append(newer_release(current))
+            except Exception:  # noqa: BLE001 - http.client errors are not all OSError
+                pass
+
+        _check = threading.Thread(target=run, name="ai-accounts-update-check", daemon=True)
+        _check.start()
+    except Exception:  # noqa: BLE001 - a hint must never fail the command
+        return
+
+
+def maybe_hint() -> None:
+    """Print the upgrade hint on stderr when the started check found one. Never raises."""
+    try:
+        if _check is None:
+            return
+        # Usually already done: it ran alongside the command.
+        _check.join(TIMEOUT_SECONDS)
+        latest = _latest[0] if _latest else None
         if latest is None:
             return
+        from . import _utils as u
+        from . import i18n
+
+        current = u.package_version()
         u.log_yellow(
             i18n.t(
                 "update.available",
