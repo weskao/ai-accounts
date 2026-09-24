@@ -85,14 +85,19 @@ class QuietKeyboardInterruptTests(unittest.TestCase):
             "    return 0\n"
             "raise SystemExit(main())\n"
         )
+        popen_kwargs = {}
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         process = subprocess.Popen(
             [sys.executable, "-c", script],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            **popen_kwargs,
         )
         time.sleep(0.4)
-        process.send_signal(signal.SIGINT)
+        sig = signal.CTRL_C_EVENT if sys.platform == "win32" else signal.SIGINT
+        process.send_signal(sig)
         stdout, stderr = process.communicate(timeout=5)
         text = stdout + stderr
         self.assertEqual(process.returncode, 130, text)
