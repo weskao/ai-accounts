@@ -1,3 +1,17 @@
+## [0.13.0] - 2026-09-24
+
+### 🚀 Features
+
+- Refresh AI account integrations
+- Hint when a newer GitHub release is available
+
+### 🐛 Bug Fixes
+
+- **config-menu:** Correct Ctrl-C to Ctrl+C in footer hint
+
+### 🧪 Testing
+
+- Handle windows ctrl-c in subprocess test
 ## [0.12.0] - 2026-09-22
 
 ### 🚀 Features
@@ -7,6 +21,10 @@
 ### 🐛 Bug Fixes
 
 - **gemini:** Require csrf token for agy pid lookup
+
+### 📚 Documentation
+
+- **changelog:** Release v0.12.0
 ## [0.11.1] - 2026-09-21
 
 ### 🚀 Features
