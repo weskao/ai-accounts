@@ -1,3 +1,8 @@
+## [0.13.1] - 2026-09-24
+
+### 🧪 Testing
+
+- Skip real-sigint test on windows
 ## [0.13.0] - 2026-09-24
 
 ### 🚀 Features
@@ -8,6 +13,10 @@
 ### 🐛 Bug Fixes
 
 - **config-menu:** Correct Ctrl-C to Ctrl+C in footer hint
+
+### 📚 Documentation
+
+- **changelog:** Release v0.13.0
 
 ### 🧪 Testing
 
