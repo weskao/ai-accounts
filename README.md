@@ -322,6 +322,9 @@ network conditions, and machine load affect these results. Parallel RPCs do
 not remove Antigravity's per-account startup cost, so it can still dominate
 the total time of `ai-accounts list`.
 
+Ctrl-C stops `list` for any provider, including `ai-accounts list`. The
+command exits with status 130 and does not print a traceback.
+
 To query only the selected Antigravity account, use:
 
 ```sh

@@ -11,7 +11,7 @@ import json
 import os
 import re
 import time
-from functools import lru_cache
+from functools import lru_cache, wraps
 from importlib import metadata
 from pathlib import Path
 import shutil
@@ -45,6 +45,26 @@ def source_device() -> str:
     """Short, human-readable label for notification provenance, e.g.
     '🖥️ Mac mini · d011********'."""
     return host_identity.device_label()
+
+
+def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
+    """Turn Ctrl-C into exit status 130 and print no traceback.
+
+    ``list`` is meant to be cancelled. An uncaught ``KeyboardInterrupt`` makes
+    Python print a traceback, which reads as a failure. ``finally`` blocks in
+    the command still run before this returns, so in-flight cleanup (restoring
+    the live session, stopping a spawned CLI) happens first.
+    """
+
+    @wraps(func)
+    def wrapper(*args: object, **kwargs: object) -> int:
+        try:
+            return func(*args, **kwargs)
+        except KeyboardInterrupt:
+            print(file=sys.stderr)
+            return 130
+
+    return wrapper
 
 
 # ── ANSI / color support ─────────────────────────────────────────────────────

@@ -50,6 +50,7 @@ from ._utils import (
     log_yellow,
     oauth_token_refresh,
     plan_tier_color,
+    quiet_keyboard_interrupt,
     resolve_data_dir,
 )
 from .usage_format import (
@@ -1963,6 +1964,7 @@ def _render_autoswitch(
 # ── entry point ───────────────────────────────────────────────────────────
 
 
+@quiet_keyboard_interrupt
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):

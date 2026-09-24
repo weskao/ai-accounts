@@ -509,6 +509,31 @@ class UsageTests(unittest.TestCase):
         self.assertTrue(argv[1].startswith("--csrf_token="))
         self.assertEqual(rpc.call_args.args, (123, argv[1].split("=", 1)[1]))
 
+    @unittest.skipIf(os.name == "nt", "Windows returns the platform error first")
+    def test_fetch_usage_ctrl_c_stops_agy_and_reraises(self) -> None:
+        class ImmediateThread:
+            def __init__(self, *, target, args, daemon):
+                self.target, self.args = target, args
+
+            def start(self) -> None:
+                self.target(*self.args)
+
+        process = mock.Mock(pid=123)
+        process.poll.return_value = None
+        with (
+            mock.patch.object(gu.shutil, "which", return_value="/fake/agy"),
+            mock.patch.object(gu, "_open_pty", return_value=(10, 11)),
+            mock.patch.object(gu.subprocess, "Popen", return_value=process),
+            mock.patch.object(gu.os, "close"),
+            mock.patch.object(gu, "_drain"),
+            mock.patch.object(gu.threading, "Thread", ImmediateThread),
+            mock.patch.object(gu, "fetch_usage_from_pid", return_value=None),
+            mock.patch.object(gu.time, "sleep", side_effect=KeyboardInterrupt),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                gu.fetch_usage(timeout=5)
+        process.terminate.assert_called_once()
+
     def test_relogin_error_has_an_actionable_label(self) -> None:
         snapshot = _usage(error="re-login required")
         self.assertEqual(gu.format_refreshed_at(snapshot), "RELOGIN")

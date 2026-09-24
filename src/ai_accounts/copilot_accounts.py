@@ -59,6 +59,7 @@ from ._utils import (
     keychain_write,
     log_red,
     log_yellow,
+    quiet_keyboard_interrupt,
     resolve_account_dir,
 )
 from .config_schema import mask_secret
@@ -823,6 +824,7 @@ def cmd_login_switch(name: str) -> int:
     return cmd_save(name)
 
 
+@quiet_keyboard_interrupt
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):

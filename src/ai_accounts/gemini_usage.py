@@ -228,6 +228,31 @@ def _open_pty() -> tuple[int, int]:
     return master, slave
 
 
+def _stop_spawned(process: subprocess.Popen) -> None:
+    """Stop an agy process started in its own session.
+
+    ``start_new_session=True`` keeps that process out of the terminal's
+    process group, so Ctrl-C reaches this interpreter and not agy. Terminate
+    it here. A second Ctrl-C while waiting kills it, then the interrupt keeps
+    propagating so the command can exit.
+    """
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=2)
+    except KeyboardInterrupt:
+        process.kill()
+        try:
+            process.wait(timeout=2)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            pass
+        raise
+
+
 def fetch_usage_from_pid(pid: int, csrf_token: str) -> UsageSnapshot | None:
     summary = status = None
     for port in _ports(pid):
@@ -307,14 +332,10 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
             # floor is agy's own boot-to-RPC warmup, untunable from outside.
             time.sleep(0.1)
     finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=2)
-        os.close(master)
+        try:
+            _stop_spawned(process)
+        finally:
+            os.close(master)
 
     terminal_email = _terminal_email(bytes(output))
     if usage is None:
