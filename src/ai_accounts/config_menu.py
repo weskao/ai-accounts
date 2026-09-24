@@ -150,7 +150,7 @@ _CURSOR_MARK = "❯ "
 _NO_CURSOR_MARK = "  "
 _UNSET_EN = "(unset)"
 _FOOTER_HINT_EN = (
-    "↑↓ select · ←→ change · ⏎ edit/toggle · r reset · Esc cancel · q/Ctrl-C quit"
+    "↑↓ select · ←→ change · ⏎ edit/toggle · r reset · Esc cancel · q/Ctrl+C quit"
     " · saves as you go"
 )
 _RESET_CONFIRM_EN = "Reset ALL settings to their defaults? [y/N]"

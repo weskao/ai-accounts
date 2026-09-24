@@ -360,7 +360,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "group.Provider behavior": {"zh-TW": "各家 CLI 行為"},
     "group.General": {"zh-TW": "一般"},
     # ── config menu chrome (English lives at each call site as the default) ──
-    "menu.keys": {"zh-TW": "↑↓ 移動 · ←→ 切換 · Enter 編輯/切換 · r 重設 · Esc 取消 · q/Ctrl-C 離開 · 自動儲存"},
+    "menu.keys": {"zh-TW": "↑↓ 移動 · ←→ 切換 · Enter 編輯/切換 · r 重設 · Esc 取消 · q/Ctrl+C 離開 · 自動儲存"},
     "menu.unset": {"zh-TW": "（未設定）"},
     "menu.reset_confirm": {"zh-TW": "確定要把所有設定還原為預設值嗎？[y/N]"},
     "menu.prompt": {"zh-TW": "{label} 的新值{hint}："},
