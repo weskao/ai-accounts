@@ -387,6 +387,14 @@ FIELDS: tuple[Field, ...] = (
         help="Refresh OAuth tokens on the scheduled timer, independent of auto-switch.",
         group="General",
     ),
+    Field(
+        key="update_check",
+        type=bool,
+        default=True,
+        label="Check for updates",
+        help="After a command, say when a newer ai-accounts release is on GitHub (checked once a day).",
+        group="General",
+    ),
 )
 
 

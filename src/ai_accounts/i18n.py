@@ -335,6 +335,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.token_refresh.help": {
         "zh-TW": "依排程更新 OAuth token，與自動切換各自獨立。"
     },
+    "config.update_check.label": {"zh-TW": "檢查更新"},
+    "config.update_check.help": {
+        "zh-TW": "指令結束後，若 GitHub 有更新的 ai-accounts 版本就提示（每天最多查一次）。"
+    },
+    "update.available": {
+        "en": "ai-accounts {latest} is available (you have {current})",
+        "zh-TW": "ai-accounts {latest} 已推出（目前是 {current}）",
+    },
     "config.language.label": {"zh-TW": "語言"},
     "config.language.help": {
         "zh-TW": "通知訊息與本選單的語言。未指定前跟隨系統語系。"

@@ -54,15 +54,24 @@ def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
     Python print a traceback, which reads as a failure. ``finally`` blocks in
     the command still run before this returns, so in-flight cleanup (restoring
     the live session, stopping a spawned CLI) happens first.
+
+    Every entry point's ``main`` wears this, so it is also where the GitHub
+    update hint runs (:mod:`ai_accounts.update_check`) — once per process tree.
     """
 
     @wraps(func)
     def wrapper(*args: object, **kwargs: object) -> int:
+        from . import update_check
+
+        outermost = update_check.claim()
         try:
             return func(*args, **kwargs)
         except KeyboardInterrupt:
             print(file=sys.stderr)
             return 130
+        finally:
+            if outermost:
+                update_check.maybe_hint()
 
     return wrapper
 

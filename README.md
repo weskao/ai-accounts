@@ -72,6 +72,14 @@ uv tool upgrade ai-accounts
 uv tool uninstall ai-accounts
 ```
 
+When a newer GitHub release exists, any command run in a terminal ends with a
+two-line hint on stderr — the new version and the exact
+`uv tool install --force --from git+…@vX.Y.Z ai-accounts` line that installs
+it. GitHub is asked at most once a day (cached in
+`~/.ai-accounts/update-check.json`, 0.8 s timeout); offline, piped output, the
+scheduled timer and the vendor-CLI hooks stay silent, and the exit code never
+changes. Turn it off with `ai-accounts config set update_check false`.
+
 ## Commands
 
 | Command | Purpose |
