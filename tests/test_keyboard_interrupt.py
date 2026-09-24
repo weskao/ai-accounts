@@ -75,6 +75,9 @@ class QuietKeyboardInterruptTests(unittest.TestCase):
                 self.assertNotIn("KeyboardInterrupt", text)
                 self.assertNotIn("❌", text)
 
+    # CTRL_C_EVENT either hits the whole console (pytest too) or, with
+    # CREATE_NEW_PROCESS_GROUP, is ignored by the child — no safe way to test it.
+    @unittest.skipIf(sys.platform == "win32", "real Ctrl-C can't target one child on Windows")
     def test_a_real_sigint_exits_130_without_a_traceback(self) -> None:
         script = (
             "import time\n"
@@ -85,19 +88,14 @@ class QuietKeyboardInterruptTests(unittest.TestCase):
             "    return 0\n"
             "raise SystemExit(main())\n"
         )
-        popen_kwargs = {}
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         process = subprocess.Popen(
             [sys.executable, "-c", script],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            **popen_kwargs,
         )
         time.sleep(0.4)
-        sig = signal.CTRL_C_EVENT if sys.platform == "win32" else signal.SIGINT
-        process.send_signal(sig)
+        process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=5)
         text = stdout + stderr
         self.assertEqual(process.returncode, 130, text)
