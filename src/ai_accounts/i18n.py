@@ -343,6 +343,21 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "ai-accounts {latest} is available (you have {current})",
         "zh-TW": "ai-accounts {latest} 已推出（目前是 {current}）",
     },
+    "update.now": {"en": "Update now", "zh-TW": "立即更新"},
+    "update.skip": {"en": "Skip", "zh-TW": "略過"},
+    "update.skip_detail": {"en": "ask again next run", "zh-TW": "下次執行再問"},
+    "update.skip_version": {"en": "Skip until next version", "zh-TW": "略過到下一版"},
+    "update.skip_version_detail": {
+        "en": "ask again once a newer version ships",
+        "zh-TW": "有新版本推出後才會再詢問",
+    },
+    "update.confirm": {"en": "confirm", "zh-TW": "確認"},
+    "update.select": {"en": "select", "zh-TW": "選擇"},
+    "update.skip_key": {"en": "skip", "zh-TW": "略過"},
+    "update.failed": {
+        "en": "Update did not finish — run it yourself:",
+        "zh-TW": "更新沒有完成 — 請自行執行：",
+    },
     "config.language.label": {"zh-TW": "語言"},
     "config.language.help": {
         "zh-TW": "通知訊息與本選單的語言。未指定前跟隨系統語系。"

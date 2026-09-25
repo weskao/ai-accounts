@@ -72,14 +72,19 @@ uv tool upgrade ai-accounts
 uv tool uninstall ai-accounts
 ```
 
-When a newer GitHub release exists, any command run in a terminal ends with a
-two-line hint on stderr — the new version and the exact
-`uv tool install --force --from git+…@vX.Y.Z ai-accounts` line that installs
-it. The GitHub request runs in the background while the command works, at
-most once every 10 minutes (cached in `~/.ai-accounts/update-check.json`,
-0.8 s timeout); offline, piped output, the
-scheduled timer and the vendor-CLI hooks stay silent, and the exit code never
-changes. Turn it off with `ai-accounts config set update_check false`.
+When a newer GitHub release exists, any command run in a real terminal (both
+stdin and stdout are a TTY) ends by asking — `❯ Update now` / `Skip` / `Skip
+until next version` — instead of just hinting. Choosing *Update now* runs the
+`uv tool install --force --from git+…@vX.Y.Z ai-accounts` install for you;
+*Skip until next version* is remembered (in the same cache file) so the
+prompt stays quiet until a release past that one shows up. A command whose
+output is piped, or run from the scheduled timer or a vendor-CLI hook, falls
+back to the old two-line stderr hint instead — never an interactive prompt
+with no keyboard behind it. The GitHub request runs in the background while
+the command works, at most once every 10 minutes (cached in
+`~/.ai-accounts/update-check.json`, 0.8 s timeout); offline stays silent, and
+the exit code never changes. Turn it off with
+`ai-accounts config set update_check false`.
 
 ## Commands
 
