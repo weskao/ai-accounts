@@ -1,4 +1,14 @@
+## [0.14.0] - 2026-09-26
+
+### 🚀 Features
+
+- **update-check:** Check github in background, not once a day
+- Add interactive update prompt
 ## [0.13.1] - 2026-09-24
+
+### 📚 Documentation
+
+- **changelog:** Release v0.13.1
 
 ### 🧪 Testing
 
