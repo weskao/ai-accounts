@@ -55,7 +55,7 @@ jobs:
               scripts = environment / ("Scripts" if os.name == "nt" else "bin")
               python = scripts / ("python.exe" if os.name == "nt" else "python")
               subprocess.run(
-                  ["uv", "pip", "install", "--python", python, wheel],
+                  ["uv", "pip", "install", "--python", python, "--offline", wheel],
                   check=True,
               )
               suffix = ".exe" if os.name == "nt" else ""
