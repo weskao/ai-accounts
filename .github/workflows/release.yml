@@ -37,7 +37,7 @@ jobs:
       - name: Validate release wheel
         run: |
           uv venv .release-venv
-          uv pip install --python .release-venv/bin/python --no-index dist/*.whl
+          uv pip install --python .release-venv/bin/python dist/*.whl
           for command in ai-accounts codex-accounts claude-accounts agy-accounts grok-accounts vibe-accounts; do
             ".release-venv/bin/$command" --help
           done
