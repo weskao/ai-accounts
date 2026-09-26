@@ -27,12 +27,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import telegram_kit
+
 from . import _utils as u
 from . import config_schema
 from . import i18n
 from . import secrets_store
 from .providers import PROVIDERS
-from .telegram_notify import send_telegram
 from .usage_format import UsageWindow
 
 CONFIG_ENV = "AI_ACCOUNTS_CONFIG_JSON"
@@ -204,7 +205,7 @@ def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
         u.log_red("Telegram notifications need telegram_bot_token and telegram_chat_id")
         return False
     text = "\n".join(part for part in (title, message) if part)
-    return send_telegram(token, chat_id, text)
+    return telegram_kit.send_message(token, chat_id, text)
 
 
 def notify(title: str, message: str) -> bool:

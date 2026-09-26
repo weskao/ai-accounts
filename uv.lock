@@ -6,6 +6,9 @@ requires-python = ">=3.10"
 name = "ai-accounts"
 version = "0.14.0"
 source = { editable = "." }
+dependencies = [
+    { name = "telegram-kit" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -15,6 +18,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "telegram-kit", git = "https://github.com/weskao/telegram-kit?rev=v0.1.0" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -150,6 +154,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c0/b8/e43466b2a6067ce91e669068f6e28d6c719a920f014b070d5c8731725de3/ruff-0.15.21-py3-none-win_amd64.whl", hash = "sha256:d4b8d9a2f0f12b816b50447f6eccb9f4bb01a6b82c86b50fb3b5354b458dc6d3", size = 12038772, upload-time = "2026-07-09T20:01:29.497Z" },
     { url = "https://files.pythonhosted.org/packages/dd/75/e90ab9aeece218a9fc5a5bc3ec97d0ee6bb3c4ff95869463c1de58e29a1c/ruff-0.15.21-py3-none-win_arm64.whl", hash = "sha256:6e83115d4b9377c1cbc13abf0e051f069fab0ef815ea0504a8a008cee24dd0a8", size = 11375265, upload-time = "2026-07-09T20:01:31.772Z" },
 ]
+
+[[package]]
+name = "telegram-kit"
+version = "0.1.0"
+source = { git = "https://github.com/weskao/telegram-kit?rev=v0.1.0#795ad8370c7d7eee5aa48f3710dcd9fc67a47be3" }
 
 [[package]]
 name = "tomli"
