@@ -36,10 +36,9 @@ jobs:
           uv build
       - name: Validate release wheel
         run: |
-          uv venv .release-venv
-          uv pip install --python .release-venv/bin/python --offline dist/*.whl
+          uv pip install --python .venv/bin/python --no-deps --reinstall dist/*.whl
           for command in ai-accounts codex-accounts claude-accounts agy-accounts grok-accounts vibe-accounts; do
-            ".release-venv/bin/$command" --help
+            ".venv/bin/$command" --help
           done
       - name: Create checksums
         run: sha256sum dist/* > dist/SHA256SUMS

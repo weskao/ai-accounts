@@ -46,28 +46,24 @@ jobs:
           import os
           import pathlib
           import subprocess
-          import tempfile
 
           wheel, = pathlib.Path("dist").glob("*.whl")
-          with tempfile.TemporaryDirectory() as directory:
-              environment = pathlib.Path(directory)
-              subprocess.run(["uv", "venv", environment], check=True)
-              scripts = environment / ("Scripts" if os.name == "nt" else "bin")
-              python = scripts / ("python.exe" if os.name == "nt" else "python")
-              subprocess.run(
-                  ["uv", "pip", "install", "--python", python, "--offline", wheel],
-                  check=True,
-              )
-              suffix = ".exe" if os.name == "nt" else ""
-              for command in (
-                  "ai-accounts",
-                  "codex-accounts",
-                  "claude-accounts",
-                  "agy-accounts",
-                  "grok-accounts",
-                  "vibe-accounts",
-              ):
-                  subprocess.run([scripts / f"{command}{suffix}", "--help"], check=True)
+          scripts = pathlib.Path(".venv") / ("Scripts" if os.name == "nt" else "bin")
+          python = scripts / ("python.exe" if os.name == "nt" else "python")
+          subprocess.run(
+              ["uv", "pip", "install", "--python", python, "--no-deps", "--reinstall", wheel],
+              check=True,
+          )
+          suffix = ".exe" if os.name == "nt" else ""
+          for command in (
+              "ai-accounts",
+              "codex-accounts",
+              "claude-accounts",
+              "agy-accounts",
+              "grok-accounts",
+              "vibe-accounts",
+          ):
+              subprocess.run([scripts / f"{command}{suffix}", "--help"], check=True)
 
   notify-telegram:
     needs: test
