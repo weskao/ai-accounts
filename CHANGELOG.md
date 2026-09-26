@@ -1,3 +1,8 @@
+## [0.15.1] - 2026-09-26
+
+### 💼 Other
+
+- **deps:** Use telegram-kit>=0.1.3 from PyPI
 ## [0.15.0] - 2026-09-26
 
 ### 🚜 Refactor
