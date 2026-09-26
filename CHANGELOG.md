@@ -1,3 +1,8 @@
+## [0.15.2] - 2026-09-26
+
+### 🐛 Bug Fixes
+
+- **ci:** Validate wheel by reinstalling into the locked venv, not offline
 ## [0.15.1] - 2026-09-26
 
 ### 🐛 Bug Fixes
