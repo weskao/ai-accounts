@@ -1,3 +1,21 @@
+## [0.15.1] - 2026-09-26
+
+### 🐛 Bug Fixes
+
+- **ci:** Drop --no-index from wheel-install checks
+- **ci:** Use --offline instead of --no-index for wheel checks
+
+### 💼 Other
+
+- **deps:** Use telegram-kit>=0.1.3 from PyPI
+
+### 📚 Documentation
+
+- **changelog:** Release v0.15.1
+
+### ⚙️ Miscellaneous Tasks
+
+- **changelog:** Remove stray unreleased v0.15.1 entry
 ## [0.15.0] - 2026-09-26
 
 ### 🚜 Refactor
