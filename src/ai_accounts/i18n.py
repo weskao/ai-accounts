@@ -354,6 +354,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "update.confirm": {"en": "confirm", "zh-TW": "確認"},
     "update.select": {"en": "select", "zh-TW": "選擇"},
     "update.skip_key": {"en": "skip", "zh-TW": "略過"},
+    "update.release_notes": {"en": "Release notes:", "zh-TW": "版本說明："},
     "update.failed": {
         "en": "Update did not finish — run it yourself:",
         "zh-TW": "更新沒有完成 — 請自行執行：",

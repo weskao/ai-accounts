@@ -203,9 +203,12 @@ def _update_lines(lang: str, current: str, latest: str, selected: int) -> list[s
     # mark the selected one with a bare cursor glyph and never number it.
     texts = [label for label, _ in choices]
     label_w = max(_present.visible_len(t) for t in texts)
+    release_url = f"https://github.com/{REPO}/releases/tag/{latest}"
+    release_line = f"{i18n.t('update.release_notes', lang)}{release_url}"
     box_w = max(
         _present.visible_len(title) + 8,
         label_w + max(_present.visible_len(d) for _, d in choices) + 6,
+        _present.visible_len(release_line) + 6,
     )
     dashes = box_w - _present.visible_len(title) - 4
     lines = [f"{u.CYAN}╭─ {u.BOLD}{title}{u.RESET}{u.CYAN} {'─' * dashes}╮{u.RESET}"]
@@ -218,6 +221,7 @@ def _update_lines(lang: str, current: str, latest: str, selected: int) -> list[s
             row = f"{_NO_CURSOR_MARK}{text}{pad}  {u.DIM}{detail}{u.RESET}"
         lines.append(f"{u.CYAN}│{u.RESET}  {row}")
     lines.append(f"{u.CYAN}│{u.RESET}")
+    lines.append(f"{u.CYAN}│{u.RESET}  {release_line}")
     hint = " · ".join([
         f"{u.CYAN}↑↓{u.RESET} {i18n.t('update.select', lang)}",
         f"{u.CYAN}⏎{u.RESET} {i18n.t('update.confirm', lang)}",

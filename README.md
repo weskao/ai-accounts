@@ -80,7 +80,8 @@ until next version` — instead of just hinting. Choosing *Update now* runs the
 prompt stays quiet until a release past that one shows up. A command whose
 output is piped, or run from the scheduled timer or a vendor-CLI hook, falls
 back to the old two-line stderr hint instead — never an interactive prompt
-with no keyboard behind it. The GitHub request runs in the background while
+with no keyboard behind it. The prompt box also shows a "Release notes:" link
+to the new version's GitHub release page. The GitHub request runs in the background while
 the command works, at most once every 10 minutes (cached in
 `~/.ai-accounts/update-check.json`, 0.8 s timeout); offline stays silent, and
 the exit code never changes. Turn it off with
