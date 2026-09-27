@@ -53,7 +53,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -157,11 +157,11 @@ wheels = [
 
 [[package]]
 name = "telegram-kit"
-version = "0.1.3"
+version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9f/c3/8d534d19c985eb084868e270b5a78b0edac186561d024a1cc3afdc258570/telegram_kit-0.1.3.tar.gz", hash = "sha256:7725a4a6942007c35e8f5413c1f37010edb372d56f3066083ba5594f2de4b309", size = 16978, upload-time = "2026-09-26T20:27:36.384Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/fc/0f68a7fd4df95338ca7bc760a45ee85e2ce40d1ee0bd178d740b83653892/telegram_kit-0.1.4.tar.gz", hash = "sha256:c99c8919468a3dfbfb079ec29012dfcb2b93a6c0e2714fa87550bf8c0721fb84", size = 19954, upload-time = "2026-09-27T20:33:48.163Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/dc/6faec566b8d8144129bb3111a04602093c127482a1788ccbf5bf53ece8cd/telegram_kit-0.1.3-py3-none-any.whl", hash = "sha256:e32d0b6e51b0e634a20c280b25cbdae1a6280dbc0f569016180ecdec58471a6e", size = 8805, upload-time = "2026-09-26T20:27:35.337Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/94/24bbcc034bf6b4546f2ac503cfacba5e9bf68f3bd79db89cf2c17ce83ee8/telegram_kit-0.1.4-py3-none-any.whl", hash = "sha256:419da760a033d7d2d0a049a33f98d0aab97305476bf0d3bcf5bca6f74154e0d0", size = 9994, upload-time = "2026-09-27T20:33:47.403Z" },
 ]
 
 [[package]]
