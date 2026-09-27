@@ -1,3 +1,16 @@
+## [0.17.1] - 2026-09-27
+
+### 💼 Other
+
+- **deps:** Bump telegram-kit to v0.1.4
+
+### 📚 Documentation
+
+- **readme:** Document shared commands across provider tools
+
+### 🧪 Testing
+
+- **update-check:** Guard every console script runs the check
 ## [0.17.0] - 2026-09-27
 
 ### 🚀 Features
