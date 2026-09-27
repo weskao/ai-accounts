@@ -187,8 +187,8 @@ def _run_upgrade(latest: str) -> None:
 def _update_lines(lang: str, current: str, latest: str, selected: int) -> list[str]:
     """The update prompt: this project's own box style (see
     :func:`ai_accounts._present.panel` — rounded corners, open right side),
-    with the text layout aicp and codex-reset-watch use: one combined title
-    line, column-aligned choices, no rule between them, a footer hint."""
+    with a shared text layout: one combined title line, column-aligned
+    choices, no rule between them, a footer hint."""
     from . import _utils as u
     from . import i18n
 
@@ -234,8 +234,7 @@ def _update_lines(lang: str, current: str, latest: str, selected: int) -> list[s
 
 def update_prompt(current: str, latest: str, *, read=kr.read_key, out=None) -> str:
     """Ask what to do about *latest*: returns UPDATE_NOW / SKIP / SKIP_VERSION.
-    An exhausted key source, Ctrl-C, ``q`` or Escape all back out as SKIP —
-    same contract as aicp's and codex-reset-watch's prompts."""
+    An exhausted key source, Ctrl-C, ``q`` or Escape all back out as SKIP."""
     from . import i18n
 
     out = out or sys.stdout

@@ -297,3 +297,33 @@ def test_update_prompt_ctrl_c_is_skip():
 def test_update_prompt_exhausted_source_is_skip():
     answer = uc.update_prompt("0.12.0", "v9.9.0", read=iter([]).__next__, out=io.StringIO())
     assert answer == uc.SKIP
+
+
+def _console_scripts() -> dict[str, str]:
+    """``[project.scripts]`` from pyproject.toml: name → ``module:func``."""
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    section = text.split("[project.scripts]", 1)[1].split("\n[", 1)[0]
+    return dict(re.findall(r'^([\w-]+)\s*=\s*"([^"]+)"', section, re.MULTILINE))
+
+
+def test_every_script_starts_and_reports_the_check(monkeypatch, capsys):
+    """--help, help and no args get the update prompt too. A new console
+    script whose ``main`` skips ``quiet_keyboard_interrupt`` fails here."""
+    import importlib
+
+    scripts = _console_scripts()
+    assert "ai-accounts" in scripts
+    for name, target in scripts.items():
+        module, func = target.split(":")
+        main = getattr(importlib.import_module(module), func)
+        for argv in (["--help"], ["help"], []):
+            seen: list[str] = []
+            monkeypatch.delenv(uc._CLAIMED_ENV, raising=False)
+            monkeypatch.setattr(uc, "start_check", lambda: seen.append("start"))
+            monkeypatch.setattr(uc, "maybe_hint", lambda: seen.append("hint"))
+            main(argv)
+            assert seen == ["start", "hint"], (name, argv)
+    capsys.readouterr()
