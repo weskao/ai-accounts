@@ -41,6 +41,13 @@ IS_MACOS = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
 
 
+def normalize_command_argv(argv: list[str]) -> list[str]:
+    """Let `--command` alias `command` (argv[0] only), e.g. `--config` == `config`."""
+    if argv and argv[0].startswith("--") and len(argv[0]) > 2:
+        return [argv[0][2:], *argv[1:]]
+    return argv
+
+
 def source_device() -> str:
     """Short, human-readable label for notification provenance, e.g.
     '🖥️ Mac mini · d011********'."""

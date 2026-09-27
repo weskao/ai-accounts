@@ -59,6 +59,7 @@ from ._utils import (
     keychain_write,
     log_red,
     log_yellow,
+    normalize_command_argv,
     quiet_keyboard_interrupt,
     resolve_account_dir,
 )
@@ -826,7 +827,7 @@ def cmd_login_switch(name: str) -> int:
 
 @quiet_keyboard_interrupt
 def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
+    argv = normalize_command_argv(list(sys.argv[1:] if argv is None else argv))
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(format_help(i18n.t("help.copilot", default=HELP)))
         return 0

@@ -144,5 +144,21 @@ class SecurityQuoteTests(unittest.TestCase):
         self.assertIn("newline", str(ctx.exception))
 
 
+class NormalizeCommandArgvTests(unittest.TestCase):
+    """`--command` aliases `command` for every CLI's argv[0]."""
+
+    def test_strips_leading_dashes_from_command(self) -> None:
+        self.assertEqual(_utils.normalize_command_argv(["--config", "get"]), ["config", "get"])
+
+    def test_leaves_bare_command_unchanged(self) -> None:
+        self.assertEqual(_utils.normalize_command_argv(["config", "get"]), ["config", "get"])
+
+    def test_leaves_trailing_flags_unchanged(self) -> None:
+        self.assertEqual(_utils.normalize_command_argv(["list", "--json"]), ["list", "--json"])
+
+    def test_leaves_empty_argv_unchanged(self) -> None:
+        self.assertEqual(_utils.normalize_command_argv([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()

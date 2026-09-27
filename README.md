@@ -99,6 +99,10 @@ the exit code never changes. Turn it off with
 | `vibe-accounts` | Manage Mistral Vibe API-key profiles |
 | `copilot-accounts` | Manage GitHub Copilot CLI profiles, identity and monthly credit balance |
 
+Every command also accepts a `--` prefix: `ai-accounts --config` is the same
+as `ai-accounts config`, `codex-accounts --list` is the same as
+`codex-accounts list`, and so on for every provider tool.
+
 Use the umbrella command to run the same action for all providers:
 
 ```sh

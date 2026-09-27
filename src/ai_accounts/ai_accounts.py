@@ -20,7 +20,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config_menu as cm
 from . import _present, i18n
-from ._utils import BOLD, CYAN, RESET, Spinner, log_red, package_version, quiet_keyboard_interrupt
+from ._utils import (
+    BOLD,
+    CYAN,
+    RESET,
+    Spinner,
+    log_red,
+    normalize_command_argv,
+    package_version,
+    quiet_keyboard_interrupt,
+)
 from .providers import PROVIDERS
 
 # (display label, importable module). Each module is `python -m`-runnable and
@@ -263,7 +272,7 @@ def cmd_autoswitch_setup() -> int:
 
 @quiet_keyboard_interrupt
 def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
+    argv = normalize_command_argv(list(sys.argv[1:] if argv is None else argv))
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(_present.format_help(i18n.t("help.ai_accounts", default=HELP)))
         return 0
