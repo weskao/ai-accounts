@@ -1,3 +1,8 @@
+## [0.16.0] - 2026-09-27
+
+### 🚀 Features
+
+- **update-check:** Show release notes link in update prompt
 ## [0.15.2] - 2026-09-26
 
 ### 🐛 Bug Fixes
