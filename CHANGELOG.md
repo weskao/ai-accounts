@@ -1,3 +1,8 @@
+## [0.17.0] - 2026-09-27
+
+### 🚀 Features
+
+- **cli:** Accept --command as alias for command
 ## [0.16.0] - 2026-09-27
 
 ### 🚀 Features
