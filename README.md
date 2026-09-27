@@ -148,6 +148,29 @@ codex-accounts remove <profile_name>          # Delete a saved profile
 codex-accounts help                           # Show available commands
 ```
 
+The other provider tools use the same commands — swap `codex-accounts` for the
+tool you need. For example:
+
+```sh
+claude-accounts login-switch work             # Log in to Claude Code and save it as "work"
+agy-accounts switch                           # Pick a saved Antigravity profile from a menu
+copilot-accounts usage                        # Show the active Copilot account's credit balance
+```
+
+`switch` and `remove` without a name open an interactive picker, and `save`
+without a name picks one from the active account's email or login. What
+differs per tool:
+
+| Command | Worth knowing |
+| --- | --- |
+| `claude-accounts` | Same workflow as Codex; `login-switch` runs `claude auth login` |
+| `agy-accounts` | `list` is slow (one account at a time) — see [Fast Antigravity lists](#fast-antigravity-lists); `usage` checks only the active account |
+| `grok-accounts` | `list` shows SuperGrok plan and weekly usage; no auto-switch |
+| `vibe-accounts` | API-key profiles with no quota data; `refresh` is not needed for static keys; no auto-switch |
+| `copilot-accounts` | `list` shows the monthly AI-credit balance; `refresh` only checks the token is still valid; no auto-switch yet |
+
+Run `<tool> help` for the full command list of any tool.
+
 Every per-provider tool's `list`/`usage` also accepts `--json`, printing one
 JSON array of `{"name", "active", "usage", "no_quota_api"}` objects instead of
 the table (`usage` is `null` and `no_quota_api` is `true` for Vibe, which has
