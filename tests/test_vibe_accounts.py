@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import stat
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -10,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from ai_accounts import autoswitch as aw
+from ai_accounts import profile_secrets as ps
 from ai_accounts import vibe_accounts as va
 from ai_accounts._present import _ANSI_RE
 
@@ -19,6 +21,15 @@ def _auth(key: str = "sk-fake-1234567890abcdef") -> dict[str, str]:
         "MISTRAL_API_KEY": key,
         "SOME_OTHER_VAR": "value",
     }
+
+
+def _seed(path: Path, payload: dict) -> bool:
+    """Write a legacy (pre-migration) plaintext profile directly, bypassing
+    profile_secrets — vibe_accounts no longer exposes its own _write_json now
+    that profiles go through profile_secrets.save."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return True
 
 
 class VibeAccountsTests(unittest.TestCase):
@@ -81,7 +92,7 @@ class VibeAccountsTests(unittest.TestCase):
             self.assertEqual(va.cmd_who(), 0)
 
         self.assertEqual(
-            va._read_json(self.account_dir / "personal.json"),
+            va._load_profile(self.account_dir / "personal.json"),
             {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"},
         )
 
@@ -90,7 +101,7 @@ class VibeAccountsTests(unittest.TestCase):
         # A leftover plaintext key outranks the keyring in vibe's own lookup, so
         # a switch that ignored it would be silently undone.
         self.assertTrue(va._write_env(va._auth_file(), _auth("sk-old-key")))
-        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(_seed(self.account_dir / "personal.json", _auth()))
 
         with redirect_stdout(io.StringIO()):
             self.assertEqual(va.cmd_switch("personal"), 0)
@@ -106,7 +117,7 @@ class VibeAccountsTests(unittest.TestCase):
 
     def test_switch_falls_back_to_env_file_without_a_keychain(self) -> None:
         self._install_fake_keychain(writable=False)
-        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(_seed(self.account_dir / "personal.json", _auth()))
 
         with redirect_stdout(io.StringIO()):
             self.assertEqual(va.cmd_switch("personal"), 0)
@@ -144,18 +155,21 @@ class VibeAccountsTests(unittest.TestCase):
 
     def test_switch_keeps_backup_in_ai_accounts_store(self) -> None:
         self.assertTrue(va._write_env(va._auth_file(), _auth("sk-old-key")))
-        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(_seed(self.account_dir / "personal.json", _auth()))
 
         with redirect_stdout(io.StringIO()):
             self.assertEqual(va.cmd_switch("personal"), 0)
 
-        self.assertTrue(list((self.account_dir.parent / "backups").glob(".env.backup-*.json")))
+        backed_up = ps.read_backup("vibe")
+        assert backed_up is not None
+        self.assertEqual(json.loads(backed_up)["MISTRAL_API_KEY"], "sk-old-key")
+        self.assertFalse(list((self.account_dir.parent / "backups").glob(".env.backup-*.json")))
 
     def test_usage_shows_only_active_profile(self) -> None:
         self.assertTrue(va._write_env(va._auth_file(), _auth()))
-        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(_seed(self.account_dir / "personal.json", _auth()))
         self.assertTrue(
-            va._write_json(
+            _seed(
                 self.account_dir / "work.json",
                 _auth("sk-work-key"),
             )
@@ -172,7 +186,7 @@ class VibeAccountsTests(unittest.TestCase):
         self.assertNotIn("work", text)
 
     def test_usage_reports_when_no_active_profile(self) -> None:
-        self.assertTrue(va._write_json(self.account_dir / "saved.json", _auth()))
+        self.assertTrue(_seed(self.account_dir / "saved.json", _auth()))
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             self.assertEqual(va.cmd_list(only_active=True), 0)
@@ -181,7 +195,7 @@ class VibeAccountsTests(unittest.TestCase):
 
     def test_list_json_round_trips_profile_with_no_quota_api(self) -> None:
         self.assertTrue(va._write_env(va._auth_file(), _auth()))
-        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(_seed(self.account_dir / "personal.json", _auth()))
         (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
         output = io.StringIO()
         with redirect_stdout(output):
@@ -194,14 +208,14 @@ class VibeAccountsTests(unittest.TestCase):
         )
 
     def test_usage_json_empty_array_when_no_active_profile(self) -> None:
-        self.assertTrue(va._write_json(self.account_dir / "saved.json", _auth()))
+        self.assertTrue(_seed(self.account_dir / "saved.json", _auth()))
         output = io.StringIO()
         with redirect_stdout(output):
             self.assertEqual(va.main(["usage", "--json"]), 0)
         self.assertEqual(json.loads(output.getvalue()), [])
 
     def test_list_never_prints_tokens(self) -> None:
-        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(_seed(self.account_dir / "personal.json", _auth()))
         output = io.StringIO()
         with redirect_stdout(output):
             self.assertEqual(va.cmd_list(), 0)
@@ -213,9 +227,9 @@ class VibeAccountsTests(unittest.TestCase):
         self.assertNotIn("sk-fake", listing)
 
     def test_remove_no_args_opens_interactive_picker_and_removes(self) -> None:
-        self.assertTrue(va._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(_seed(self.account_dir / "personal.json", _auth()))
         self.assertTrue(
-            va._write_json(
+            _seed(
                 self.account_dir / "work.json",
                 _auth("sk-work-key"),
             )
@@ -270,14 +284,14 @@ class VibeAccountsTests(unittest.TestCase):
 
     def test_openai_api_key_uses_same_identity_for_switch_and_sync(self) -> None:
         payload = {"OPENAI_API_KEY": "sk-openai-compatible-key"}
-        self.assertTrue(va._write_json(self.account_dir / "personal.json", payload))
+        self.assertTrue(_seed(self.account_dir / "personal.json", payload))
         self.assertTrue(va._write_env(va._auth_file(), payload))
         self.assertTrue(va._active_profile(), "the active profile should be detected")
 
         with redirect_stdout(io.StringIO()):
             self.assertEqual(va.cmd_sync(), 0)
 
-        self.assertEqual(va._read_json(self.account_dir / "personal.json"), payload)
+        self.assertEqual(va._load_profile(self.account_dir / "personal.json"), payload)
 
 
 class VibeAutoswitchTests(unittest.TestCase):
@@ -298,3 +312,82 @@ class VibeAutoswitchTests(unittest.TestCase):
         )
         self.assertEqual(err.getvalue(), "")
         engine.assert_not_called()
+
+
+# ── profile_secrets adoption: migration, store-unavailable fallback, remove,
+# ── backup (fixture-driven, see tests/conftest.py's `profile_store`) ─────────
+
+def _vibe_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_HOME", str(tmp_path / ".vibe"))
+    monkeypatch.setenv("VIBE_ACCOUNT_DIR", str(tmp_path / "accounts"))
+    return tmp_path / "accounts"
+
+
+def test_vibe_legacy_profile_migrates_on_first_load(tmp_path, monkeypatch, profile_store, capsys):
+    account_dir = _vibe_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    _seed(path, {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"})
+
+    assert va._load_profile(path) == {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"}
+    on_disk = json.loads(path.read_text())
+    assert "MISTRAL_API_KEY" not in on_disk
+    assert ps.SECRETS_KEY in on_disk
+    assert "sk-fake" not in path.read_text()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert profile_store.slots
+    assert capsys.readouterr().err.count("Moved secrets") == 1
+
+
+def test_vibe_legacy_profile_migration_is_idempotent(tmp_path, monkeypatch, profile_store, capsys):
+    account_dir = _vibe_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    _seed(path, {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"})
+
+    assert va._load_profile(path) == {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"}
+    migrated = path.read_bytes()
+    assert va._load_profile(path) == {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"}
+    assert path.read_bytes() == migrated
+    assert capsys.readouterr().err.count("Moved secrets") == 1
+
+
+def test_vibe_unavailable_store_keeps_profile_byte_identical(tmp_path, monkeypatch, profile_store, capsys):
+    profile_store.unavailable = True
+    account_dir = _vibe_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    _seed(path, {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"})
+    before = path.read_bytes()
+
+    assert va._load_profile(path) == {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"}
+    assert path.read_bytes() == before
+    assert capsys.readouterr().err.count("No OS credential store") == 1
+
+
+def test_vibe_remove_deletes_the_store_entry(tmp_path, monkeypatch, profile_store):
+    account_dir = _vibe_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    _seed(path, {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"})
+    va._load_profile(path)  # migrate so the store actually holds the secret
+    assert profile_store.slots
+
+    assert va.cmd_remove("personal") == 0
+    assert not path.exists()
+    assert not profile_store.slots
+
+
+def test_vibe_backup_keeps_one_latest_and_prunes_old_plaintext(tmp_path, monkeypatch, profile_store):
+    account_dir = _vibe_env(monkeypatch, tmp_path)
+    assert va._write_env(va._auth_file(), {"MISTRAL_API_KEY": "sk-old-key"})
+    assert va._backup_active()
+    assert va._write_env(va._auth_file(), {"MISTRAL_API_KEY": "sk-new-key"})
+    assert va._backup_active()
+
+    backed_up = ps.read_backup("vibe")
+    assert backed_up is not None
+    assert json.loads(backed_up)["MISTRAL_API_KEY"] == "sk-new-key"
+
+    # a stray legacy-style plaintext backup file gets pruned by the same call
+    backups_dir = account_dir.parent / "backups"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    (backups_dir / ".env.backup-20200101-000000.json").write_text("{}", encoding="utf-8")
+    assert va._backup_active()
+    assert not list(backups_dir.glob(".env.backup-*.json"))
