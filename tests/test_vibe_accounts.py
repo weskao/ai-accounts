@@ -396,9 +396,16 @@ def test_vibe_backup_keeps_one_latest_and_prunes_old_plaintext(tmp_path, monkeyp
 
 def test_vibe_switch_still_works_when_store_is_unavailable(tmp_path, monkeypatch, profile_store, capsys):
     account_dir = _vibe_env(monkeypatch, tmp_path)
+    # Fake keychain — never the developer's real ai.mistral.vibe item.
+    keychain: dict[tuple[str, str], str] = {(va._KEYCHAIN_SERVICE, "MISTRAL_API_KEY"): "sk-old-key"}
+    monkeypatch.setattr(va, "keychain_read", lambda service, account: keychain.get((service, account)))
+    monkeypatch.setattr(va, "keychain_write",
+                         lambda service, account, secret: keychain.__setitem__((service, account), secret) or True)
+
     profile = account_dir / "personal.json"
     _seed(profile, {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"})
     profile_store.unavailable = True
 
     assert va.cmd_switch("personal") == 0
+    assert keychain[(va._KEYCHAIN_SERVICE, "MISTRAL_API_KEY")] == "sk-fake-1234567890abcdef"
     capsys.readouterr()

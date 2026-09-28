@@ -923,12 +923,15 @@ def test_grok_backup_keeps_one_latest_and_prunes_old_plaintext(tmp_path, monkeyp
 
 def test_grok_switch_still_works_when_store_is_unavailable(tmp_path, monkeypatch, profile_store, capsys):
     account_dir = _grok_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(ga.grok_usage, "fetch_usage", lambda *a, **k: ga.grok_usage.empty_usage())
+    ga._write_json(ga._auth_file(), _auth("old@example.test", "old"))
     profile = account_dir / "personal.json"
     profile.parent.mkdir(parents=True)
     profile.write_text(json.dumps(_auth()), encoding="utf-8")
     profile_store.unavailable = True
 
     assert ga.cmd_switch("personal") == 0
+    assert ga._read_json(ga._auth_file())["https://auth.x.ai::client"]["email"] == "person@example.test"
     capsys.readouterr()
 
 

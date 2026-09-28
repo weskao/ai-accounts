@@ -682,10 +682,17 @@ def test_copilot_backup_keeps_one_latest_and_prunes_old_plaintext(tmp_path, monk
 
 def test_copilot_switch_still_works_when_store_is_unavailable(tmp_path, monkeypatch, profile_store, capsys):
     account_dir = _copilot_env(monkeypatch, tmp_path)
+    # Fake keychain — never the developer's real copilot-cli item.
+    keychain: dict[tuple[str, str], str] = {(ca._KEYCHAIN_SERVICE, ca._keychain_account(_HOST, "olduser")): "old-token"}
+    monkeypatch.setattr(ca, "keychain_read", lambda service, account: keychain.get((service, account)))
+    monkeypatch.setattr(ca, "keychain_write",
+                         lambda service, account, secret: keychain.__setitem__((service, account), secret) or True)
+
     profile = account_dir / "personal.json"
     profile.parent.mkdir(parents=True)
     profile.write_text(json.dumps(_profile()), encoding="utf-8")
     profile_store.unavailable = True
 
     assert ca.cmd_switch("personal") == 0
+    assert keychain[(ca._KEYCHAIN_SERVICE, ca._keychain_account(_HOST, "testuser"))] == _TOKEN
     capsys.readouterr()
