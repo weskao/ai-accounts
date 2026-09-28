@@ -187,6 +187,22 @@ def test_chunked_values_round_trip_and_shrink(tmp_path, profile_store, monkeypat
     assert "x" * 40 not in "".join(profile_store.slots.values())
 
 
+def test_torn_reassembly_is_refused_not_returned(tmp_path, profile_store):
+    """A store read racing another process's write, or a dropped/corrupted
+    chunk, can still reassemble into syntactically valid JSON with the wrong
+    bytes inside — the fingerprint check must catch that rather than hand
+    back corrupted tokens."""
+    path = tmp_path / "accounts" / "work.json"
+    ps.save(path, "codex", _codex_profile(), CODEX_FIELDS)
+    ps._cache.clear()
+
+    key = "codex--work"
+    profile_store.slots[key] = profile_store.slots[key].replace(
+        "fake-refresh-token", "fake-refresh-toke0")  # same length — still valid JSON
+
+    assert ps.load(path, "codex", CODEX_FIELDS) is None
+
+
 _OLD = {"token": "fake-old-" + "a" * 150}
 _NEW = {"token": "fake-new-" + "b" * 150}
 

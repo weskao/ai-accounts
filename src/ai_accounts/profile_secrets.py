@@ -291,8 +291,10 @@ def load(path: Path, tool: str, secret_fields: Sequence[str]) -> dict | None:
     A file still holding its secrets inline is migrated once: store write →
     read back → compare → only then the file is rewritten without them. Any
     failure leaves the file untouched and the inline data is returned.
-    ``None`` when the file is unreadable, or when it points at a store entry
-    that is gone (keychain item deleted, store unavailable on this machine).
+    ``None`` when the file is unreadable, when it points at a store entry
+    that is gone (keychain item deleted, store unavailable on this machine),
+    or when what came back doesn't match the marker's fingerprint (a torn
+    reassembly — a missing chunk, or a read racing another process's write).
     """
     path = Path(path)
     data = load_metadata(path)
@@ -316,7 +318,18 @@ def load(path: Path, tool: str, secret_fields: Sequence[str]) -> dict | None:
     if not isinstance(marker, dict):
         return _merge(data, {})  # a profile with no secrets at all
     secrets = _read(str(marker.get("key") or store_key(tool, path.stem)))
-    return _merge(meta, secrets) if isinstance(secrets, dict) else None
+    if not isinstance(secrets, dict):
+        return None
+    # A dropped or interleaved chunk (a missing part, or a read racing another
+    # process's generation flip) can still reassemble into valid-looking JSON
+    # with the wrong bytes inside. Re-derive the marker's fingerprint from
+    # what actually came back and refuse rather than hand back torn tokens.
+    expected_fp = marker.get("fingerprint") or ""
+    if expected_fp:
+        first = next((secrets[f] for f in secret_fields if isinstance(secrets.get(f), str)), "")
+        if not first or fingerprint(first) != expected_fp:
+            return None
+    return _merge(meta, secrets)
 
 
 def save(path: Path, tool: str, payload: dict, secret_fields: Sequence[str]) -> bool:
