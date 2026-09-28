@@ -447,7 +447,10 @@ def _rewrap_legacy_bare_profile(path: Path) -> None:
         return  # unreadable, already migrated, or already wrapped
     if "accessToken" not in meta:
         return  # nothing to rewrap
-    atomic_write_json(path, {_OAUTH_KEY: meta})
+    try:
+        atomic_write_json(path, {_OAUTH_KEY: meta})
+    except OSError:
+        pass  # read-only accounts dir: ps.load below still returns the bare data as-is
 
 
 def _read_profile_oauth(path: Path) -> dict | None:

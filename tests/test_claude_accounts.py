@@ -682,6 +682,18 @@ class ProfileSecretsTests(_HomeMixin):
         self.assertTrue(marker["has_refresh_token"])
         self.assertIn(marker["key"], self.store.slots)
 
+    def test_bare_shape_profile_in_a_readonly_dir_still_reads(self) -> None:
+        if os.name != "posix":
+            self.skipTest("chmod-based read-only dir is POSIX-only")
+        path = self._write_bare_legacy_profile("work", _oauth(access="at-ro", refresh="rt-ro"))
+        path.parent.chmod(0o500)
+        try:
+            oauth = self.quiet(ca._read_profile_oauth, path)
+        finally:
+            path.parent.chmod(0o700)
+        assert oauth is not None
+        self.assertEqual(oauth["refreshToken"], "rt-ro")  # rewrap failed silently; bare data still returned
+
     def test_unavailable_store_leaves_the_legacy_file_untouched_with_one_warning(self) -> None:
         path = self._write_legacy_profile("work", _oauth(access="at-legacy", refresh="rt-legacy"))
         before = path.read_bytes()
