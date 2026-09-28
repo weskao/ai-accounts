@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 
 import pytest
@@ -64,7 +65,8 @@ def test_inline_nested_secrets_migrate_once_and_idempotently(tmp_path, profile_s
     assert on_disk["tokens"]["account_id"] == "acct_test_001"
     assert on_disk[ps.SECRETS_KEY]["key"] == "codex--work"
     assert "fake-access-token" not in path.read_text()
-    assert _mode(path) == 0o600
+    if os.name == "posix":
+        assert _mode(path) == 0o600
     assert capsys.readouterr().err.count("Moved secrets") == 1
 
     migrated = path.read_bytes()
@@ -85,7 +87,8 @@ def test_unavailable_store_leaves_file_byte_identical_with_one_warning(tmp_path,
 
     assert path.read_bytes() == before
     assert json.loads((tmp_path / "accounts" / "other.json").read_text()) == _claude_profile()
-    assert _mode(tmp_path / "accounts" / "other.json") == 0o600
+    if os.name == "posix":
+        assert _mode(tmp_path / "accounts" / "other.json") == 0o600
     out = capsys.readouterr()
     assert out.err.count("No OS credential store") == 1
 
@@ -112,8 +115,9 @@ def test_save_load_round_trip_and_metadata(tmp_path, profile_store):
     assert marker["has_refresh_token"] is True
     assert marker["fingerprint"] == ps.fingerprint("fake-refresh-token")
     assert "fake-" not in path.read_text()
-    assert _mode(path) == 0o600
-    assert _mode(path.parent) == 0o700
+    if os.name == "posix":
+        assert _mode(path) == 0o600
+        assert _mode(path.parent) == 0o700
 
 
 def test_no_refresh_token_marker_false(tmp_path, profile_store):
@@ -194,7 +198,8 @@ def test_backup_keeps_one_and_prunes_plaintext(tmp_path, profile_store):
     assert ps.read_backup("demo") == '{"token": "fake-two"}'
     assert list(profile_store.slots) == ["backup--demo"]
     assert list(backups.iterdir()) == []
-    assert _mode(backups) == 0o700
+    if os.name == "posix":
+        assert _mode(backups) == 0o700
 
 
 def test_backup_falls_back_to_single_latest_file(tmp_path, profile_store, capsys):
@@ -203,7 +208,8 @@ def test_backup_falls_back_to_single_latest_file(tmp_path, profile_store, capsys
     assert ps.backup("demo", "fake-two") is False
     latest = tmp_path / "ai-accounts-root" / "demo" / "backups" / "latest"
     assert [p.name for p in latest.parent.iterdir()] == ["latest"]
-    assert _mode(latest) == 0o600
+    if os.name == "posix":
+        assert _mode(latest) == 0o600
     assert ps.read_backup("demo") == "fake-two"
     assert capsys.readouterr().err.count("No OS credential store") == 1
 
