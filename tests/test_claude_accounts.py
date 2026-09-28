@@ -634,6 +634,13 @@ class ProfileSecretsTests(_HomeMixin):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
 
+    def _write_bare_legacy_profile(self, name: str, oauth: dict) -> Path:
+        """A profile from before 2026-07-20: the bare oauth blob at the top
+        level, not wrapped in claudeAiOauth."""
+        path = self.home / "accounts" / f"{name}.json"
+        path.write_text(json.dumps(oauth), encoding="utf-8")
+        return path
+
     def test_legacy_profile_migrates_tokens_into_the_store_on_first_read(self) -> None:
         path = self._write_legacy_profile("work", _oauth(access="at-legacy", refresh="rt-legacy"))
         oauth = self.quiet(ca._read_profile_oauth, path)
@@ -660,6 +667,20 @@ class ProfileSecretsTests(_HomeMixin):
         oauth_again = self.quiet(ca._read_profile_oauth, path)
         self.assertEqual(oauth_again, oauth)
         self.assertEqual(path.read_bytes(), before)
+
+    def test_bare_shape_legacy_profile_is_rewrapped_and_migrated_on_first_read(self) -> None:
+        path = self._write_bare_legacy_profile("work", _oauth(access="at-legacy", refresh="rt-legacy"))
+        oauth = self.quiet(ca._read_profile_oauth, path)
+        assert oauth is not None
+        self.assertEqual(oauth["refreshToken"], "rt-legacy")
+
+        container = json.loads(path.read_text())
+        self.assertIn("claudeAiOauth", container)  # rewrapped, not left bare
+        self.assertNotIn("refreshToken", container["claudeAiOauth"])
+        self.assertNotIn("accessToken", container["claudeAiOauth"])
+        marker = container[ps.SECRETS_KEY]
+        self.assertTrue(marker["has_refresh_token"])
+        self.assertIn(marker["key"], self.store.slots)
 
     def test_unavailable_store_leaves_the_legacy_file_untouched_with_one_warning(self) -> None:
         path = self._write_legacy_profile("work", _oauth(access="at-legacy", refresh="rt-legacy"))

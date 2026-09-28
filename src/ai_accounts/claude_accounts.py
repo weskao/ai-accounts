@@ -190,10 +190,13 @@ def _set_current_profile(profile: Path) -> None:
 
 # ── credential envelope (claudeAiOauth) ─────────────────────────────────────
 # The active store may be the full credentials file ({mcpOAuth, claudeAiOauth})
-# or a bare OAuth blob (in the keychain item). Profiles always hold the bare
-# blob. _extract_oauth reads the account out of either shape; _inject_oauth
-# writes an updated account back into whatever shape a store already uses, so
-# unrelated keys (mcpOAuth) survive a switch untouched.
+# or a bare OAuth blob (in the keychain item). Saved profiles are wrapped
+# ({claudeAiOauth: {...}}, see _write_profile) — except a profile saved before
+# 2026-07-20, which is bare too and gets rewrapped on first read (see
+# _rewrap_legacy_bare_profile). _extract_oauth reads the account out of
+# either shape; _inject_oauth writes an updated account back into whatever
+# shape a store already uses, so unrelated keys (mcpOAuth) survive a switch
+# untouched.
 
 def _extract_oauth(obj: object) -> dict | None:
     if not isinstance(obj, dict):
@@ -433,7 +436,22 @@ def _token_key_from_path(path: Path) -> str | None:
     return _token_key_from_oauth(oauth) if oauth else None
 
 
+def _rewrap_legacy_bare_profile(path: Path) -> None:
+    """Profiles saved before 2026-07-20 (pre cb9cb74) held the bare OAuth blob
+    directly at the top level, not wrapped in claudeAiOauth. _SECRET_FIELDS'
+    dotted paths only match the wrapped shape, so a bare-shape file was never
+    migrated and its tokens stayed in plaintext forever. Wrap it in place
+    (once) so the ps.load below picks it up like any other legacy profile."""
+    meta = ps.load_metadata(path)
+    if not isinstance(meta, dict) or ps.SECRETS_KEY in meta or _OAUTH_KEY in meta:
+        return  # unreadable, already migrated, or already wrapped
+    if "accessToken" not in meta:
+        return  # nothing to rewrap
+    atomic_write_json(path, {_OAUTH_KEY: meta})
+
+
 def _read_profile_oauth(path: Path) -> dict | None:
+    _rewrap_legacy_bare_profile(path)
     data = ps.load(path, "claude", _SECRET_FIELDS)
     return _extract_oauth(data) if data is not None else None
 
