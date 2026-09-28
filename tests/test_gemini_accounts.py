@@ -1031,7 +1031,8 @@ class ProfileSecretStoreTests(_HomeMixin):
         assert self.active is not None
         self.assertEqual(self.active["refresh_token"], "rt-work")
 
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         on_disk = json.loads(path.read_text())
         for secret in ("access_token", "refresh_token", "id_token"):
             self.assertNotIn(secret, on_disk)

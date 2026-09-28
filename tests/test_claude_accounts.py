@@ -648,7 +648,8 @@ class ProfileSecretsTests(_HomeMixin):
         marker = container[ps.SECRETS_KEY]
         self.assertTrue(marker["has_refresh_token"])
         self.assertEqual(marker["fingerprint"], ps.fingerprint("rt-legacy"))
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
         # The tokens actually landed in the (fake) store.
         secret_key = marker["key"]

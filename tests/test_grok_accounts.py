@@ -806,7 +806,8 @@ def test_grok_legacy_nested_profile_migrates_on_first_load(tmp_path, monkeypatch
     assert on_disk[ps.SECRETS_KEY]["has_refresh_token"] is True
     assert "secret-refresh-token" not in path.read_text()
     assert "secret-access-token" not in path.read_text()
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert profile_store.slots  # tokens now live in the fake store
     assert capsys.readouterr().err.count("Moved secrets") == 1
 

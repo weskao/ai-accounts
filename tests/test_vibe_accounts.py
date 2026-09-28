@@ -333,7 +333,8 @@ def test_vibe_legacy_profile_migrates_on_first_load(tmp_path, monkeypatch, profi
     assert "MISTRAL_API_KEY" not in on_disk
     assert ps.SECRETS_KEY in on_disk
     assert "sk-fake" not in path.read_text()
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert profile_store.slots
     assert capsys.readouterr().err.count("Moved secrets") == 1
 

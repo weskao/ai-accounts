@@ -616,7 +616,8 @@ def test_copilot_legacy_profile_migrates_on_first_load(tmp_path, monkeypatch, pr
     assert ps.SECRETS_KEY in on_disk
     assert on_disk["login"] == "testuser"
     assert _TOKEN not in path.read_text()
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert profile_store.slots
     assert capsys.readouterr().err.count("Moved secrets") == 1
 
