@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import stat
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -12,6 +13,7 @@ from unittest import mock
 from ai_accounts import autoswitch as aw
 from ai_accounts import grok_accounts as ga
 from ai_accounts import grok_usage as gu
+from ai_accounts import profile_secrets as ps
 from ai_accounts._present import _ANSI_RE
 from ai_accounts.usage_format import UsageWindow
 
@@ -104,7 +106,12 @@ class GrokAccountsTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(ga.cmd_switch("personal"), 0)
 
-        self.assertTrue(list((self.account_dir.parent / "backups").glob("auth.backup-*.json")))
+        backed_up = ps.read_backup("grok")
+        assert backed_up is not None
+        self.assertEqual(
+            json.loads(backed_up)["https://auth.x.ai::client"]["email"], "old@example.test"
+        )
+        self.assertFalse(list((self.account_dir.parent / "backups").glob("auth.backup-*.json")))
         self.assertFalse(list(self.grok_home.glob("auth.backup-*.json")))
 
     def test_usage_shows_only_active_profile(self) -> None:
@@ -269,7 +276,7 @@ class GrokAccountsTests(unittest.TestCase):
         self.assertEqual(
             ga._claims(ga._read_json(ga._auth_file()))["email"], "active@example.test"
         )
-        rotated = ga._read_json(profile)
+        rotated = ga._load_profile(profile)
         assert rotated is not None
         self.assertEqual(
             rotated["https://auth.x.ai::client"]["key"], "rotated-access-token"
@@ -619,7 +626,7 @@ class GrokDirectRefreshTests(unittest.TestCase):
             self.assertEqual(ga._refresh_profile(profile), 0)
 
         cli.assert_not_called()
-        self.assertEqual(ga._record(ga._read_json(profile))["key"], "fresh-access-token")
+        self.assertEqual(ga._record(ga._load_profile(profile))["key"], "fresh-access-token")
 
     def test_active_profile_refreshes_from_the_live_auth_file(self) -> None:
         """x.ai rotates the refresh token on use and kills the old one, so a
@@ -646,7 +653,7 @@ class GrokDirectRefreshTests(unittest.TestCase):
             self.assertEqual(ga._refresh_profile(profile), 0)
 
         self.assertEqual(posted.call_args.args[1]["refresh_token"], "rotated-refresh-token")
-        self.assertEqual(ga._record(ga._read_json(profile))["key"], "fresh-access-token")
+        self.assertEqual(ga._record(ga._load_profile(profile))["key"], "fresh-access-token")
 
     def test_client_secret_requirement_falls_back_to_the_grok_cli(self) -> None:
         profile = self.account_dir / "personal.json"
@@ -747,8 +754,8 @@ class GrokDirectRefreshTests(unittest.TestCase):
         ):
             self.assertEqual(ga.cmd_switch("personal"), 0)
 
-        for path in (ga._auth_file(), profile):
-            self.assertEqual(ga._record(ga._read_json(path))["key"], "fresh-access-token")
+        self.assertEqual(ga._record(ga._read_json(ga._auth_file()))["key"], "fresh-access-token")
+        self.assertEqual(ga._record(ga._load_profile(profile))["key"], "fresh-access-token")
 
     def test_switch_leaves_a_fresh_token_alone(self) -> None:
         profile = self.account_dir / "personal.json"
@@ -775,6 +782,142 @@ class GrokDirectRefreshTests(unittest.TestCase):
         self.assertFalse(ga._token_expired_or_soon(at(1800)))
         self.assertFalse(ga._token_expired_or_soon({}))
         self.assertFalse(ga._token_expired_or_soon({"expires_at": "not-a-date"}))
+
+
+# ── profile_secrets adoption: migration, store-unavailable fallback, remove,
+# ── backup (fixture-driven, see tests/conftest.py's `profile_store`) ─────────
+
+def _grok_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
+    monkeypatch.setenv("GROK_ACCOUNT_DIR", str(tmp_path / "accounts"))
+    return tmp_path / "accounts"
+
+
+def test_grok_legacy_nested_profile_migrates_on_first_load(tmp_path, monkeypatch, profile_store, capsys):
+    account_dir = _grok_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_auth()), encoding="utf-8")
+
+    assert ga._load_profile(path) == _auth()
+    on_disk = json.loads(path.read_text())
+    assert "https://auth.x.ai::client" not in on_disk
+    assert on_disk["email"] == "person@example.test"
+    assert on_disk[ps.SECRETS_KEY]["has_refresh_token"] is True
+    assert "secret-refresh-token" not in path.read_text()
+    assert "secret-access-token" not in path.read_text()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert profile_store.slots  # tokens now live in the fake store
+    assert capsys.readouterr().err.count("Moved secrets") == 1
+
+
+def test_grok_legacy_profile_migration_is_idempotent(tmp_path, monkeypatch, profile_store, capsys):
+    account_dir = _grok_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_auth()), encoding="utf-8")
+
+    assert ga._load_profile(path) == _auth()
+    migrated = path.read_bytes()
+    assert ga._load_profile(path) == _auth()
+    assert path.read_bytes() == migrated
+    assert capsys.readouterr().err.count("Moved secrets") == 1
+
+
+def test_grok_unavailable_store_keeps_profile_byte_identical(tmp_path, monkeypatch, profile_store, capsys):
+    profile_store.unavailable = True
+    account_dir = _grok_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    # Already in the flattened on-disk shape (as if saved by an earlier run
+    # with a store available) — the nested vendor shape always gets reshaped
+    # once regardless of store availability (its record key can itself
+    # contain literal dots), so this is the shape that actually exercises
+    # profile_secrets' own "no write on failed store" contract.
+    path.write_text(json.dumps(ga._flatten(_auth())), encoding="utf-8")
+    before = path.read_bytes()
+
+    assert ga._load_profile(path) == _auth()
+    assert path.read_bytes() == before
+    assert capsys.readouterr().err.count("No OS credential store") == 1
+
+
+def test_grok_legacy_nested_profile_reshapes_even_without_a_store(tmp_path, monkeypatch, profile_store, capsys):
+    """The nested vendor shape's record key (e.g. "https://auth.x.ai::client")
+    contains literal dots and can't be a profile_secrets dotted-field path, so
+    it is always reshaped flat on first read — even with no credential store
+    to migrate the secret into. Distinct from the byte-identical case above
+    (which seeds an already-flat file): this starts from the raw nested shape
+    and only asserts the *second* read is then stable."""
+    profile_store.unavailable = True
+    account_dir = _grok_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_auth()), encoding="utf-8")
+
+    assert ga._load_profile(path) == _auth()
+    reshaped = path.read_bytes()
+    on_disk = json.loads(path.read_text())
+    assert "https://auth.x.ai::client" not in on_disk
+    assert on_disk["email"] == "person@example.test"
+    # store unavailable: the secret stays inline (fallback, never lost)
+    assert on_disk["refresh_token"] == "secret-refresh-token"
+    assert capsys.readouterr().err.count("No OS credential store") == 1
+
+    assert ga._load_profile(path) == _auth()
+    assert path.read_bytes() == reshaped
+    assert "No OS credential store" not in capsys.readouterr().err
+
+
+def test_grok_metadata_only_listing_still_reports_refreshable_after_migration(
+    tmp_path, monkeypatch, profile_store
+) -> None:
+    """cmd_list's fetch_usage=False path reads via `_load_profile_metadata`
+    (never touches the store), which strips `refresh_token` for a migrated
+    profile — the "refreshable" claim must fall back to the `_secrets`
+    marker's `has_refresh_token` flag instead of reading as a browser login."""
+    account_dir = _grok_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_auth()), encoding="utf-8")
+    ga._load_profile(path)  # migrate: refresh_token now lives in the store
+
+    meta = ga._load_profile_metadata(path)
+    assert "refresh_token" not in ga._record(meta)
+    claims = ga._claims(meta)
+    assert claims["refreshable"] is True
+
+
+def test_grok_remove_deletes_the_store_entry(tmp_path, monkeypatch, profile_store):
+    account_dir = _grok_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_auth()), encoding="utf-8")
+    ga._load_profile(path)  # migrate so the store actually holds the secret
+    assert profile_store.slots
+
+    assert ga.cmd_remove("personal") == 0
+    assert not path.exists()
+    assert not profile_store.slots
+
+
+def test_grok_backup_keeps_one_latest_and_prunes_old_plaintext(tmp_path, monkeypatch, profile_store):
+    account_dir = _grok_env(monkeypatch, tmp_path)
+    assert ga._write_json(ga._auth_file(), _auth("first@example.test", "first"))
+    assert ga._backup_active()
+    assert ga._write_json(ga._auth_file(), _auth("second@example.test", "second"))
+    assert ga._backup_active()
+
+    backed_up = ps.read_backup("grok")
+    assert backed_up is not None
+    assert json.loads(backed_up)["https://auth.x.ai::client"]["email"] == "second@example.test"
+
+    # a stray legacy-style plaintext backup file gets pruned by the same call
+    backups_dir = account_dir.parent / "backups"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    (backups_dir / "auth.backup-20200101-000000.json").write_text("{}", encoding="utf-8")
+    assert ga._backup_active()
+    assert not list(backups_dir.glob("auth.backup-*.json"))
 
 
 if __name__ == "__main__":
