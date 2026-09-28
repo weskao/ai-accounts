@@ -1,3 +1,8 @@
+## [0.20.0] - 2026-09-28
+
+### 🚀 Features
+
+- **menu:** [**breaking**] Replace r reset-all with d/D confirm-and-reset
 ## [0.19.1] - 2026-09-28
 
 ### 🐛 Bug Fixes
