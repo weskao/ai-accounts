@@ -1,3 +1,29 @@
+## [0.19.0] - 2026-09-28
+
+### 🚀 Features
+
+- **codex:** Keep profile tokens in the OS credential store
+- **claude:** Keep profile tokens in the OS credential store
+- **agy:** Keep profile tokens in the OS credential store
+- **grok:** Store profile tokens in the OS credential store
+- **vibe:** Store profile tokens in the OS credential store
+- **copilot:** Keep profile tokens in the OS credential store
+
+### 🐛 Bug Fixes
+
+- **profile-secrets:** Make multi-chunk keychain rewrites crash-safe
+- **test-keyboard-interrupt:** Wait for signal readiness instead of a fixed sleep
+- **doctor:** Judge migrated profiles by the secrets marker
+
+### 📚 Documentation
+
+- **readme:** Explain where profile secrets live
+- **help:** Stop claiming saved profiles unconditionally hold tokens
+
+### 🧪 Testing
+
+- **codex:** Read fake-store values through the chunk-head parser
+- Guard chmod assertions on non-posix systems
 ## [0.18.0] - 2026-09-28
 
 ### 🚀 Features
@@ -11,6 +37,10 @@
 - **autoswitch:** Include launchd label in timer alerts
 - **test-profile-secrets:** Skip unix mode checks on Windows CI
 
+### 📚 Documentation
+
+- **changelog:** Release v0.18.0
+
 ### 🧪 Testing
 
 - **profile-secrets:** Pin backend label for CI determinism
@@ -23,6 +53,7 @@
 ### 📚 Documentation
 
 - **readme:** Document shared commands across provider tools
+- **changelog:** Release v0.17.1
 
 ### 🧪 Testing
 
@@ -32,22 +63,31 @@
 ### 🚀 Features
 
 - **cli:** Accept --command as alias for command
+
+### 📚 Documentation
+
+- **changelog:** Release v0.17.0
 ## [0.16.0] - 2026-09-27
 
 ### 🚀 Features
 
 - **update-check:** Show release notes link in update prompt
+
+### 📚 Documentation
+
+- **changelog:** Release v0.16.0
 ## [0.15.2] - 2026-09-26
 
-### 🐛 Bug Fixes
+### 📚 Documentation
 
-- **ci:** Validate wheel by reinstalling into the locked venv, not offline
+- **changelog:** Release v0.15.2
 ## [0.15.1] - 2026-09-26
 
 ### 🐛 Bug Fixes
 
 - **ci:** Drop --no-index from wheel-install checks
 - **ci:** Use --offline instead of --no-index for wheel checks
+- **ci:** Validate wheel by reinstalling into the locked venv, not offline
 
 ### 💼 Other
 
@@ -55,6 +95,7 @@
 
 ### 📚 Documentation
 
+- **changelog:** Release v0.15.1
 - **changelog:** Release v0.15.1
 
 ### ⚙️ Miscellaneous Tasks
@@ -65,12 +106,20 @@
 ### 🚜 Refactor
 
 - **notify:** [**breaking**] Send telegram via telegram_kit
+
+### 📚 Documentation
+
+- **changelog:** Release v0.15.0
 ## [0.14.0] - 2026-09-26
 
 ### 🚀 Features
 
 - **update-check:** Check github in background, not once a day
 - Add interactive update prompt
+
+### 📚 Documentation
+
+- **changelog:** Release v0.14.0
 ## [0.13.1] - 2026-09-24
 
 ### 📚 Documentation
