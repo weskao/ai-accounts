@@ -25,6 +25,10 @@ Per :data:`ai_accounts.providers.PROVIDERS` entry, checks:
       quota/HTTP call
   (e) the auto-switch timer's install state, via
       :func:`ai_accounts.autoswitch_timer.status`
+  (f) where saved-profile secrets currently live, via
+      :func:`ai_accounts.profile_secrets.status` — a single run-level line
+      (the OS store label, or a plaintext-fallback reason), never a per-
+      profile store read
 
 Never raises: a missing binary, unreachable credential store, corrupt
 profile, or a timer-status probe that itself blows up (e.g. ``crontab``
@@ -43,7 +47,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from . import _present
+from . import _present, profile_secrets
 from ._utils import GREEN, RED, RESET, go_keyring_available, have
 from .providers import PROVIDERS, Provider
 
@@ -265,6 +269,12 @@ def _check_profile_file(path: Path) -> tuple[str, str | None]:
     refresh_token present is "ok" — that's the normal, expected state of a
     saved snapshot between uses (see the module docstring's ``_REFRESH_TOKEN_KEYS``
     note).
+
+    A profile migrated into the OS credential store (see
+    ``profile_secrets``) no longer carries an inline refresh token for
+    ``_scan_expiries`` to find — its ``_secrets.has_refresh_token`` marker
+    field stands in for it instead, read straight off the parsed JSON (zero
+    store reads; this stays a fully offline heuristic).
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -278,9 +288,13 @@ def _check_profile_file(path: Path) -> tuple[str, str | None]:
         return "malformed", "not a JSON object"
     now = time.time()
     scan = _scan_expiries(data)
+    marker = data.get(profile_secrets.SECRETS_KEY)
+    has_refresh_token = scan.has_refresh_token or (
+        isinstance(marker, dict) and marker.get("has_refresh_token") is True
+    )
     if scan.refresh_expiries and max(scan.refresh_expiries) <= now:
         return "expired", None
-    if scan.access_expiries and max(scan.access_expiries) <= now and not scan.has_refresh_token:
+    if scan.access_expiries and max(scan.access_expiries) <= now and not has_refresh_token:
         return "expired", None
     return "ok", None
 
@@ -319,6 +333,16 @@ def _check_profiles(provider: Provider) -> _Check:
     return _Check(False, f"{len(profile_files)} profile(s) checked, " + "; ".join(parts))
 
 
+def _check_token_storage() -> _Check:
+    """Run-level (not per-provider) line: where saved-profile secrets live.
+
+    Always ``ok=True`` — informational, like ``_check_timer`` — a plaintext
+    fallback is a supported, working state, just a less protected one.
+    """
+    label, reason = profile_secrets.status()
+    return _Check(True, f"plaintext fallback ({reason})" if reason else label)
+
+
 def _check_timer() -> _Check:
     try:
         from . import autoswitch_timer
@@ -329,7 +353,7 @@ def _check_timer() -> _Check:
     return _Check(True, state)
 
 
-def _run_checks() -> tuple[list[dict[str, object]], _Check, str | None]:
+def _run_checks() -> tuple[list[dict[str, object]], _Check, str | None, _Check]:
     rows: list[dict[str, object]] = []
     repo_root = _repo_root()
     for provider in PROVIDERS:
@@ -359,7 +383,7 @@ def _run_checks() -> tuple[list[dict[str, object]], _Check, str | None]:
                 f"at a different checkout ({installed_root}) than this one "
                 f"({repo_root}) — running the command above from here switches it"
             )
-    return rows, _check_timer(), account_tool_note
+    return rows, _check_timer(), account_tool_note, _check_token_storage()
 
 
 def _account_tool_footer(rows: list[dict[str, object]], account_tool_note: str | None) -> str | None:
@@ -391,7 +415,9 @@ def _account_tool_footer(rows: list[dict[str, object]], account_tool_note: str |
     return "\n".join(lines)
 
 
-def _print_table(rows: list[dict[str, object]], timer: _Check, account_tool_note: str | None) -> None:
+def _print_table(
+    rows: list[dict[str, object]], timer: _Check, account_tool_note: str | None, token_storage: _Check
+) -> None:
     table_rows = [
         {
             "provider": row["provider"].label,
@@ -417,12 +443,15 @@ def _print_table(rows: list[dict[str, object]], timer: _Check, account_tool_note
     ]
     _present.accounts_table(table_rows, columns)
     print(f"\nAutoswitch timer: {_mark(timer)}")
+    print(f"Token storage: {_mark(token_storage)}")
     footer = _account_tool_footer(rows, account_tool_note)
     if footer:
         print(footer)
 
 
-def _print_json(rows: list[dict[str, object]], timer: _Check, account_tool_note: str | None) -> None:
+def _print_json(
+    rows: list[dict[str, object]], timer: _Check, account_tool_note: str | None, token_storage: _Check
+) -> None:
     merged: dict[str, object] = {
         "providers": {
             row["provider"].label: {
@@ -435,6 +464,7 @@ def _print_json(rows: list[dict[str, object]], timer: _Check, account_tool_note:
             for row in rows
         },
         "autoswitch_timer": timer.to_json(),
+        "token_storage": token_storage.to_json(),
         # Always present (possibly null) so a scripted consumer doesn't need
         # to special-case its absence; non-null only when an account-tool
         # check failed AND the installed editable link points elsewhere.
@@ -450,9 +480,9 @@ def run_doctor(json_output: bool) -> int:
     Returns 0 always — doctor reports problems, it doesn't fail the CLI
     invocation itself (mirrors ``timer-status``, which is informational too).
     """
-    rows, timer, account_tool_note = _run_checks()
+    rows, timer, account_tool_note, token_storage = _run_checks()
     if json_output:
-        _print_json(rows, timer, account_tool_note)
+        _print_json(rows, timer, account_tool_note, token_storage)
     else:
-        _print_table(rows, timer, account_tool_note)
+        _print_table(rows, timer, account_tool_note, token_storage)
     return 0
