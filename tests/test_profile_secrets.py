@@ -177,7 +177,7 @@ def test_chunked_values_round_trip_and_shrink(tmp_path, profile_store, monkeypat
     big["tokens"]["id_token"] = "fake-" + "x" * 300
     ps.save(path, "codex", big, CODEX_FIELDS)
     assert len(profile_store.slots) > 2
-    assert all(len(v) <= 43 for v in profile_store.slots.values())
+    assert all(len(v) <= 45 for v in profile_store.slots.values())  # "10:0:" + 40
     ps._cache.clear()
     assert ps.load(path, "codex", CODEX_FIELDS) == big
 
@@ -185,6 +185,103 @@ def test_chunked_values_round_trip_and_shrink(tmp_path, profile_store, monkeypat
     ps._cache.clear()
     assert ps.load(path, "codex", CODEX_FIELDS) == _codex_profile()
     assert "x" * 40 not in "".join(profile_store.slots.values())
+
+
+_OLD = {"token": "fake-old-" + "a" * 150}
+_NEW = {"token": "fake-new-" + "b" * 150}
+
+
+class _Crash(Exception):
+    pass
+
+
+def _fail_on(profile_store, monkeypatch, nth_set, *, crash):
+    """Make the *nth_set*-th store write from now on crash (raise) or fail (False)."""
+    real_set, calls = profile_store.set, []
+
+    def flaky_set(key, value):
+        calls.append(key)
+        if len(calls) == nth_set:
+            if crash:
+                raise _Crash(key)
+            return False
+        return real_set(key, value)
+
+    monkeypatch.setattr(profile_store, "set", flaky_set)
+    return calls
+
+
+@pytest.fixture
+def chunked(monkeypatch):
+    monkeypatch.setattr(ps, "_chunk_size", lambda: 40)
+
+
+@pytest.mark.parametrize("nth_set", [1, 3, 5])  # 4 new parts + head: part 1, part 3, the head
+def test_crash_mid_rewrite_keeps_old_value(profile_store, monkeypatch, chunked, nth_set):
+    assert ps._put("k", _OLD)
+    calls = _fail_on(profile_store, monkeypatch, nth_set, crash=True)
+    with pytest.raises(_Crash):
+        ps._put("k", _NEW)
+    assert calls[-1] == ("k" if nth_set == 5 else f"part{nth_set}g1--k")
+    ps._cache.clear()  # a fresh process after the crash
+    assert ps._read("k") == _OLD
+
+
+@pytest.mark.parametrize("nth_set", [2, 5])  # a part write, the head flip
+def test_failed_multichunk_rewrite_cleans_new_parts(profile_store, monkeypatch, chunked, nth_set):
+    assert ps._put("k", _OLD)
+    before = dict(profile_store.slots)
+    _fail_on(profile_store, monkeypatch, nth_set, crash=False)
+    assert ps._put("k", _NEW) is False
+    assert profile_store.slots == before
+    ps._cache.clear()
+    assert ps._read("k") == _OLD
+
+
+def test_generation_flips_and_drops_old_parts(profile_store, chunked):
+    for gen, value in [(0, _OLD), (1, _NEW), (0, _OLD)]:
+        assert ps._put("k", value)
+        assert profile_store.slots["k"].startswith(f"5:{gen}:")
+        assert all(k == "k" or f"g{gen}--" in k for k in profile_store.slots)
+        ps._cache.clear()
+        assert ps._read("k") == value
+    ps._drop("k")
+    assert profile_store.slots == {}
+
+
+@pytest.mark.parametrize("head", ["", "junk", "0:0:{}", "65:0:{}", "2:0:{\"a\":", "x:1:{}"])
+def test_malformed_heads_read_as_none(profile_store, head):
+    profile_store.slots["k"] = head
+    assert ps._read("k") is None
+
+
+def test_value_over_part_cap_is_refused(profile_store, chunked):
+    assert ps._put("k", "x" * 40 * 65) is False
+    assert profile_store.slots == {}
+
+
+def test_legacy_head_loads_and_migrates_to_generations(profile_store, chunked):
+    profile_store.slots.update({"k": '2:{"token":', "part1--k": '"fake-legacy"}'})  # ff17eee layout
+    assert ps._read("k") == {"token": "fake-legacy"}
+    assert ps._put("k", _NEW)
+    assert "part1--k" not in profile_store.slots
+    ps._cache.clear()
+    assert ps._read("k") == _NEW
+
+
+def test_plaintext_fallback_drops_stale_store_copy(tmp_path, profile_store, monkeypatch, capsys):
+    path = tmp_path / "accounts" / "work.json"
+    assert ps.save(path, "codex", _codex_profile(), CODEX_FIELDS) is True
+    assert ps.backup("demo", "fake-old-backup") is True
+    monkeypatch.setattr(profile_store, "set", lambda key, value: False)  # store up, writes fail
+
+    rotated = _codex_profile()
+    rotated["tokens"]["refresh_token"] = "fake-rotated-token"
+    assert ps.save(path, "codex", rotated, CODEX_FIELDS) is False
+    assert ps.backup("demo", "fake-new-backup") is False
+    assert profile_store.slots == {}
+    assert json.loads(path.read_text()) == rotated
+    assert ps.read_backup("demo") == "fake-new-backup"
 
 
 def test_backup_keeps_one_and_prunes_plaintext(tmp_path, profile_store):
