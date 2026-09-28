@@ -605,12 +605,18 @@ def keychain_read(service: str, account: str) -> str | None:
     if not secret:
         return None
     # `security -w` hex-encodes secrets containing bytes it deems "non-clean"
-    # (e.g. newlines). Decode that back to the original text.
-    if re.fullmatch(r"(?:[0-9a-fA-F]{2})+", secret):
+    # (e.g. newlines). Decode that back to the original text — but only when
+    # the output could not have been printed as-is: a value that is itself
+    # all decimal digits (a numeric account id, say) is valid hex, and so is
+    # a run of hex digits whose decode is plain printable ASCII (`security`
+    # would have printed that unencoded), so both stay untouched.
+    if re.fullmatch(r"(?:[0-9a-fA-F]{2})+", secret) and not secret.isdigit():
         try:
-            secret = bytes.fromhex(secret).decode("utf-8")
+            decoded = bytes.fromhex(secret).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
-            pass
+            decoded = None
+        if decoded is not None and not (decoded.isascii() and decoded.isprintable()):
+            secret = decoded
     return secret
 
 

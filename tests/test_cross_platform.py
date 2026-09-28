@@ -365,6 +365,30 @@ class KeychainSecurityTests(unittest.TestCase):
                 capture_output=True,
             )
 
+    def _mocked_read(self, stdout: str) -> str | None:
+        with mock.patch.object(u, "IS_MACOS", True), mock.patch.object(
+            u.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=stdout)
+        ):
+            return u.keychain_read("service", "account")
+
+    def test_a_numeric_secret_is_not_misread_as_hex(self):
+        """`security -w` never encodes a secret that is itself all decimal
+        digits — it prints those verbatim, same as any other clean value —
+        but that string also happens to be valid hex. Decoding it anyway
+        turned a plain account id like ``1122334455`` into the control-byte
+        garbage ``\\x11"3DU``."""
+        self.assertEqual(self._mocked_read("1122334455"), "1122334455")
+
+    def test_hex_that_would_have_printed_plain_is_left_alone(self):
+        """``41424a`` decodes to the printable ASCII "ABJ" — exactly what
+        `security -w` would have printed unencoded, so a value that merely
+        looks like hex digits is not assumed to be an encoding of anything."""
+        self.assertEqual(self._mocked_read("41424a"), "41424a")
+
+    def test_real_hex_encoding_of_non_printable_bytes_still_decodes(self):
+        secret = "line one\nline two"  # a newline forces `-w` to hex-encode
+        self.assertEqual(self._mocked_read(secret.encode().hex()), secret)
+
 
 class GeminiUsageTransportTests(unittest.TestCase):
     def test_pid_owned_port_certificate_builds_the_verified_context(self):
