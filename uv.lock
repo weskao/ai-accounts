@@ -18,7 +18,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "telegram-kit", specifier = ">=0.1.3,<0.2" }]
+requires-dist = [{ name = "telegram-kit", specifier = ">=0.1.5,<0.2" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -53,7 +53,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -157,11 +157,11 @@ wheels = [
 
 [[package]]
 name = "telegram-kit"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0c/fc/0f68a7fd4df95338ca7bc760a45ee85e2ce40d1ee0bd178d740b83653892/telegram_kit-0.1.4.tar.gz", hash = "sha256:c99c8919468a3dfbfb079ec29012dfcb2b93a6c0e2714fa87550bf8c0721fb84", size = 19954, upload-time = "2026-09-27T20:33:48.163Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/b0/6b87e04bec453c35cfba23388b0fe0b2cdf0ea5d0c5c84a3cd4d2ad720f1/telegram_kit-0.1.5.tar.gz", hash = "sha256:900d4026d7d7d27a8b27df33bf83c16f75ff4a2d66fca17ca7fb8ca4ecde5909", size = 20214, upload-time = "2026-09-28T02:10:06.248Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/94/24bbcc034bf6b4546f2ac503cfacba5e9bf68f3bd79db89cf2c17ce83ee8/telegram_kit-0.1.4-py3-none-any.whl", hash = "sha256:419da760a033d7d2d0a049a33f98d0aab97305476bf0d3bcf5bca6f74154e0d0", size = 9994, upload-time = "2026-09-27T20:33:47.403Z" },
+    { url = "https://files.pythonhosted.org/packages/45/68/d2bf525ca88f2143b5ff93c89b4f3047aa3f1ba4877119ca81b2c4b933dd/telegram_kit-0.1.5-py3-none-any.whl", hash = "sha256:eb2971c9a6a9ea4f800e0892a5462e3e380dd805e89478b6aea901b360a8de9f", size = 10142, upload-time = "2026-09-28T02:10:05.277Z" },
 ]
 
 [[package]]

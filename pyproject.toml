@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Wes Kao" }]
 license = { text = "MIT" }
 dependencies = [
-    "telegram-kit>=0.1.3,<0.2",
+    "telegram-kit>=0.1.5,<0.2",
 ]
 
 [project.scripts]
