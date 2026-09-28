@@ -264,13 +264,20 @@ def _merge(meta: dict, secrets: dict) -> dict:
     return data
 
 
+def _digest(secrets: dict) -> str:
+    """Fingerprint of the WHOLE secrets dict — order-independent — so a torn
+    reassembly is caught regardless of which field it landed in."""
+    return fingerprint(json.dumps(secrets, sort_keys=True, separators=(",", ":")))
+
+
 def _marker(key: str, secrets: dict, secret_fields: Sequence[str]) -> dict:
     first = next((secrets[f] for f in secret_fields if isinstance(secrets.get(f), str)), "")
     return {
         "store": SERVICE,
         "key": key,
         "has_refresh_token": any(f.rsplit(".", 1)[-1] in _REFRESH_NAMES for f in secrets),
-        "fingerprint": fingerprint(first) if first else "",
+        "fingerprint": fingerprint(first) if first else "",  # identity match (claude token rotation etc.)
+        "digest": _digest(secrets),  # whole-blob integrity check on reassembly
     }
 
 
@@ -322,13 +329,20 @@ def load(path: Path, tool: str, secret_fields: Sequence[str]) -> dict | None:
         return None
     # A dropped or interleaved chunk (a missing part, or a read racing another
     # process's generation flip) can still reassemble into valid-looking JSON
-    # with the wrong bytes inside. Re-derive the marker's fingerprint from
-    # what actually came back and refuse rather than hand back torn tokens.
-    expected_fp = marker.get("fingerprint") or ""
-    if expected_fp:
-        first = next((secrets[f] for f in secret_fields if isinstance(secrets.get(f), str)), "")
-        if not first or fingerprint(first) != expected_fp:
+    # with the wrong bytes inside — in ANY field, not just the identity one.
+    # Re-derive the marker's whole-blob digest and refuse rather than hand
+    # back torn tokens. A marker from before the "digest" field existed falls
+    # back to the older, narrower identity-fingerprint check.
+    expected_digest = marker.get("digest") or ""
+    if expected_digest:
+        if _digest(secrets) != expected_digest:
             return None
+    else:
+        expected_fp = marker.get("fingerprint") or ""
+        if expected_fp:
+            first = next((secrets[f] for f in secret_fields if isinstance(secrets.get(f), str)), "")
+            if not first or fingerprint(first) != expected_fp:
+                return None
     return _merge(meta, secrets)
 
 

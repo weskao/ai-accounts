@@ -203,6 +203,20 @@ def test_torn_reassembly_is_refused_not_returned(tmp_path, profile_store):
     assert ps.load(path, "codex", CODEX_FIELDS) is None
 
 
+def test_torn_reassembly_in_a_non_identity_field_is_also_refused(tmp_path, profile_store):
+    """The whole-blob digest must catch corruption anywhere — not only in the
+    identity field (secret_fields[0]), which a narrower per-field check would miss."""
+    path = tmp_path / "accounts" / "work.json"
+    ps.save(path, "codex", _codex_profile(), CODEX_FIELDS)
+    ps._cache.clear()
+
+    key = "codex--work"
+    profile_store.slots[key] = profile_store.slots[key].replace(
+        "fake-id-token", "fake-id-toke0")  # id_token is last in CODEX_FIELDS, not the identity field
+
+    assert ps.load(path, "codex", CODEX_FIELDS) is None
+
+
 _OLD = {"token": "fake-old-" + "a" * 150}
 _NEW = {"token": "fake-new-" + "b" * 150}
 

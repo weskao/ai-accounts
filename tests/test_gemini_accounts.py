@@ -1037,8 +1037,10 @@ class ProfileSecretStoreTests(_HomeMixin):
         for secret in ("access_token", "refresh_token", "id_token"):
             self.assertNotIn(secret, on_disk)
         self.assertNotIn("rt-work", path.read_text())
+        marker = on_disk[ga.ps.SECRETS_KEY]
+        self.assertTrue(marker.pop("digest", None))  # whole-blob integrity check, value tested separately
         self.assertEqual(
-            on_disk[ga.ps.SECRETS_KEY],
+            marker,
             {
                 "store": "ai-accounts",
                 "key": "antigravity--work",
