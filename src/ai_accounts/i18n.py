@@ -541,7 +541,8 @@ vibe-accounts 與 copilot-accounts。
 
 帳號存放於 ~/.ai-accounts/codex/accounts/<name>.json（可用
 $CODEX_ACCOUNT_DIR 覆寫）；舊的 ~/.codex/accounts 位置會自動搬移過來。
-請把這個目錄當成機密資料 — 已存帳號內含 Codex 的驗證 token。
+請把這個目錄當成敏感資料 — 帳號的 Codex 驗證 token 在有 OS 憑證儲存區可用時
+會存放在裡面，否則以純文字方式留在檔案內作為備援。
 """,
     },
     "help.claude": {
@@ -581,7 +582,8 @@ $CODEX_ACCOUNT_DIR 覆寫）；舊的 ~/.codex/accounts 位置會自動搬移過
 
 帳號存放於 ~/.ai-accounts/claude/accounts/<name>.json（可用
 $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移過來。
-請把這個目錄當成機密資料 — 已存帳號內含 Claude 的 OAuth token。
+請把這個目錄當成敏感資料 — 帳號的 Claude OAuth token 在有 OS 憑證儲存區可用時
+會存放在裡面，否則以純文字方式留在檔案內作為備援。
 """,
     },
     "help.agy": {
@@ -634,7 +636,8 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
   agy-accounts who
 
 帳號存放於 ~/.ai-accounts/antigravity/accounts/<name>.json。
-請把這個目錄當成機密資料 — 已存帳號內含 Google OAuth token。
+請把這個目錄當成敏感資料 — 帳號的 Google OAuth token 在有 OS 憑證儲存區可用時
+會存放在裡面，否則以純文字方式留在檔案內作為備援。
 """,
     },
     "help.grok": {
@@ -680,7 +683,8 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
   Grok Build CLI 文件：docs.x.ai/build/
 
 帳號存放於 ~/.ai-accounts/grok/accounts/<name>.json（可用
-$GROK_ACCOUNT_DIR 覆寫）。請把這個目錄當成機密資料 — 帳號內含 OAuth token。
+$GROK_ACCOUNT_DIR 覆寫）。請把這個目錄當成敏感資料 — 帳號的 OAuth token 在有
+OS 憑證儲存區可用時會存放在裡面，否則以純文字方式留在檔案內作為備援。
 `refresh` 會對憑證自身 issuer 探索到的 token 端點執行標準 OIDC 更新授權 —
 沒有任何內容是寫死的。當該授權需要 ai-accounts 沒有的 client secret 時，
 會改為執行 `grok models`（讓官方 CLI 自行輪替憑證）。
@@ -721,7 +725,8 @@ $GROK_ACCOUNT_DIR 覆寫）。請把這個目錄當成機密資料 — 帳號內
   vibe-accounts who
 
 帳號存放於 ~/.ai-accounts/vibe/accounts/<name>.json（可用
-$VIBE_ACCOUNT_DIR 覆寫）。請把這個目錄當成機密資料 — 帳號內含 API 金鑰。
+$VIBE_ACCOUNT_DIR 覆寫）。請把這個目錄當成敏感資料 — 帳號的 API 金鑰在有
+OS 憑證儲存區可用時會存放在裡面，否則以純文字方式留在檔案內作為備援。
 
 Vibe 會把即時金鑰存在作業系統鑰匙圈（macOS：login keychain，
 service 名稱 "ai.mistral.vibe"），若無則改用 $VIBE_HOME/.env；
@@ -761,8 +766,8 @@ service 名稱 "ai.mistral.vibe"），若無則改用 $VIBE_HOME/.env；
   copilot-accounts who
 
 帳號存放於 ~/.ai-accounts/copilot/accounts/<name>.json（可用
-$COPILOT_ACCOUNT_DIR 覆寫）。請把這個目錄當成機密資料 — 已存帳號內含
-GitHub token。
+$COPILOT_ACCOUNT_DIR 覆寫）。請把這個目錄當成敏感資料 — 帳號的 GitHub token
+在有 OS 憑證儲存區可用時會存放在裡面，否則以純文字方式留在檔案內作為備援。
 
 即時 token 依序查詢 Copilot CLI 設定目錄（~/.copilot，遵循
 $XDG_CONFIG_HOME）、作業系統鑰匙圈，最後是

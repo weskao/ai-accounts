@@ -72,6 +72,41 @@ class DoctorScanTest(unittest.TestCase):
         )
         self.assertEqual(status, "expired")
 
+    def test_migrated_profile_marker_true_with_expired_access_is_ok(self) -> None:
+        # Post-migration shape: no inline refresh token for the raw-JSON scan
+        # to find (profile_secrets moved it to the OS store) — the
+        # `_secrets.has_refresh_token` marker must stand in for it.
+        status, _ = doctor._check_profile_file(
+            self._write(
+                {
+                    "expiresAt": 1700000000,
+                    "_secrets": {
+                        "store": "ai-accounts",
+                        "key": "fake--work",
+                        "has_refresh_token": True,
+                        "fingerprint": "0" * 16,
+                    },
+                }
+            )
+        )
+        self.assertEqual(status, "ok")
+
+    def test_migrated_profile_marker_false_with_expired_access_is_expired(self) -> None:
+        status, _ = doctor._check_profile_file(
+            self._write(
+                {
+                    "expiresAt": 1700000000,
+                    "_secrets": {
+                        "store": "ai-accounts",
+                        "key": "fake--work",
+                        "has_refresh_token": False,
+                        "fingerprint": "",
+                    },
+                }
+            )
+        )
+        self.assertEqual(status, "expired")
+
     @staticmethod
     def _write(data: dict) -> Path:
         path = Path(tempfile.mkstemp(suffix=".json")[1])
@@ -134,7 +169,7 @@ class DoctorChecksTest(unittest.TestCase):
         with mock.patch.object(doctor, "have", return_value=False), mock.patch.object(
             doctor, "_installed_editable_root", return_value=stale_root
         ) as mocked_probe:
-            rows, _timer, note = doctor._run_checks()
+            rows, _timer, note, _token_storage = doctor._run_checks()
         self.assertTrue(all(not row["account_tool"].ok for row in rows))
         self.assertIsNotNone(note)
         self.assertIn(str(stale_root), note)
@@ -447,6 +482,95 @@ class DoctorOutputTest(unittest.TestCase):
         lines = [line for line in buf.getvalue().splitlines() if line.strip()]
         self.assertEqual(len(lines), 1)
         json.loads(lines[0])  # does not raise
+
+
+class TokenStorageLineTest(unittest.TestCase):
+    """``profile_secrets.status()`` surfaced as one run-level line — table +
+    ``--json`` — never a per-profile store read (see ``_check_token_storage``).
+    """
+
+    def test_check_reports_store_label_when_available(self) -> None:
+        with mock.patch.object(doctor.profile_secrets, "status", return_value=("Fake Store", "")):
+            check = doctor._check_token_storage()
+        self.assertTrue(check.ok)
+        self.assertEqual(check.detail, "Fake Store")
+
+    def test_check_reports_plaintext_fallback_reason_when_unavailable(self) -> None:
+        with mock.patch.object(
+            doctor.profile_secrets, "status", return_value=("none", "no secret-tool")
+        ):
+            check = doctor._check_token_storage()
+        self.assertTrue(check.ok)
+        self.assertIn("plaintext fallback", check.detail)
+        self.assertIn("no secret-tool", check.detail)
+
+    def test_table_shows_storage_line_when_store_available(self) -> None:
+        with mock.patch.object(doctor, "_account_dir_for", return_value=None), mock.patch.object(
+            doctor.profile_secrets, "status", return_value=("Fake Store", "")
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                doctor.run_doctor(False)
+        output = _plain(buf.getvalue())
+        self.assertIn("Token storage: PASS Fake Store", output)
+
+    def test_table_shows_plaintext_fallback_when_store_unavailable(self) -> None:
+        with mock.patch.object(doctor, "_account_dir_for", return_value=None), mock.patch.object(
+            doctor.profile_secrets, "status", return_value=("none", "no secret-tool")
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                doctor.run_doctor(False)
+        output = _plain(buf.getvalue())
+        self.assertIn("Token storage: PASS plaintext fallback (no secret-tool)", output)
+
+    def test_json_carries_storage_line_when_store_available(self) -> None:
+        with mock.patch.object(doctor, "_account_dir_for", return_value=None), mock.patch.object(
+            doctor.profile_secrets, "status", return_value=("Fake Store", "")
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                doctor.run_doctor(True)
+        doc = json.loads(buf.getvalue())
+        self.assertEqual(doc["token_storage"], {"ok": True, "detail": "Fake Store"})
+
+    def test_json_carries_storage_line_when_store_unavailable(self) -> None:
+        with mock.patch.object(doctor, "_account_dir_for", return_value=None), mock.patch.object(
+            doctor.profile_secrets, "status", return_value=("none", "no secret-tool")
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                doctor.run_doctor(True)
+        doc = json.loads(buf.getvalue())
+        self.assertEqual(
+            doc["token_storage"], {"ok": True, "detail": "plaintext fallback (no secret-tool)"}
+        )
+
+
+def test_token_storage_line_reflects_real_profile_secrets_status_available(profile_store):
+    # End-to-end through the actual `profile_secrets.status()` (not mocked),
+    # driven only by the shared `profile_store` fixture — covers the wiring
+    # from doctor down to profile_secrets, not just doctor's own mock.
+    profile_store.unavailable = False
+    with mock.patch.object(doctor, "_account_dir_for", return_value=None):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            doctor.run_doctor(True)
+    doc = json.loads(buf.getvalue())
+    assert doc["token_storage"]["ok"] is True
+    assert doc["token_storage"]["detail"] != ""
+
+
+def test_token_storage_line_reflects_real_profile_secrets_status_unavailable(profile_store):
+    profile_store.unavailable = "no OS credential store on this test runner"
+    with mock.patch.object(doctor, "_account_dir_for", return_value=None):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            doctor.run_doctor(True)
+    doc = json.loads(buf.getvalue())
+    assert doc["token_storage"]["ok"] is True
+    assert "plaintext fallback" in doc["token_storage"]["detail"]
+    assert "no OS credential store" in doc["token_storage"]["detail"]
 
 
 if __name__ == "__main__":

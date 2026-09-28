@@ -99,9 +99,11 @@ MODEL
   limits), SuperGrok Plus, SuperGrok Heavy. Grok Build CLI docs: docs.x.ai/build/
 
 Profiles live under ~/.ai-accounts/grok/accounts/<name>.json (override with
-$GROK_ACCOUNT_DIR). Treat that directory as secrets — profiles contain OAuth
-tokens. `refresh` performs a standard OIDC refresh grant against the token
-endpoint discovered from the credential's own issuer — nothing is hardcoded. It
+$GROK_ACCOUNT_DIR). Treat that directory as sensitive — a profile's OAuth
+tokens live in the OS credential store when one is available, or inline as a
+plaintext fallback otherwise. `refresh` performs a standard OIDC refresh
+grant against the token endpoint discovered from the credential's own
+issuer — nothing is hardcoded. It
 falls back to running `grok models` (letting the official CLI rotate the
 credential) when that grant needs a client secret ai-accounts does not hold.
 `switch` refreshes in place when the restored token is expired or within 5
