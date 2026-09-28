@@ -30,7 +30,7 @@ os.environ.pop("LC_MESSAGES", None)
 
 import pytest
 
-from ai_accounts import _present, i18n, secrets_store
+from ai_accounts import _present, i18n, profile_secrets, secrets_store
 
 # Comfortably above NARROW_BELOW so this stays a wide pin even if that
 # threshold is ever raised.
@@ -132,3 +132,57 @@ def _isolate_real_keychain(monkeypatch):
     fake = _FakeStore()
     monkeypatch.setattr(secrets_store, "u", fake)
     return fake
+
+
+class FakeProfileStore:
+    """Dict-backed stand-in for ``profile_secrets._store``.
+
+    ``unavailable = True`` makes ``set`` fail and the availability check report
+    no store. ``gets`` counts reads so tests can assert the memo works.
+    """
+
+    def __init__(self) -> None:
+        self.slots: dict[str, str] = {}
+        self.unavailable = False
+        self.gets = 0
+
+    def get(self, key: str) -> str:
+        self.gets += 1
+        return "" if self.unavailable else self.slots.get(key, "")
+
+    def set(self, key: str, value: str) -> bool:
+        if self.unavailable:
+            return False
+        if not value:
+            return self.delete(key)
+        self.slots[key] = value
+        return True
+
+    def delete(self, key: str) -> bool:
+        return self.slots.pop(key, None) is not None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_profile_store(monkeypatch, tmp_path):
+    """Back :mod:`ai_accounts.profile_secrets` with a per-test dict and tmp root.
+
+    Only profile_secrets' own handle, availability check, root dir and chunk
+    size are swapped — never ``telegram_kit.backend``/``_detect_backend``/
+    ``shutil.which``: ``backend()`` is ``lru_cache``d process-wide, so patching
+    it would leak into every later test. The memo cache and the once-per-process
+    plaintext warning are reset so tests cannot see each other's state.
+    """
+    fake = FakeProfileStore()
+    monkeypatch.setattr(profile_secrets, "_store", fake)
+    monkeypatch.setattr(profile_secrets, "_available", lambda: not fake.unavailable)
+    monkeypatch.setattr(profile_secrets, "_root", lambda: tmp_path / "ai-accounts-root")
+    monkeypatch.setattr(profile_secrets, "_chunk_size", lambda: 0)
+    monkeypatch.setattr(profile_secrets, "_cache", {})
+    monkeypatch.setattr(profile_secrets, "_warned", False)
+    return fake
+
+
+@pytest.fixture
+def profile_store(_isolate_profile_store):
+    """The fake profile-secret store for tests that want to inspect or break it."""
+    return _isolate_profile_store
