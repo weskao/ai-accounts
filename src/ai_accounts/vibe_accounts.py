@@ -67,8 +67,9 @@ EXAMPLES
   vibe-accounts who
 
 Profiles live under ~/.ai-accounts/vibe/accounts/<name>.json (override with
-$VIBE_ACCOUNT_DIR). Treat that directory as secrets — profiles contain API
-keys.
+$VIBE_ACCOUNT_DIR). Treat that directory as sensitive — a profile's API keys
+live in the OS credential store when one is available, or inline as a
+plaintext fallback otherwise.
 
 Vibe keeps its live key in the OS keyring (macOS: login keychain, service
 "ai.mistral.vibe"), falling back to $VIBE_HOME/.env; these commands read and

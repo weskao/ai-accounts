@@ -127,7 +127,9 @@ EXAMPLES
   agy-accounts who
 
 Profiles live under ~/.ai-accounts/antigravity/accounts/<name>.json.
-Treat that directory as secrets — saved profiles contain Google OAuth tokens.
+Treat that directory as sensitive — a profile's Google OAuth tokens live in
+the OS credential store when one is available, or inline as a plaintext
+fallback otherwise.
 """
 
 

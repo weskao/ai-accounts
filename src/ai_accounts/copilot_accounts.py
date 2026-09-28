@@ -107,8 +107,9 @@ EXAMPLES
   copilot-accounts who
 
 Profiles live under ~/.ai-accounts/copilot/accounts/<name>.json (override with
-$COPILOT_ACCOUNT_DIR). Treat that directory as secrets — profiles contain
-GitHub tokens.
+$COPILOT_ACCOUNT_DIR). Treat that directory as sensitive — a profile's
+GitHub tokens live in the OS credential store when one is available, or
+inline as a plaintext fallback otherwise.
 
 The signed-in login comes from the Copilot CLI's config.json (~/.copilot, honoring
 $XDG_CONFIG_HOME) and its token from the OS keyring, then $COPILOT_GITHUB_TOKEN /

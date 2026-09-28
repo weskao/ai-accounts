@@ -105,7 +105,9 @@ EXAMPLES
 Profiles live under ~/.ai-accounts/codex/accounts/<name>.json (override with
 $CODEX_ACCOUNT_DIR); a store at the old ~/.codex/accounts location is moved
 there automatically.
-Treat that directory as secrets — saved profiles contain Codex auth tokens.
+Treat that directory as sensitive — a profile's Codex auth tokens live in
+the OS credential store when one is available, or inline as a plaintext
+fallback otherwise.
 """
 
 
