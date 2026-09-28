@@ -257,8 +257,14 @@ set up; it reports the gap instead:
   Manager, or Linux `secret-tool`)
 - every saved profile's JSON is well-formed and, if it carries a recognizable
   expiry field, not already expired with nothing left to refresh it (a stale
-  *access* token backed by a live refresh token is normal, not a failure)
+  *access* token backed by a live refresh token is normal, not a failure) —
+  this reads a migrated profile's `_secrets.has_refresh_token` marker the same
+  way it reads an unmigrated profile's inline refresh token, never the
+  credential store itself
 - the auto-switch timer's install state
+- where saved-profile secrets currently live (see "Where your secrets live"
+  below) — the OS credential store's label, or a plaintext-fallback reason —
+  printed once for the whole run, not per provider
 
 ```sh
 ai-accounts doctor
@@ -291,6 +297,7 @@ PATH=/usr/bin:/bin ai-accounts doctor
 └──────────────────┴──────────────────────────────────┴───────────────────────────────────────────┴──────────────────┴────────────────────────┴───────────────────┘
 
 Autoswitch timer: PASS installed
+Token storage: PASS macOS Keychain
 Account tool not on PATH for: codex-accounts, claude-accounts, agy-accounts, grok-accounts, vibe-accounts, copilot-accounts
 This can mean the tool was never installed, a newly declared entry point needs a reinstall, or its install directory isn't on PATH.
 Run uv tool install --editable <repo> --force
@@ -310,8 +317,11 @@ line noting that under the "Run ..." line.
 as `list --json`/`usage --json` above), keyed by provider label. A failing
 `account_tool` check carries a `remediation` field with the same install
 command shown in the footer above (kept in full — only the table cell got
-shorter), and the top-level `account_tool_note` key mirrors the optional
-"different checkout" note (`null` when it doesn't apply):
+shorter), the top-level `account_tool_note` key mirrors the optional
+"different checkout" note (`null` when it doesn't apply), and the top-level
+`token_storage` key mirrors the "Token storage" line (`{"ok": true, "detail":
+"macOS Keychain"}`, or `{"ok": true, "detail": "plaintext fallback (<reason>)"}`
+with no OS credential store):
 
 ```sh
 ai-accounts doctor --json | python3 -m json.tool
@@ -403,7 +413,9 @@ Saved profiles and shared settings live under `~/.ai-accounts`:
 ~/.ai-accounts/
 ├── config.json
 ├── autoswitch-state.json
+├── dpapi/                    # Windows only: DPAPI-encrypted secret files
 ├── codex/accounts/
+├── codex/backups/
 ├── claude/accounts/
 ├── antigravity/accounts/
 ├── antigravity/usage-cache.json
@@ -425,15 +437,36 @@ That last rung exists only for upgrades: a token already sitting in an older
 `config.json` keeps working, and the next save moves it into the credential
 store and drops it from the file.
 
+Saved-profile secrets follow the same pattern. When an OS credential store is
+available, a saved profile's `<name>.json` holds metadata only — expiry
+fields, account identity, and a small `_secrets` marker block (`store`,
+`key`, `has_refresh_token`, a non-secret fingerprint) — while the actual
+access/refresh/id tokens live under the credential store's service name
+`ai-accounts`, keyed `<tool>--<profile>` (e.g. `codex--work`). See "Where your
+secrets live" below for what this protects against, per OS, in plain terms.
+Switching an account keeps one latest pre-switch backup per tool (not one per
+switch): also in the credential store when available, and printed as "backed
+up to <store label>"; otherwise a single plaintext `<tool>/backups/latest`
+file, printed as "backed up to backups/latest".
+
+An existing profile written by an older version of this tool still has its
+tokens inline; the next time it's read, they're moved into the credential
+store and the file is rewritten without them — a one-time, automatic
+migration with a short printed line (`→ Moved secrets of <file> into the
+<store label>`). A store write that fails, or a machine with no credential
+store at all (e.g. headless Linux without `secret-tool`), falls back to the
+full plaintext file exactly as before, plus one yellow warning per process —
+this is a fallback, not a refusal, so existing headless setups keep working.
+
 `antigravity/usage-cache.json` holds the last quota reading seen for each agy
 profile — quota windows, plan and timestamp, but no credentials (see below for
-why it is kept). Profile JSON files do contain live credentials: do not commit,
-publish, or share this directory. Writes use owner-only permissions and atomic
-replacement where the provider format allows it. Windows has no POSIX
-permission bits, so there the protection comes from the parent directory's
-inherited ACL: the default location under your user profile is already
-owner-only, but an override pointing outside it inherits whatever that
-directory allows.
+why it is kept). A plaintext-fallback profile JSON file does contain live
+credentials: do not commit, publish, or share this directory. Writes use
+owner-only permissions and atomic replacement where the provider format
+allows it. Windows has no POSIX permission bits, so there the protection
+comes from the parent directory's inherited ACL: the default location under
+your user profile is already owner-only, but an override pointing outside it
+inherits whatever that directory allows.
 
 Provider-native legacy stores such as `~/.codex/accounts` and
 `~/.claude/accounts` are moved into the central directory on first use. Override
@@ -441,6 +474,35 @@ paths with `CODEX_ACCOUNT_DIR`, `CLAUDE_ACCOUNT_DIR`,
 `ANTIGRAVITY_ACCOUNT_DIR`, `GROK_ACCOUNT_DIR`, `VIBE_ACCOUNT_DIR`, or
 `COPILOT_ACCOUNT_DIR`. Override the shared config with
 `AI_ACCOUNTS_CONFIG_JSON`.
+
+## Where your secrets live
+
+No setup needed — this happens automatically the first time each tool saves
+or reads a profile. On macOS, the very first access may show a one-time
+Keychain "Allow" prompt for the process asking; approving it is normal and
+only needs to happen once per binary.
+
+| OS | Where tokens go | Fallback if unavailable |
+| --- | --- | --- |
+| macOS | Keychain (`security`), service `ai-accounts` | plaintext profile file |
+| Windows | DPAPI-encrypted files under `~/.ai-accounts/dpapi` | plaintext profile file |
+| Linux | Secret Service via `secret-tool` (GNOME Keyring, KWallet, ...) | plaintext profile file |
+
+What this protects against: a file-system backup, a cloud-sync folder, or a
+Time Machine copy landing on an unencrypted disk no longer hands over a live
+token with it; an accidental `cat ~/.ai-accounts/**/*.json`, screenshot, or
+`git add -A` no longer leaks a token, only account metadata; and another
+account on the same machine reading your files directly (without also being
+able to unlock your keychain/session) gets nothing usable.
+
+What it does **not** protect against: malware or a script running as *your
+own user* can still ask the credential store for the secret, the same way
+this tool does — an OS credential store stops a file being read, not your own
+account being compromised. It also doesn't touch each vendor CLI's own files
+(`~/.codex/auth.json`, `~/.claude/.credentials.json`, and similar) — those stay
+exactly as that vendor's own CLI writes them; this tool's credential-store
+protection covers its own saved profile copies, not the live session file the
+vendor CLI itself manages.
 
 ## Auto-switch
 
