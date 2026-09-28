@@ -22,8 +22,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from ai_accounts import codex_accounts as ca
-from ai_accounts import usage_format
+from ai_accounts import profile_secrets, usage_format
 
 
 def _jwt(payload: dict) -> str:
@@ -58,6 +60,14 @@ def _auth_payload(
         "last_refresh": last_refresh,
     }
 
+
+_PROBED = {"acct-a": "alpha", "acct-b": "beta", "acct-g": "gamma"}
+
+
+def _probed(auth) -> str:
+    """Which test profile an auth dict handed to fetch_usage belongs to."""
+    account = auth["tokens"]["account_id"]
+    return _PROBED.get(account, account.removeprefix("acct-"))
 
 
 class _TtyStringIO(io.StringIO):
@@ -105,6 +115,30 @@ class _CodexHomeMixin(unittest.TestCase):
         read = mock.patch.object(ca, "_read_keychain_auth", return_value=None)
         read.start()
         self.addCleanup(read.stop)
+
+    @pytest.fixture(autouse=True)
+    def _use_profile_store(self, profile_store):
+        # The dict-backed fake credential store from conftest.py.
+        self.store = profile_store
+
+    def stored(self, key: str):
+        """Decoded value the fake store holds under *key* (single chunk)."""
+        return json.loads(self.store.slots[key].partition(":")[2])
+
+    def saved(self, path: Path) -> dict:
+        """A profile as persisted: its file's metadata merged with the tokens
+        the fake store holds for it (a plaintext profile is returned as-is)."""
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.pop(ca._CLAIMS_KEY, None)
+        marker = data.pop(profile_secrets.SECRETS_KEY, None)
+        if marker:
+            for field, value in self.stored(marker["key"]).items():
+                *parents, leaf = field.split(".")
+                node = data
+                for part in parents:
+                    node = node.setdefault(part, {})
+                node[leaf] = value
+        return data
 
     def write_auth(self, payload: dict) -> Path:
         path = self.home / "auth.json"
@@ -272,7 +306,7 @@ class SaveCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_save, "work")
 
         self.assertEqual(rc, 0)
-        saved = json.loads((self.home / "accounts" / "work.json").read_text())
+        saved = self.saved((self.home / "accounts" / "work.json"))
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-live")
         # auth.json rewritten from the same content so file and keychain agree
         auth = json.loads((self.home / "auth.json").read_text())
@@ -285,7 +319,7 @@ class SaveCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_save, "kc-only")
 
         self.assertEqual(rc, 0)
-        saved = json.loads((self.home / "accounts" / "kc-only.json").read_text())
+        saved = self.saved((self.home / "accounts" / "kc-only.json"))
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-kc")
 
     def test_save_without_auth_or_keychain_errors(self):
@@ -338,7 +372,7 @@ class SaveCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_login_switch, "newacct")
 
         self.assertEqual(rc, 0)
-        saved = json.loads((self.home / "accounts" / "newacct.json").read_text())
+        saved = self.saved((self.home / "accounts" / "newacct.json"))
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-fresh")
 
     def test_login_switch_cancellation_is_quiet_and_preserves_profiles(self):
@@ -355,7 +389,7 @@ class SaveCommandTests(_CodexHomeMixin):
 
         self.assertEqual(rc, 130)
         self.assertIn("Login cancelled", err)
-        self.assertEqual(json.loads(current.read_text())["tokens"]["refresh_token"], "rt-current")
+        self.assertEqual(self.saved(current)["tokens"]["refresh_token"], "rt-current")
         self.assertFalse((self.home / "accounts" / "newacct.json").exists())
 
     def test_login_switch_restores_control_character_echo_after_cancellation(self):
@@ -402,7 +436,7 @@ class SaveCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_save, "newacct")
 
         self.assertEqual(rc, 0)
-        saved = json.loads((self.home / "accounts" / "newacct.json").read_text())
+        saved = self.saved((self.home / "accounts" / "newacct.json"))
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-fresh-login")
         auth = json.loads((self.home / "auth.json").read_text())
         self.assertEqual(auth["tokens"]["refresh_token"], "rt-fresh-login")
@@ -438,8 +472,8 @@ class SaveCommandTests(_CodexHomeMixin):
         self.assertIsNotNone(login_call)
         self.assertNotEqual(Path(login_call[1]["env"]["CODEX_HOME"]), self.home)
         self.assertIn('cli_auth_credentials_store="file"', login_call[0])
-        self.assertEqual(json.loads(current.read_text())["tokens"]["refresh_token"], "rt-current")
-        saved = json.loads((self.home / "accounts" / "newacct.json").read_text())
+        self.assertEqual(self.saved(current)["tokens"]["refresh_token"], "rt-current")
+        saved = self.saved((self.home / "accounts" / "newacct.json"))
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-new")
 
     def test_login_switch_updates_exact_token_aliases(self):
@@ -455,7 +489,7 @@ class SaveCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_login_switch, "primary")
 
         self.assertEqual(rc, 0)
-        self.assertEqual(json.loads(alias.read_text())["tokens"]["refresh_token"], "rt-fresh")
+        self.assertEqual(self.saved(alias)["tokens"]["refresh_token"], "rt-fresh")
 
     def test_save_keeps_other_same_account_profile_independent(self):
         # Given: a fresh login and another named profile for the same account.
@@ -470,7 +504,7 @@ class SaveCommandTests(_CodexHomeMixin):
 
         # Then: only the named profile is written and the sibling stays intact.
         self.assertEqual(rc, 0)
-        self.assertEqual(json.loads(alias.read_text())["tokens"]["refresh_token"], "rt-stale")
+        self.assertEqual(self.saved(alias)["tokens"]["refresh_token"], "rt-stale")
         self.assertEqual((self.home / "accounts" / ".current-profile").read_text(), "primary")
 
 
@@ -487,7 +521,7 @@ class CopyActiveAuthGuardTests(_CodexHomeMixin):
         self.write_auth(_auth_payload("acct-active", "active@x.com", refresh_token="rt-active"))
         with mock.patch.object(ca, "_read_keychain_auth", return_value=None):
             self.run_quiet(ca._copy_active_auth_to, dest)
-        kept = json.loads(dest.read_text())
+        kept = self.saved(dest)
         self.assertEqual(kept["tokens"]["refresh_token"], "rt-other")
 
     def test_still_syncs_same_account(self):
@@ -497,7 +531,7 @@ class CopyActiveAuthGuardTests(_CodexHomeMixin):
         self.write_auth(_auth_payload("acct-a", "a@x.com", refresh_token="rt-rotated"))
         with mock.patch.object(ca, "_read_keychain_auth", return_value=None):
             self.run_quiet(ca._copy_active_auth_to, dest)
-        synced = json.loads(dest.read_text())
+        synced = self.saved(dest)
         self.assertEqual(synced["tokens"]["refresh_token"], "rt-rotated")
 
 
@@ -510,7 +544,7 @@ class RefreshCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_refresh, "work")
 
         self.assertEqual(rc, 0)
-        data = json.loads(profile.read_text())
+        data = self.saved(profile)
         self.assertEqual(data["tokens"]["access_token"], new["access_token"])
         self.assertEqual(data["tokens"]["id_token"], "idt-new")
         self.assertEqual(data["tokens"]["refresh_token"], "rt-new")
@@ -535,7 +569,7 @@ class RefreshCommandTests(_CodexHomeMixin):
 
         # Then: the sibling retains its own refresh token.
         self.assertEqual(rc, 0)
-        self.assertEqual(json.loads(alias.read_text())["tokens"]["refresh_token"], "rt-alias")
+        self.assertEqual(self.saved(alias)["tokens"]["refresh_token"], "rt-alias")
 
     def test_refresh_active_profile_also_updates_auth_json(self):
         self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
@@ -558,12 +592,12 @@ class RefreshCommandTests(_CodexHomeMixin):
         self.assertEqual(auth.read_text(), before)
 
     def test_refresh_failure_leaves_profile_unchanged(self):
-        profile = self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
-        before = profile.read_text()
+        payload = _auth_payload("acct-w", "w@x.com")
+        profile = self.write_profile("work", payload)
         with mock.patch.object(ca, "_oauth_refresh", return_value=(None, "HTTP 401")):
             rc = self.run_quiet(ca.cmd_refresh, "work")
         self.assertEqual(rc, 1)
-        self.assertEqual(profile.read_text(), before)
+        self.assertEqual(self.saved(profile), payload)
 
     def test_refresh_missing_refresh_token_errors(self):
         payload = _auth_payload("acct-w", "w@x.com")
@@ -650,8 +684,8 @@ class RefreshCommandTests(_CodexHomeMixin):
             [call.args[0] for call in oauth_refresh.call_args_list],
             ["rt-first", "rt-second"],
         )
-        self.assertEqual(json.loads(first.read_text())["tokens"]["refresh_token"], "rt-first-new")
-        self.assertEqual(json.loads(second.read_text())["tokens"]["refresh_token"], "rt-second-new")
+        self.assertEqual(self.saved(first)["tokens"]["refresh_token"], "rt-first-new")
+        self.assertEqual(self.saved(second)["tokens"]["refresh_token"], "rt-second-new")
 
     def test_refresh_all_refreshes_exact_token_aliases_once(self):
         shared = _auth_payload("acct-a", "a@x.com", refresh_token="rt-shared")
@@ -667,8 +701,8 @@ class RefreshCommandTests(_CodexHomeMixin):
 
         self.assertEqual(rc, 0)
         oauth_refresh.assert_called_once_with("rt-shared")
-        self.assertEqual(json.loads(first.read_text())["tokens"]["refresh_token"], "rt-fresh")
-        self.assertEqual(json.loads(second.read_text())["tokens"]["refresh_token"], "rt-fresh")
+        self.assertEqual(self.saved(first)["tokens"]["refresh_token"], "rt-fresh")
+        self.assertEqual(self.saved(second)["tokens"]["refresh_token"], "rt-fresh")
 
     def test_refresh_no_arg_refreshes_auth_and_syncs_profile(self):
         auth = self.write_auth(_auth_payload("acct-w", "w@x.com"))
@@ -681,7 +715,7 @@ class RefreshCommandTests(_CodexHomeMixin):
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(auth.read_text())["tokens"]["refresh_token"], "rt-new")
         # profile synced from the freshly refreshed auth.json
-        self.assertEqual(json.loads(profile.read_text())["tokens"]["refresh_token"], "rt-new")
+        self.assertEqual(self.saved(profile)["tokens"]["refresh_token"], "rt-new")
 
     def test_refresh_no_arg_without_auth_errors(self):
         rc = self.run_quiet(ca.cmd_refresh, None)
@@ -707,7 +741,7 @@ class RefreshCommandTests(_CodexHomeMixin):
 
         self.assertEqual(rc, 0)
         self.assertEqual(
-            json.loads(profile.read_text())["tokens"]["refresh_token"], "rt-keychain-live"
+            self.saved(profile)["tokens"]["refresh_token"], "rt-keychain-live"
         )
 
     def test_refresh_http_4xx_classified_as_revoked_with_login_switch_message(self):
@@ -778,7 +812,7 @@ class SyncCommandTests(_CodexHomeMixin):
 
         rc = self.run_quiet(ca.cmd_sync)
         self.assertEqual(rc, 0)
-        self.assertEqual(profile.read_text(), auth.read_text())
+        self.assertEqual(self.saved(profile), json.loads(auth.read_text()))
         if os.name == "posix":
             self.assertEqual(profile.stat().st_mode & 0o777, 0o600)
 
@@ -806,7 +840,7 @@ class SyncCommandTests(_CodexHomeMixin):
 
         self.assertEqual(rc, 0)
         self.assertEqual(
-            json.loads(profile.read_text())["tokens"]["refresh_token"], "rt-keychain-live"
+            self.saved(profile)["tokens"]["refresh_token"], "rt-keychain-live"
         )
 
     def test_sync_updates_only_marked_profile_when_account_ids_match(self):
@@ -823,8 +857,8 @@ class SyncCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_sync)
 
         self.assertEqual(rc, 0)
-        self.assertEqual(json.loads(first.read_text())["tokens"]["refresh_token"], "rt-first")
-        self.assertEqual(json.loads(second.read_text())["tokens"]["refresh_token"], "rt-live")
+        self.assertEqual(self.saved(first)["tokens"]["refresh_token"], "rt-first")
+        self.assertEqual(self.saved(second)["tokens"]["refresh_token"], "rt-live")
 
 
 class RemoveCommandTests(_CodexHomeMixin):
@@ -870,6 +904,127 @@ class RemoveCommandTests(_CodexHomeMixin):
 
         self.assertEqual(rc, 0)
         interactive.assert_called_once_with()
+
+
+class ProfileSecretStoreTests(_CodexHomeMixin):
+    """Saved profiles keep their tokens in the OS credential store (faked)."""
+
+    _TOKENS = ("rt-placeholder", "at-placeholder")
+
+    def _legacy(self, name: str = "work") -> tuple[Path, dict]:
+        payload = _auth_payload("acct-w", "user@example.com", refresh_token="rt-placeholder")
+        payload["tokens"]["access_token"] = payload["tokens"]["id_token"] = _jwt(
+            {"email": "user@example.com", "exp": int(time.time()) + 10 * 24 * 3600, "tag": "at-placeholder"}
+        )
+        payload["OPENAI_API_KEY"] = None
+        return self.write_profile(name, payload), payload
+
+    def _list(self) -> tuple[int, str, str]:
+        empty = usage_format.UsageSnapshot(hourly=None, weekly=None, refreshed_at=None, error=None)
+        with mock.patch.object(usage_format, "fetch_usage", return_value=empty):
+            return self.run_capture(ca.cmd_list)
+
+    def test_legacy_profile_is_migrated_once_by_list(self):
+        profile, payload = self._legacy()
+
+        rc, _out, _err = self._list()
+
+        self.assertEqual(rc, 0)
+        text = profile.read_text(encoding="utf-8")
+        for token in (*self._TOKENS, payload["tokens"]["access_token"]):
+            self.assertNotIn(token, text)
+        on_disk = json.loads(text)
+        self.assertEqual(on_disk["_secrets"]["key"], "codex--work")
+        self.assertTrue(on_disk["_secrets"]["has_refresh_token"])
+        self.assertEqual(on_disk["_claims"]["email"], "user@example.com")
+        self.assertIsNone(on_disk["OPENAI_API_KEY"])  # null is not a secret
+        if os.name == "posix":
+            self.assertEqual(profile.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.stored("codex--work")["tokens.refresh_token"], "rt-placeholder")
+        self.assertEqual(self.saved(profile), payload)
+
+        # A second run is a no-op: nothing left to move.
+        _rc, _out, err = self._list()
+        self.assertEqual(profile.read_text(encoding="utf-8"), text)
+        self.assertNotIn("Moved secrets", err)
+
+    def test_metadata_only_commands_never_read_the_store(self):
+        profile, payload = self._legacy()
+        self.write_auth(payload)
+        self._list()  # migrate
+        profile_secrets._cache.clear()
+        self.store.gets = 0
+
+        rc, out, _err = self.run_capture(lambda: ca.cmd_list(fetch_usage=False))
+        with mock.patch.object(ca, "have", return_value=False):
+            self.run_capture(ca.cmd_who)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.store.gets, 0)
+        text = ca._ANSI_RE.sub("", out)
+        self.assertIn("user@example.com", text)  # claims come from metadata
+        self.assertIn("ACTIVE", text)  # matched via the _secrets fingerprint
+
+    def test_without_a_store_the_legacy_file_is_untouched_with_one_warning(self):
+        profile, _payload = self._legacy()
+        before = profile.read_bytes()
+        self.store.unavailable = True
+
+        rc, _out, err = self._list()
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(profile.read_bytes(), before)
+        warnings = [line for line in err.splitlines() if "No OS credential store" in line]
+        self.assertEqual(len(warnings), 1)
+
+    def test_remove_deletes_the_store_entry(self):
+        profile, _payload = self._legacy()
+        self._list()  # migrate
+        self.assertIn("codex--work", self.store.slots)
+
+        rc = self.run_quiet(ca.cmd_remove, "work")
+
+        self.assertEqual(rc, 0)
+        self.assertFalse(profile.exists())
+        self.assertNotIn("codex--work", self.store.slots)
+
+    def test_unreadable_store_is_a_transient_refresh_failure_not_revoked(self):
+        self._legacy()
+        self._list()  # migrate
+        profile_secrets._cache.clear()
+        self.store.unavailable = True
+
+        with mock.patch.object(ca, "_oauth_refresh") as refresh:
+            rc, _out, err = self.run_capture(ca.cmd_refresh, "--all")
+
+        self.assertEqual(rc, 1)
+        refresh.assert_not_called()
+        self.assertIn("Transient failure, retry later: work", err)
+        self.assertNotIn("Revoked", err)
+
+    def test_switch_writes_the_full_vendor_auth_without_our_metadata(self):
+        _profile, payload = self._legacy()
+        self._list()  # migrate
+
+        # Fail-safes: a fresh token never refreshes, and must never reach the
+        # real token endpoint or a browser login.
+        with mock.patch.object(ca, "have", return_value=False), \
+                mock.patch.object(ca, "_oauth_refresh") as refresh, \
+                mock.patch.object(ca, "cmd_login_switch") as relogin:
+            rc = self.run_quiet(ca.cmd_switch, "work")
+
+        self.assertEqual(rc, 0)
+        refresh.assert_not_called()
+        relogin.assert_not_called()
+        self.assertEqual(json.loads((self.home / "auth.json").read_text()), payload)
+
+    def test_fetch_usage_accepts_a_loaded_auth_dict(self):
+        payload = _auth_payload("acct-w", "user@example.com")
+        with mock.patch.object(usage_format, "_request_usage", return_value="network error") as request:
+            usage = usage_format.fetch_usage(payload)
+        self.assertEqual(usage.error, "network error")
+        self.assertEqual(request.call_args.args, (payload["tokens"]["access_token"], "acct-w"))
+        self.assertEqual(usage_format.fetch_usage(None).error, "unreadable auth")
 
 
 class UsageRequestTests(_CodexHomeMixin):
@@ -1127,10 +1282,12 @@ class UsageRequestTests(_CodexHomeMixin):
         self.write_profile("b", _auth_payload("acct-b", "b@x.com"))
         both_started = threading.Barrier(2)
 
-        def fetch(path):
+        def fetch(auth):
             both_started.wait(timeout=2)
             return usage_format.UsageSnapshot(
-                usage_format.UsageWindow(12 if path.stem == "a" else 73, 2_000_000_000, 300),
+                usage_format.UsageWindow(
+                    12 if auth["tokens"]["account_id"] == "acct-a" else 73, 2_000_000_000, 300
+                ),
                 None, 2_000_000_000, None,
             )
 
@@ -1165,7 +1322,6 @@ class UsageRequestTests(_CodexHomeMixin):
         duplicate_profile = self.write_profile("duplicate", _auth_payload("acct-a", "a@x.com", refresh_token="rt-dupe"))
         self.write_profile("other", _auth_payload("acct-b", "b@x.com", refresh_token="rt-other"))
         live_text = json.dumps(_auth_payload("acct-a", "a@x.com", refresh_token="rt-live"))
-        duplicate_before = duplicate_profile.read_text()
 
         with mock.patch.object(ca, "_read_keychain_auth", return_value=live_text), \
                 mock.patch.object(
@@ -1185,8 +1341,10 @@ class UsageRequestTests(_CodexHomeMixin):
         text = ca._ANSI_RE.sub("", out)
         self.assertEqual(text.count("ACTIVE"), 1)
         self.assertEqual(text.count("SAME ACCT"), 1)
-        self.assertEqual(active_profile.read_text(), live_text)
-        self.assertEqual(duplicate_profile.read_text(), duplicate_before)
+        self.assertEqual(self.saved(active_profile), json.loads(live_text))
+        self.assertEqual(
+            self.saved(duplicate_profile), _auth_payload("acct-a", "a@x.com", refresh_token="rt-dupe")
+        )
 
     def test_usage_shows_only_active_profile(self):
         self.write_auth(_auth_payload("acct-a", "a@x.com", refresh_token="rt-a"))
@@ -1220,10 +1378,8 @@ class UsageRequestTests(_CodexHomeMixin):
 
     def test_list_does_not_refresh_or_retry_usage(self):
         # Given: a saved profile with a refresh token that would rotate if used.
-        profile = self.write_profile(
-            "work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-old")
-        )
-        before = profile.read_text()
+        payload = _auth_payload("acct-w", "w@x.com", refresh_token="rt-old")
+        profile = self.write_profile("work", payload)
 
         # When: list is rendered.
         with mock.patch.object(ca, "_read_keychain_auth", return_value=None), \
@@ -1243,9 +1399,9 @@ class UsageRequestTests(_CodexHomeMixin):
         # Then: usage is attempted once, but token rotation is explicit-only.
         self.assertEqual(rc, 0)
         self.assertIn("work", out)
-        fetch_usage.assert_called_once_with(profile)
+        fetch_usage.assert_called_once_with(payload)  # the profile's own tokens
         oauth_refresh.assert_not_called()
-        self.assertEqual(profile.read_text(), before)
+        self.assertEqual(self.saved(profile), payload)
 
     def test_list_does_not_surface_usage_relogin_state(self):
         self.write_profile("work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-dead"))
@@ -1421,7 +1577,7 @@ class SwitchStalenessTests(_CodexHomeMixin):
         # The outgoing profile must now carry codex's live token, not the stale
         # one that would 401 on a later switch back.
         self.assertEqual(
-            json.loads(work_profile.read_text())["tokens"]["refresh_token"], "rt-live"
+            self.saved(work_profile)["tokens"]["refresh_token"], "rt-live"
         )
 
     def test_switch_back_restores_live_token_not_revoked_one(self):
@@ -1438,12 +1594,18 @@ class SwitchStalenessTests(_CodexHomeMixin):
         self.assertEqual(auth["tokens"]["refresh_token"], "rt-p-live")
 
     def test_switch_still_backs_up_previous_auth(self):
-        self.write_auth(_auth_payload("acct-w", "w@x.com"))
+        previous = self.write_auth(_auth_payload("acct-w", "w@x.com")).read_text()
+        stale = self.home / "backups" / "auth.json.backup"
+        stale.parent.mkdir(parents=True)
+        stale.write_text("{}", encoding="utf-8")
         self.write_profile("personal", _auth_payload("acct-p", "p@x.com"))
         with mock.patch.object(ca, "have", return_value=False):
             rc = self.run_quiet(ca.cmd_switch, "personal")
         self.assertEqual(rc, 0)
-        self.assertTrue((self.home / "backups" / "auth.json.backup").exists())
+        # The one latest backup lives in the credential store; old plaintext
+        # backup files are pruned.
+        self.assertEqual(self.stored("backup--codex"), previous)
+        self.assertFalse(stale.exists())
 
     def test_switch_with_unmanaged_active_auth_does_not_crash(self):
         # Active auth matches no saved profile (raw `codex login`): nothing to
@@ -1474,7 +1636,7 @@ class SwitchStalenessTests(_CodexHomeMixin):
 
         self.assertEqual(rc, 0)
         self.assertEqual(
-            json.loads(work_profile.read_text())["tokens"]["refresh_token"], "rt-keychain-live"
+            self.saved(work_profile)["tokens"]["refresh_token"], "rt-keychain-live"
         )
 
     def test_switch_folds_back_to_keychain_account_when_auth_json_is_another_account(self):
@@ -1501,7 +1663,7 @@ class SwitchStalenessTests(_CodexHomeMixin):
         # Then: the actual keychain account keeps its rotated token.
         self.assertEqual(rc, 0)
         self.assertEqual(
-            json.loads(work_profile.read_text())["tokens"]["refresh_token"],
+            self.saved(work_profile)["tokens"]["refresh_token"],
             "rt-keychain-live",
         )
 
@@ -1520,8 +1682,8 @@ class SwitchStalenessTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_switch, "second")
 
         self.assertEqual(rc, 0)
-        self.assertEqual(json.loads(first.read_text())["tokens"]["refresh_token"], "rt-first-live")
-        self.assertEqual(json.loads(second.read_text())["tokens"]["refresh_token"], "rt-second")
+        self.assertEqual(self.saved(first)["tokens"]["refresh_token"], "rt-first-live")
+        self.assertEqual(self.saved(second)["tokens"]["refresh_token"], "rt-second")
         self.assertEqual(
             json.loads((self.home / "auth.json").read_text())["tokens"]["refresh_token"],
             "rt-second",
@@ -1541,8 +1703,8 @@ class SwitchStalenessTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_switch, "other")
 
         self.assertEqual(rc, 0)
-        self.assertEqual(json.loads(first.read_text())["tokens"]["refresh_token"], "rt-live")
-        self.assertEqual(json.loads(alias.read_text())["tokens"]["refresh_token"], "rt-live")
+        self.assertEqual(self.saved(first)["tokens"]["refresh_token"], "rt-live")
+        self.assertEqual(self.saved(alias)["tokens"]["refresh_token"], "rt-live")
 
 
 class SwitchExpiredFallbackTests(_CodexHomeMixin):
@@ -1573,7 +1735,7 @@ class SwitchExpiredFallbackTests(_CodexHomeMixin):
         auth = json.loads((self.home / "auth.json").read_text())
         self.assertEqual(auth["tokens"]["refresh_token"], "rt-fresh")
         # rotated token mirrored back to the profile so it stays live
-        prof = json.loads((self.home / "accounts" / "work.json").read_text())
+        prof = self.saved((self.home / "accounts" / "work.json"))
         self.assertEqual(prof["tokens"]["refresh_token"], "rt-fresh")
 
     def test_expired_token_with_revoked_refresh_token_triggers_login_switch(self):
@@ -1804,7 +1966,7 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         self.mark_current("alpha")
 
         def fake_fetch(path):
-            pct = 93 if path.stem == "alpha" else 5
+            pct = 93 if _probed(path) == "alpha" else 5
             return usage_format.UsageSnapshot(
                 hourly=None,
                 weekly=usage_format.UsageWindow(
@@ -1859,16 +2021,18 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         # Given: two profiles, both at/above the switch threshold (no qualifying candidate)
         self._enable_autoswitch()
         self.write_auth(_auth_payload("acct-a", "a@x.com"))
-        alpha = self.write_profile("alpha", _auth_payload("acct-a", "a@x.com"))
-        beta = self.write_profile("beta", _auth_payload("acct-b", "b@x.com"))
+        # The live auth carries a rotated token the alpha profile does not.
+        self.write_auth(_auth_payload("acct-a", "a@x.com", refresh_token="rt-live"))
+        self.write_profile("alpha", _auth_payload("acct-a", "a@x.com", refresh_token="rt-alpha"))
+        self.write_profile("beta", _auth_payload("acct-b", "b@x.com", refresh_token="rt-beta"))
         self.mark_current("alpha")
         before = ca._auth_file().read_text(encoding="utf-8")
 
-        probed: list[Path] = []
+        probed: list[str] = []
 
-        def fake_fetch(path):
-            probed.append(path)
-            return self._snapshot(95 if path == alpha else 92)
+        def fake_fetch(auth):
+            probed.append(auth["tokens"]["refresh_token"])
+            return self._snapshot(95 if _probed(auth) == "alpha" else 92)
 
         with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=fake_fetch), \
                 mock.patch.object(ca, "cmd_switch") as switch:
@@ -1877,8 +2041,7 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         # Then: only the profiles' OWN files were probed — never the live auth.json —
         # and the active credentials were never touched (no switch was triggered)
         self.assertEqual(rc, 0)
-        self.assertEqual(set(probed), {alpha, beta})
-        self.assertNotIn(ca._auth_file(), probed)
+        self.assertEqual(set(probed), {"rt-alpha", "rt-beta"})
         switch.assert_not_called()
         self.assertEqual(ca._auth_file().read_text(encoding="utf-8"), before)
 
@@ -1892,9 +2055,9 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         self.mark_current("alpha")
 
         def fake_fetch(path):
-            if path.stem == "alpha":
+            if _probed(path) == "alpha":
                 return self._snapshot(95)
-            if path.stem == "beta":
+            if _probed(path) == "beta":
                 return self._snapshot(error="HTTP 401 from usage endpoint")
             return self._snapshot(10)  # gamma: genuinely below threshold
 
@@ -1933,7 +2096,7 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         self.mark_current("alpha")
 
         def fake_fetch(path):
-            return self._snapshot(95 if path.stem == "alpha" else 10)
+            return self._snapshot(95 if _probed(path) == "alpha" else 10)
 
         # When: cmd_autoswitch runs
         with mock.patch.object(ca.usage_format, "fetch_usage", side_effect=fake_fetch), \
@@ -1985,7 +2148,7 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         self.mark_current("alpha")
 
     def _fetch_alpha_exhausted(self, path):
-        return self._snapshot(95 if path.stem == "alpha" else 10)
+        return self._snapshot(95 if _probed(path) == "alpha" else 10)
 
     def test_an_interactive_switch_resumes_the_last_session_in_a_new_process(self):
         # Given: a switch is due and the command is attached to a terminal
@@ -2062,9 +2225,9 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         self.mark_current("alpha")
 
         def fake_fetch(path):
-            if path.stem == "alpha":
+            if _probed(path) == "alpha":
                 return self._snapshot(95)
-            if path.stem == "beta":
+            if _probed(path) == "beta":
                 return self._snapshot(10, error="HTTP 500 from usage endpoint")
             return self._snapshot(20)
 

@@ -396,8 +396,11 @@ def _snapshot(payload: JsonDict) -> UsageSnapshot:
     )
 
 
-def fetch_usage(auth_path: Path) -> UsageSnapshot:
-    auth = _load_json(auth_path)
+def fetch_usage(auth: Path | JsonDict | None) -> UsageSnapshot:
+    """Codex usage for *auth*: an auth-JSON path, or an already-loaded auth dict
+    (a saved profile whose tokens live in the OS credential store)."""
+    if not isinstance(auth, dict):
+        auth = _load_json(auth) if auth is not None else None
     if auth is None:
         return UsageSnapshot(hourly=None, weekly=None, refreshed_at=None, error="unreadable auth")
 
