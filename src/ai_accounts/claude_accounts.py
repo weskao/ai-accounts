@@ -30,6 +30,7 @@ from typing import Final
 
 from . import autoswitch, claude_usage, i18n
 from . import config_menu as cm
+from . import profile_secrets as ps
 from .usage_format import (
     capitalize_first,
     format_unix_time_compact,
@@ -79,6 +80,11 @@ _PLAN_TIERS = ("pro", "team", "max")
 
 _OAUTH_KEY: Final = "claudeAiOauth"
 _IDENTITY_KEY: Final = "aiAccountsAccount"  # non-secret identity snapshot (email/name)
+# Secret fields moved into the OS credential store (see profile_secrets); the
+# refresh token is listed FIRST so its value is the one profile_secrets
+# fingerprints. Everything else in claudeAiOauth (expiresAt, subscriptionType,
+# scopes, rateLimitTier, refreshTokenExpiresAt) is non-secret and stays in the file.
+_SECRET_FIELDS: Final = (f"{_OAUTH_KEY}.refreshToken", f"{_OAUTH_KEY}.accessToken")
 
 HELP = """claude-accounts — manage multiple Claude Code login profiles
 
@@ -338,11 +344,9 @@ def _read_active_identity() -> dict | None:
 
 def _read_profile_identity(path: Path) -> dict | None:
     """Identity snapshot stored in a profile at save time (None for older, bare
-    profiles saved before this was captured — they backfill on next save)."""
-    try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
-        return None
+    profiles saved before this was captured — they backfill on next save).
+    Identity is never a secret, so this reads the file only — no store read."""
+    obj = ps.load_metadata(path)
     ident = obj.get(_IDENTITY_KEY) if isinstance(obj, dict) else None
     return ident if isinstance(ident, dict) else None
 
@@ -405,23 +409,31 @@ def _plan_row_cell(claims: dict | None) -> str:
 
 # ── token identity ──────────────────────────────────────────────────────────
 # No stable account id exists, so a profile is matched to the active session by
-# exact token equality only (there is no same-account grouping like codex/agy).
+# matching token FINGERPRINTS only (there is no same-account grouping like
+# codex/agy). Fingerprints (not raw tokens) so matching never needs a store read.
 
 def _token_key_from_oauth(oauth: dict) -> str | None:
     token = oauth.get("refreshToken") or oauth.get("accessToken")
-    return token if isinstance(token, str) and token else None
+    return ps.fingerprint(token) if isinstance(token, str) and token else None
 
 
 def _token_key_from_path(path: Path) -> str | None:
-    oauth = _read_profile_oauth(path)
-    return _token_key_from_oauth(oauth) if oauth is not None else None
+    """Fingerprint of *path*'s identity token — from the `_secrets` marker when
+    the profile is already migrated (zero store reads), else computed from the
+    still-inline oauth of a legacy/plaintext profile."""
+    meta = ps.load_metadata(path)
+    if not isinstance(meta, dict):
+        return None
+    marker = meta.get(ps.SECRETS_KEY)
+    if isinstance(marker, dict):
+        return marker.get("fingerprint") or None
+    oauth = _extract_oauth(meta)
+    return _token_key_from_oauth(oauth) if oauth else None
 
 
 def _read_profile_oauth(path: Path) -> dict | None:
-    try:
-        return _extract_oauth(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, UnicodeDecodeError, ValueError):
-        return None
+    data = ps.load(path, "claude", _SECRET_FIELDS)
+    return _extract_oauth(data) if data is not None else None
 
 
 # ── active credential store (keychain-first on macOS, then file) ────────────
@@ -483,8 +495,6 @@ def _active_profile(active_oauth: dict | None = None) -> Path | None:
 
 
 def _write_profile(profile_file: Path, oauth: dict, identity: dict | None = None) -> None:
-    _account_dir().mkdir(parents=True, exist_ok=True)
-    _account_dir().chmod(0o700)
     # Wrapped shape so the non-secret identity rides alongside the token; a fresh
     # `identity` wins, else any previously stored one survives token rotation
     # (refresh/fold pass none — they must not drop the email captured at save).
@@ -492,7 +502,11 @@ def _write_profile(profile_file: Path, oauth: dict, identity: dict | None = None
     ident = identity or _read_profile_identity(profile_file)
     if ident:
         container[_IDENTITY_KEY] = ident
-    atomic_write_json(profile_file, container)
+    # ps.save splits refreshToken/accessToken into the OS credential store,
+    # leaving only metadata + a `_secrets` marker in the file (0600); it makes
+    # the account dir (0700) and falls back to a full plaintext write itself
+    # when no store is available.
+    ps.save(profile_file, "claude", container, _SECRET_FIELDS)
 
 
 def _fold_active_into_profile(profile: Path) -> None:
@@ -1052,7 +1066,7 @@ def cmd_remove(name: str) -> int:
         log_red(f"❌ Profile not found: {name}")
         return 1
     was_current = _marked_profile() == profile_file
-    profile_file.unlink()
+    ps.delete(profile_file, "claude")
     if was_current:
         _current_profile_marker().unlink(missing_ok=True)
     ok("Removed Claude profile", name, bold=False)

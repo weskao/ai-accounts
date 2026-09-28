@@ -14,8 +14,11 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from ai_accounts import claude_accounts as ca
 from ai_accounts import claude_usage as cu
+from ai_accounts import profile_secrets as ps
 
 
 
@@ -345,9 +348,17 @@ class ProfileCommandTests(_HomeMixin):
     def test_save_captures_only_the_oauth_blob(self) -> None:
         self.set_active(_oauth(access="live", refresh="rt-live"))
         self.assertEqual(self.quiet(ca.cmd_save, "work"), 0)
-        container = json.loads((self.home / "accounts" / "work.json").read_text())
-        self.assertEqual(container["claudeAiOauth"]["refreshToken"], "rt-live")
+        profile_file = self.home / "accounts" / "work.json"
+        container = json.loads(profile_file.read_text())
         self.assertNotIn("mcpOAuth", container)  # profile is account-only
+        # Tokens live in the OS credential store now — only the marker + the
+        # non-secret oauth fields (expiresAt etc.) stay in the file.
+        self.assertNotIn("refreshToken", container["claudeAiOauth"])
+        self.assertNotIn("accessToken", container["claudeAiOauth"])
+        self.assertIn(ps.SECRETS_KEY, container)
+        oauth = ca._read_profile_oauth(profile_file)
+        assert oauth is not None
+        self.assertEqual(oauth["refreshToken"], "rt-live")
         self.assertEqual((self.home / "accounts" / ".current-profile").read_text(), "work")
 
     def test_save_without_credentials_errors(self) -> None:
@@ -605,6 +616,73 @@ class ProfileCommandTests(_HomeMixin):
         result, output, _err = self.capture(lambda: ca.main(["help"]))
         self.assertEqual(result, 0)
         self.assertIn("USAGE", output)
+
+
+class ProfileSecretsTests(_HomeMixin):
+    """claude_accounts' adoption of the shared OS-credential-store helper."""
+
+    @pytest.fixture(autouse=True)
+    def _inject_profile_store(self, profile_store):
+        self.store = profile_store
+
+    def _write_legacy_profile(self, name: str, oauth: dict, identity: dict | None = None) -> Path:
+        """A pre-migration plaintext profile: tokens still inline, no `_secrets` marker."""
+        path = self.home / "accounts" / f"{name}.json"
+        payload: dict = {"claudeAiOauth": oauth}
+        if identity:
+            payload["aiAccountsAccount"] = identity
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_legacy_profile_migrates_tokens_into_the_store_on_first_read(self) -> None:
+        path = self._write_legacy_profile("work", _oauth(access="at-legacy", refresh="rt-legacy"))
+        oauth = self.quiet(ca._read_profile_oauth, path)
+        assert oauth is not None
+        self.assertEqual(oauth["refreshToken"], "rt-legacy")
+
+        container = json.loads(path.read_text())
+        self.assertNotIn("refreshToken", container["claudeAiOauth"])
+        self.assertNotIn("accessToken", container["claudeAiOauth"])
+        # Non-secret fields stay in the file.
+        self.assertIn("expiresAt", container["claudeAiOauth"])
+        marker = container[ps.SECRETS_KEY]
+        self.assertTrue(marker["has_refresh_token"])
+        self.assertEqual(marker["fingerprint"], ps.fingerprint("rt-legacy"))
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+        # The tokens actually landed in the (fake) store.
+        secret_key = marker["key"]
+        self.assertIn(secret_key, self.store.slots)
+
+        # Second run: no-op — same result, file unchanged, no duplicate migration.
+        before = path.read_bytes()
+        oauth_again = self.quiet(ca._read_profile_oauth, path)
+        self.assertEqual(oauth_again, oauth)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_unavailable_store_leaves_the_legacy_file_untouched_with_one_warning(self) -> None:
+        path = self._write_legacy_profile("work", _oauth(access="at-legacy", refresh="rt-legacy"))
+        before = path.read_bytes()
+        self.store.unavailable = True
+
+        _rc, _out, err = self.capture(ca._read_profile_oauth, path)
+        self.assertEqual(path.read_bytes(), before)  # untouched — fallback stays plaintext
+        self.assertEqual(err.count("plain text"), 1)
+
+        # A second read must not print a second warning (once per process).
+        _rc2, _out2, err2 = self.capture(ca._read_profile_oauth, path)
+        self.assertEqual(err2.count("plain text"), 0)
+
+    def test_remove_deletes_the_profiles_store_entry(self) -> None:
+        self.set_active(_oauth(access="live", refresh="rt-live"))
+        self.assertEqual(self.quiet(ca.cmd_save, "work"), 0)
+        profile_file = self.home / "accounts" / "work.json"
+        marker = json.loads(profile_file.read_text())[ps.SECRETS_KEY]
+        self.assertIn(marker["key"], self.store.slots)
+
+        self.assertEqual(self.quiet(ca.cmd_remove, "work"), 0)
+        self.assertFalse(profile_file.exists())
+        self.assertNotIn(marker["key"], self.store.slots)
 
 
 class RefreshTests(_HomeMixin):
