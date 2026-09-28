@@ -7,13 +7,12 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from . import config_menu as cm
 from . import i18n
+from . import profile_secrets
 from ._present import accounts_table, choose_and_run, choose_profile, format_help, ok, panel, success_panel
 from ._utils import (
     BOLD,
@@ -108,43 +107,6 @@ def _marker_file() -> Path:
     return _account_dir() / ".current-profile"
 
 
-def _backup_dir() -> Path:
-    return _account_dir().parent / "backups"
-
-
-def _read_json(path: Path) -> JsonDict | None:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return value if isinstance(value, dict) and value else None
-
-
-def _write_json(path: Path, payload: JsonDict) -> bool:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            delete=False,
-        ) as handle:
-            json.dump(payload, handle, indent=2)
-            handle.write("\n")
-            temporary = Path(handle.name)
-        temporary.chmod(0o600)
-        temporary.replace(path)
-        path.chmod(0o600)
-        return True
-    except OSError as exc:
-        log_red(f"❌ Could not write {path}: {exc}")
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-        return False
-
-
 def _read_env(path: Path) -> dict[str, str]:
     if not path.is_file():
         return {}
@@ -202,6 +164,40 @@ _LEGACY_KEYCHAIN_SERVICES = ("vibe",)
 # Provider env-var names vibe may key on: mistral's own, plus the var used for
 # OpenAI-compatible provider configs.
 _KEY_ENV_VARS = ("MISTRAL_API_KEY", "OPENAI_API_KEY")
+
+# Both are single-segment (no dots), so profile_secrets' dotted-field split
+# can address either directly — no reshaping needed, unlike grok's nested
+# issuer-keyed record.
+_SECRET_FIELDS = _KEY_ENV_VARS
+
+
+def _load_profile(path: Path) -> dict[str, str] | None:
+    return profile_secrets.load(path, "vibe", _SECRET_FIELDS)
+
+
+def _save_profile(path: Path, payload: dict[str, str]) -> bool:
+    """True unless the file itself could not be written — a store-unavailable
+    fallback to plaintext (inside `profile_secrets.save`) is not a failure."""
+    try:
+        profile_secrets.save(path, "vibe", payload, _SECRET_FIELDS)
+        return True
+    except OSError as exc:
+        log_red(f"❌ Could not write {path}: {exc}")
+        return False
+
+
+def _profile_fingerprint(path: Path) -> str:
+    """The api key's fingerprint, without reading it from the secret store —
+    from the `_secrets` marker once migrated, else (a legacy plaintext
+    profile) from the inline value still in the file."""
+    data = profile_secrets.load_metadata(path)
+    if not isinstance(data, dict):
+        return ""
+    marker = data.get(profile_secrets.SECRETS_KEY)
+    if isinstance(marker, dict) and marker.get("fingerprint"):
+        return marker["fingerprint"]
+    key = _api_key(data)
+    return profile_secrets.fingerprint(key) if key else ""
 
 
 def _api_key(payload: dict[str, str] | None) -> str:
@@ -284,23 +280,25 @@ def _identity(payload: dict[str, str] | None) -> str:
 
 
 def _active_profile(active: dict[str, str] | None = None) -> Path | None:
+    """Matches by fingerprint (never the raw key) so picking the active
+    profile out of N candidates never touches the secret store."""
     active = active if active is not None else _read_active()
     if not active:
+        return None
+    fingerprint = profile_secrets.fingerprint(_identity(active)) if _identity(active) else ""
+    if not fingerprint:
         return None
     marker = _marker_file()
     try:
         marked = _profile_file(marker.read_text(encoding="utf-8").strip())
     except OSError:
         marked = None
-    if marked is not None and _identity(_read_json(marked)) == _identity(active):
+    if marked is not None and _profile_fingerprint(marked) == fingerprint:
         return marked
-    identity = _identity(active)
-    if not identity:
-        return None
     matches = [
         path
         for path in _account_dir().glob("*.json")
-        if _identity(_read_json(path)) == identity
+        if _profile_fingerprint(path) == fingerprint
     ]
     return matches[0] if len(matches) == 1 else None
 
@@ -346,9 +344,8 @@ def cmd_save(name: str | None = None) -> int:
     if profile is None:
         return 1
     # Store only the credential: profiles are secrets, not .env snapshots.
-    if not _write_json(profile, _credential(payload)):
+    if not _save_profile(profile, _credential(payload)):
         return 1
-    _account_dir().chmod(0o700)  # the store holds raw API keys
     _set_marker(profile)
     success_panel(
         "Saved Vibe profile",
@@ -394,7 +391,7 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
 
     rows = []
     for path in profiles:
-        claims = _claims(_read_json(path))
+        claims = _claims(_load_profile(path))
         is_active = path == active
         rows.append(
             {
@@ -417,15 +414,14 @@ def _backup_active() -> bool:
     active = _read_active()
     if not active:
         return True
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return _write_json(_backup_dir() / f".env.backup-{stamp}.json", active)
+    return profile_secrets.backup("vibe", json.dumps(active))
 
 
 def cmd_switch(name: str) -> int:
     profile = _profile_file(name)
     if profile is None:
         return 1
-    payload = _read_json(profile)
+    payload = _load_profile(profile)
     if payload is None:
         log_red(f"❌ Profile is unreadable or missing: {name}")
         return 1
@@ -444,7 +440,7 @@ def _picker_items(profiles: list[Path]) -> list[tuple[str, str | None]]:
     """(name, masked-key) pairs so the picker can tell two profiles apart."""
     items = []
     for path in profiles:
-        masked = _claims(_read_json(path)).get("api_key")
+        masked = _claims(_load_profile(path)).get("api_key")
         items.append((path.stem, None if masked == "—" else masked))
     return items
 
@@ -469,7 +465,7 @@ def cmd_remove(name: str) -> int:
         log_red(f"❌ Profile not found: {name}")
         return 1
     try:
-        profile.unlink()
+        profile_secrets.delete(profile, "vibe")
     except OSError as exc:
         log_red(f"❌ Could not remove profile: {exc}")
         return 1
@@ -494,7 +490,7 @@ def cmd_sync() -> int:
     if not payload or profile is None:
         log_yellow("⚠️  No unambiguous current profile — run: vibe-accounts switch <name>")
         return 1
-    if not _write_json(profile, payload):
+    if not _save_profile(profile, payload):
         return 1
     _set_marker(profile)
     success_panel(

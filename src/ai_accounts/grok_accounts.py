@@ -15,6 +15,7 @@ from typing import Any
 from . import config_menu as cm
 from . import grok_usage
 from . import i18n
+from . import profile_secrets
 from ._present import (
     accounts_table,
     choose_and_run,
@@ -139,10 +140,6 @@ def _marker_file() -> Path:
     return _account_dir() / ".current-profile"
 
 
-def _backup_dir() -> Path:
-    return _account_dir().parent / "backups"
-
-
 def _read_json(path: Path) -> JsonDict | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -183,15 +180,88 @@ def _set_marker(profile: Path) -> None:
     marker.chmod(0o600)
 
 
-def _record(payload: JsonDict) -> JsonDict | None:
-    for value in payload.values():
+def _record_key(payload: JsonDict) -> str | None:
+    """The one key in *payload* whose value looks like a Grok OAuth record
+    (``auth_mode``/``refresh_token``/``email``) — dynamic because it is the
+    issuer's own key (e.g. ``"https://auth.x.ai::client"``), never a name we
+    pick ourselves."""
+    for key, value in payload.items():
         if isinstance(value, dict) and (
             value.get("auth_mode") == "oauth"
             or "refresh_token" in value
             or "email" in value
         ):
-            return value
+            return key
     return None
+
+
+def _record(payload: JsonDict) -> JsonDict | None:
+    key = _record_key(payload)
+    return payload[key] if key is not None else None
+
+
+_RECORD_KEY_FIELD = "_record_key"
+
+
+def _flatten(payload: JsonDict) -> JsonDict:
+    """Reshape for on-disk storage: the OIDC record's own fields promoted to
+    the top level under single-segment names, so profile_secrets' dotted-field
+    split can address them — the record's real key (e.g.
+    ``"https://auth.x.ai::client"``) contains literal dots and can't be a path
+    segment itself. Idempotent: a payload with no record (already flat, or
+    malformed) comes back unchanged."""
+    key = _record_key(payload)
+    if key is None:
+        return dict(payload)
+    flat = {k: v for k, v in payload.items() if k != key}
+    flat.update(payload[key])
+    flat[_RECORD_KEY_FIELD] = key
+    return flat
+
+
+def _unflatten(flat: JsonDict) -> JsonDict:
+    """Reverse of `_flatten`: restore the dynamic top-level key."""
+    data = dict(flat)
+    key = data.pop(_RECORD_KEY_FIELD, None)
+    return {key: data} if key is not None else data
+
+
+def _load_profile_metadata(path: Path) -> JsonDict | None:
+    """Metadata-only profile read (email/plan/expiry/identity) — never
+    touches the secret store. Safe for active-profile matching and listings
+    that don't need the token itself."""
+    meta = profile_secrets.load_metadata(path)
+    return _unflatten(meta) if isinstance(meta, dict) else None
+
+
+def _load_profile(path: Path) -> JsonDict | None:
+    """Read a saved profile, auto-migrating a legacy nested/plaintext shape.
+
+    A pre-migration file is nested (`_record()`'s own vendor shape); its
+    record key can itself contain literal dots, so it is reshaped flat once
+    before profile_secrets' dotted-field split runs — which then migrates any
+    still-inline secret into the store on this same call."""
+    raw = profile_secrets.load_metadata(path)
+    if raw is None:
+        return None
+    flat = _flatten(raw)
+    if flat != raw:
+        _write_json(path, flat)
+    merged = profile_secrets.load(path, "grok", _SECRET_FIELDS)
+    return _unflatten(merged) if merged is not None else None
+
+
+def _save_profile(path: Path, payload: JsonDict) -> bool:
+    """Write *payload* (nested OIDC shape): secrets to the store, the rest to
+    *path*. A store-unavailable fallback to plaintext (inside
+    `profile_secrets.save`) is not a failure — only an `OSError` writing the
+    file itself is."""
+    try:
+        profile_secrets.save(path, "grok", _flatten(payload), _SECRET_FIELDS)
+        return True
+    except OSError as exc:
+        log_red(f"❌ Could not write {path}: {exc}")
+        return False
 
 
 def _claims(payload: JsonDict | None) -> JsonDict:
@@ -213,7 +283,12 @@ def _claims(payload: JsonDict | None) -> JsonDict:
         "created_at": str(record.get("create_time") or ""),
         "expires_at": str(record.get("expires_at") or ""),
         "auth_mode": str(record.get("auth_mode") or "—").upper(),
-        "refreshable": bool(record.get("refresh_token")),
+        # A metadata-only read (`_load_profile_metadata`, never touches the
+        # store) strips `refresh_token` for a migrated profile — fall back to
+        # the `_secrets` marker's non-secret `has_refresh_token` flag so this
+        # still reads "refreshable" instead of "browser login".
+        "refreshable": bool(record.get("refresh_token"))
+        or bool((record.get(profile_secrets.SECRETS_KEY) or {}).get("has_refresh_token")),
         "retention_opt_out": record.get("coding_data_retention_opt_out"),
         "malformed": False,
     }
@@ -237,6 +312,8 @@ def _access_token(payload: JsonDict | None) -> str | None:
 
 
 def _active_profile(active: JsonDict | None = None) -> Path | None:
+    """Identity (principal/email/team) is metadata, never a secret, so this
+    matches against `_load_profile_metadata` — zero secret-store reads."""
     active = active if active is not None else _read_json(_auth_file())
     if active is None:
         return None
@@ -245,7 +322,7 @@ def _active_profile(active: JsonDict | None = None) -> Path | None:
         marked = _profile_file(marker.read_text(encoding="utf-8").strip())
     except OSError:
         marked = None
-    if marked is not None and _identity(_read_json(marked)) == _identity(active):
+    if marked is not None and _identity(_load_profile_metadata(marked)) == _identity(active):
         return marked
     identity = _identity(active)
     if "—" in identity or not any(identity):
@@ -253,7 +330,7 @@ def _active_profile(active: JsonDict | None = None) -> Path | None:
     matches = [
         path
         for path in _account_dir().glob("*.json")
-        if _identity(_read_json(path)) == identity
+        if _identity(_load_profile_metadata(path)) == identity
     ]
     return matches[0] if len(matches) == 1 else None
 
@@ -367,7 +444,7 @@ def cmd_save(name: str | None = None) -> int:
     if profile is None or payload is None or not claims:
         log_red("❌ No valid Grok OAuth login found. Run: grok login --oauth")
         return 1
-    if not _write_json(profile, payload):
+    if not _save_profile(profile, payload):
         return 1
     _set_marker(profile)
     success_panel(
@@ -403,7 +480,7 @@ def _has_quota(usage: grok_usage.UsageSnapshot) -> bool:
 
 
 def _fetch_profile(path: Path) -> tuple[JsonDict | None, grok_usage.UsageSnapshot]:
-    payload = _read_json(path)
+    payload = _load_profile(path)
     return payload, grok_usage.fetch_usage(_access_token(payload))
 
 
@@ -454,7 +531,7 @@ def cmd_list(
                 labels=[path.stem for path in profiles],
             )
     else:
-        readings = [(_read_json(path), empty) for path in profiles]
+        readings = [(_load_profile_metadata(path), empty) for path in profiles]
 
     if json_output:
         entries = []
@@ -525,15 +602,14 @@ def _backup_active() -> bool:
     active = _read_json(_auth_file())
     if active is None:
         return True
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return _write_json(_backup_dir() / f"auth.backup-{stamp}.json", active)
+    return profile_secrets.backup("grok", json.dumps(active))
 
 
 def cmd_switch(name: str) -> int:
     profile = _profile_file(name)
     if profile is None:
         return 1
-    payload = _read_json(profile)
+    payload = _load_profile(profile)
     if payload is None or not _claims(payload):
         log_red(f"❌ Profile is unreadable or missing: {name}")
         return 1
@@ -558,7 +634,7 @@ def cmd_switch_interactive() -> int:
         log_yellow("⚠️  No saved Grok profiles.")
         return 1
     items = [
-        (profile.stem, _identity_label(_claims(_read_json(profile))))
+        (profile.stem, _identity_label(_claims(_load_profile_metadata(profile))))
         for profile in profiles
     ]
     chosen = choose_profile("a Grok", items)
@@ -575,7 +651,7 @@ def cmd_remove(name: str) -> int:
         log_red(f"❌ Profile not found: {name}")
         return 1
     try:
-        profile.unlink()
+        profile_secrets.delete(profile, "grok")
     except OSError as exc:
         log_red(f"❌ Could not remove profile: {exc}")
         return 1
@@ -591,7 +667,7 @@ def cmd_remove_interactive() -> int:
         log_yellow("⚠️  No saved Grok profiles.")
         return 1
     items = [
-        (profile.stem, _identity_label(_claims(_read_json(profile))))
+        (profile.stem, _identity_label(_claims(_load_profile_metadata(profile))))
         for profile in profiles
     ]
     return choose_and_run("a Grok", items, cmd_remove, cancel_message="Remove cancelled.")
@@ -607,6 +683,11 @@ _REFRESH_SKEW_SECONDS = 300
 # already carries are ever rewritten, so an unfamiliar credential shape falls
 # back to the vendor CLI instead of getting an invented field.
 _ACCESS_TOKEN_FIELDS = ("key", "access_token")
+
+# profile_secrets' secret_fields for a flattened profile: refresh token first
+# (it is the fingerprint's identity-bearing field), then the access-token
+# field(s) the record actually carries.
+_SECRET_FIELDS = ("refresh_token",) + _ACCESS_TOKEN_FIELDS
 
 _TOKEN_ENDPOINTS: dict[str, str] = {}
 
@@ -774,7 +855,7 @@ def _recover_switched_auth(profile: Path, name: str) -> int:
     updated, error = _direct_refresh(payload)
     if updated is not None:
         if _write_json(_auth_file(), updated):
-            _write_json(profile, updated)
+            _save_profile(profile, updated)
             print(f"{DIM}   (token was expired — refreshed in place){RESET}")
         return 0
     if _is_revoked_error(error):
@@ -812,13 +893,13 @@ def _refresh_profile(profile: Path) -> int:
     # invalid_grant forever — a live account reported as permanently revoked.
     # `_active_profile` has already matched the auth file's identity to this
     # profile, and the live file is never staler than the copy, so it wins.
-    payload = (_read_json(_auth_file()) if is_active else None) or _read_json(profile)
+    payload = (_read_json(_auth_file()) if is_active else None) or _load_profile(profile)
     if payload is None:
         log_red(f"❌ Profile is unreadable: {profile.stem}")
         return 1
     updated, error = _direct_refresh(payload)
     if updated is not None:
-        if not _write_json(profile, updated):
+        if not _save_profile(profile, updated):
             return 1
         return 0 if not is_active or _write_json(_auth_file(), updated) else 1
     if _is_revoked_error(error):
@@ -831,7 +912,7 @@ def _refresh_profile(profile: Path) -> int:
 
 def _refresh_profile_via_cli(profile: Path) -> int:
     original = _read_json(_auth_file())
-    payload = _read_json(profile)
+    payload = _load_profile(profile)
     if payload is None:
         log_red(f"❌ Profile is unreadable: {profile.stem}")
         return 1
@@ -843,7 +924,7 @@ def _refresh_profile_via_cli(profile: Path) -> int:
         if (
             status == 0
             and refreshed is not None
-            and not _write_json(profile, refreshed)
+            and not _save_profile(profile, refreshed)
         ):
             return 1
         return status
@@ -865,7 +946,7 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> int:
         success_panel(
             "Refreshed Grok profile",
             name,
-            _claims_lines(_claims(_read_json(profile)), profile),
+            _claims_lines(_claims(_load_profile(profile)), profile),
             title=f"Profile: {name}",
         )
     return status
@@ -910,7 +991,7 @@ def cmd_refresh(target: str | None) -> int:
     if status != 0:
         return status
     if profile is not None and refreshed is not None:
-        _write_json(profile, refreshed)
+        _save_profile(profile, refreshed)
         details = (f"(synced back to profile: {profile.stem})",)
     else:
         log_yellow("⚠️  No unambiguous current profile — run: grok-accounts switch <name>")
@@ -931,7 +1012,7 @@ def cmd_sync() -> int:
     if payload is None or profile is None:
         log_yellow("⚠️  No unambiguous current profile — run: grok-accounts switch <name>")
         return 1
-    if not _write_json(profile, payload):
+    if not _save_profile(profile, payload):
         return 1
     _set_marker(profile)
     success_panel(

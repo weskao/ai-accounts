@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import stat
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -19,6 +20,7 @@ from unittest import mock
 
 from ai_accounts import copilot_accounts as ca
 from ai_accounts import copilot_usage as cu
+from ai_accounts import profile_secrets as ps
 from ai_accounts._present import _ANSI_RE
 
 _TOKEN = "ghu_fake1234567890abcdef"
@@ -129,7 +131,7 @@ class CopilotAccountsTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(ca.cmd_save("personal"), 0)
             self.assertEqual(ca.cmd_who(), 0)
-        self.assertEqual(ca._read_json(self.account_dir / "personal.json"), _profile())
+        self.assertEqual(ca._load_profile(self.account_dir / "personal.json"), _profile())
 
     def test_config_json_comment_header_is_tolerated_and_preserved(self) -> None:
         path = self._sign_in()
@@ -209,7 +211,10 @@ class CopilotAccountsTests(unittest.TestCase):
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(ca.cmd_switch("personal"), 0)
-        self.assertTrue(list((self.account_dir.parent / "backups").glob("token.backup-*.json")))
+        backed_up = ps.read_backup("copilot")
+        assert backed_up is not None
+        self.assertEqual(json.loads(backed_up)["oauth_token"], "ghu_old_token")
+        self.assertFalse(list((self.account_dir.parent / "backups").glob("token.backup-*.json")))
 
     def test_switch_refuses_a_profile_with_an_empty_token(self) -> None:
         self.assertTrue(ca._write_json(self.account_dir / "broken.json", {"oauth_token": ""}))
@@ -238,7 +243,7 @@ class CopilotAccountsTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(ca.cmd_sync(), 0)
 
-        stored = ca._read_json(self.account_dir / "personal.json")
+        stored = ca._load_profile(self.account_dir / "personal.json")
         assert stored is not None
         self.assertEqual(stored["oauth_token"], _TOKEN)
         self.assertEqual(stored["login"], "testuser")  # identity survives a sync
@@ -430,11 +435,17 @@ class CopilotAccountsTests(unittest.TestCase):
         )
 
     def test_list_uses_credit_quota_and_live_identity_without_rewriting_profile(self) -> None:
+        # A legacy plaintext profile migrates (secret moved to the store) on
+        # its first read; from then on, listing must never rewrite it again —
+        # identity/usage merged in for display stays in memory only.
         path = self.account_dir / "personal.json"
         self.assertTrue(ca._write_json(path, {"oauth_token": _TOKEN, "host": _HOST, "login": "testuser"}))
-        original = path.read_bytes()
         self._install_fake_identity({**_IDENTITY, "name": "Test User"})
         with mock.patch.object(cu, "_request", return_value=_CREDIT_JSON):
+            self._sign_in()
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(ca.cmd_list(only_active=False), 0)  # migrates the legacy profile once
+            original = path.read_bytes()
             for only_active in (False, True):
                 self._sign_in()
                 out = io.StringIO()
@@ -582,3 +593,87 @@ class CopilotUsageTests(unittest.TestCase):
             cu.format_refreshed_at(cu.UsageSnapshot(None, None, None, None, None, "HTTP 404 x")),
             "ERR 404",
         )
+
+
+# ── profile_secrets adoption: migration, store-unavailable fallback, remove,
+# ── backup (fixture-driven, see tests/conftest.py's `profile_store`) ─────────
+
+def _copilot_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("COPILOT_HOME", str(tmp_path / ".copilot"))
+    monkeypatch.setenv("COPILOT_ACCOUNT_DIR", str(tmp_path / "accounts"))
+    return tmp_path / "accounts"
+
+
+def test_copilot_legacy_profile_migrates_on_first_load(tmp_path, monkeypatch, profile_store, capsys):
+    account_dir = _copilot_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_profile()), encoding="utf-8")
+
+    assert ca._load_profile(path) == _profile()
+    on_disk = json.loads(path.read_text())
+    assert "oauth_token" not in on_disk
+    assert ps.SECRETS_KEY in on_disk
+    assert on_disk["login"] == "testuser"
+    assert _TOKEN not in path.read_text()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert profile_store.slots
+    assert capsys.readouterr().err.count("Moved secrets") == 1
+
+
+def test_copilot_legacy_profile_migration_is_idempotent(tmp_path, monkeypatch, profile_store, capsys):
+    account_dir = _copilot_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_profile()), encoding="utf-8")
+
+    assert ca._load_profile(path) == _profile()
+    migrated = path.read_bytes()
+    assert ca._load_profile(path) == _profile()
+    assert path.read_bytes() == migrated
+    assert capsys.readouterr().err.count("Moved secrets") == 1
+
+
+def test_copilot_unavailable_store_keeps_profile_byte_identical(tmp_path, monkeypatch, profile_store, capsys):
+    profile_store.unavailable = True
+    account_dir = _copilot_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_profile()), encoding="utf-8")
+    before = path.read_bytes()
+
+    assert ca._load_profile(path) == _profile()
+    assert path.read_bytes() == before
+    assert capsys.readouterr().err.count("No OS credential store") == 1
+
+
+def test_copilot_remove_deletes_the_store_entry(tmp_path, monkeypatch, profile_store):
+    account_dir = _copilot_env(monkeypatch, tmp_path)
+    path = account_dir / "personal.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_profile()), encoding="utf-8")
+    ca._load_profile(path)  # migrate so the store actually holds the secret
+    assert profile_store.slots
+
+    assert ca.cmd_remove("personal") == 0
+    assert not path.exists()
+    assert not profile_store.slots
+
+
+def test_copilot_backup_keeps_one_latest_and_prunes_old_plaintext(tmp_path, monkeypatch, profile_store):
+    account_dir = _copilot_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(ca, "_read_active", lambda: "ghu_first_token")
+    assert ca._backup_active()
+    monkeypatch.setattr(ca, "_read_active", lambda: "ghu_second_token")
+    assert ca._backup_active()
+
+    backed_up = ps.read_backup("copilot")
+    assert backed_up is not None
+    assert json.loads(backed_up)["oauth_token"] == "ghu_second_token"
+
+    # a stray legacy-style plaintext backup file gets pruned by the same call
+    backups_dir = account_dir.parent / "backups"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    (backups_dir / "token.backup-20200101-000000.json").write_text("{}", encoding="utf-8")
+    assert ca._backup_active()
+    assert not list(backups_dir.glob("token.backup-*.json"))
