@@ -27,13 +27,13 @@ import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from . import config_menu as cm
 from . import copilot_usage
 from . import i18n
+from . import profile_secrets
 from ._present import (
     accounts_table,
     choose_and_run,
@@ -170,10 +170,6 @@ def _profile_file(name: str) -> Path | None:
 
 def _marker_file() -> Path:
     return _account_dir() / ".current-profile"
-
-
-def _backup_dir() -> Path:
-    return _account_dir().parent / "backups"
 
 
 def _split_jsonc(text: str) -> tuple[str, str]:
@@ -360,6 +356,45 @@ def _fetch_identity(token: str, *, timeout: float = 20) -> JsonDict | None:
     return raw
 
 
+_SECRET_FIELDS = ("oauth_token",)
+
+
+def _load_profile(path: Path) -> JsonDict | None:
+    return profile_secrets.load(path, "copilot", _SECRET_FIELDS)
+
+
+def _load_profile_metadata(path: Path) -> JsonDict | None:
+    """Metadata-only profile read (host/login/name/email/id) — never touches
+    the secret store. Safe for listings and pickers that never show the
+    token itself."""
+    return profile_secrets.load_metadata(path)
+
+
+def _save_profile(path: Path, payload: JsonDict) -> bool:
+    """True unless the file itself could not be written — a store-unavailable
+    fallback to plaintext (inside `profile_secrets.save`) is not a failure."""
+    try:
+        profile_secrets.save(path, "copilot", payload, _SECRET_FIELDS)
+        return True
+    except OSError as exc:
+        log_red(f"❌ Could not write {path}: {exc}")
+        return False
+
+
+def _profile_fingerprint(path: Path) -> str:
+    """The token's fingerprint, without reading it from the secret store —
+    from the `_secrets` marker once migrated, else (a legacy plaintext
+    profile) from the inline value still in the file."""
+    data = _load_profile_metadata(path)
+    if not isinstance(data, dict):
+        return ""
+    marker = data.get(profile_secrets.SECRETS_KEY)
+    if isinstance(marker, dict) and marker.get("fingerprint"):
+        return marker["fingerprint"]
+    token = _token(data)
+    return profile_secrets.fingerprint(token) if token else ""
+
+
 def _token(payload: JsonDict | None) -> str:
     value = (payload or {}).get("oauth_token")
     return value if isinstance(value, str) else ""
@@ -413,12 +448,15 @@ def _matching_profile(profiles: list[Path], matches: Callable[[Path], bool]) -> 
 
 
 def _active_profile(token: str | None = None) -> Path | None:
+    """Matches by fingerprint (never the raw token) so picking the active
+    profile out of N candidates never touches the secret store."""
     token = token if token is not None else _read_active()
     if not token:
         return None
+    fingerprint = profile_secrets.fingerprint(token)
     return _matching_profile(
         _profiles(),
-        lambda path: _token(_read_json(path)) == token,
+        lambda path: _profile_fingerprint(path) == fingerprint,
     )
 
 
@@ -430,7 +468,7 @@ def _listed_active_profile(profiles: list[Path]) -> Path | None:
     host, login = user
 
     def matches(path: Path) -> bool:
-        payload = _read_json(path) or {}
+        payload = _load_profile_metadata(path) or {}
         profile_host = payload.get("host") or _DEFAULT_HOST
         return profile_host == host and payload.get("login") == login
 
@@ -457,7 +495,7 @@ def _claims_lines(claims: dict[str, str], profile: Path | None) -> list[str]:
 def cmd_who() -> int:
     token = _read_active()
     profile = _active_profile(token) if token else None
-    payload = _read_json(profile) if profile else None
+    payload = _load_profile(profile) if profile else None
     if payload is None and token:
         # Untracked login: still name the account from config.json so `who`
         # does not show "—" for a signed-in user who just has no profile yet.
@@ -506,9 +544,8 @@ def cmd_save(name: str | None = None) -> int:
     profile = _profile_file(_derived_name(payload) if name is None else name)
     if profile is None:
         return 1
-    if not _write_json(profile, payload):
+    if not _save_profile(profile, payload):
         return 1
-    _account_dir().chmod(0o700)  # the store holds raw GitHub tokens
     _set_marker(profile)
     success_panel(
         "Saved Copilot profile",
@@ -547,7 +584,7 @@ def _usage_cell(window) -> str:
 
 
 def _fetch_profile(path: Path) -> tuple[JsonDict, copilot_usage.UsageSnapshot]:
-    payload = _read_json(path) or {}
+    payload = _load_profile(path) or {}
     token = _token(payload)
     identity = _fetch_identity(token) if token else None
     for key in ("login", "name", "email", "id"):
@@ -596,7 +633,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                 labels=[path.stem for path in profiles],
             )
     else:
-        readings = [(_read_json(path) or {}, empty) for path in profiles]
+        readings = [(_load_profile_metadata(path) or {}, empty) for path in profiles]
 
     if json_output:
         # Same envelope every other provider prints. `quota_snapshots` is an
@@ -676,15 +713,14 @@ def _backup_active() -> bool:
     token = _read_active()
     if not token:
         return True
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return _write_json(_backup_dir() / f"token.backup-{stamp}.json", {"oauth_token": token})
+    return profile_secrets.backup("copilot", json.dumps({"oauth_token": token}))
 
 
 def cmd_switch(name: str) -> int:
     profile = _profile_file(name)
     if profile is None:
         return 1
-    payload = _read_json(profile)
+    payload = _load_profile(profile)
     if payload is None:
         log_red(f"❌ Profile is unreadable or missing: {name}")
         return 1
@@ -715,7 +751,7 @@ def _picker_items(profiles: list[Path]) -> list[tuple[str, str | None]]:
     """(name, account) pairs so the picker can tell two profiles apart."""
     items = []
     for path in profiles:
-        label = _label(_read_json(path))
+        label = _label(_load_profile_metadata(path))
         items.append((path.stem, None if label == "—" else label))
     return items
 
@@ -739,7 +775,7 @@ def cmd_remove(name: str) -> int:
         log_red(f"❌ Profile not found: {name}")
         return 1
     try:
-        profile.unlink()
+        profile_secrets.delete(profile, "copilot")
     except OSError as exc:
         log_red(f"❌ Could not remove profile: {exc}")
         return 1
@@ -764,12 +800,12 @@ def cmd_sync() -> int:
     if not token or profile is None:
         log_yellow("⚠️  No unambiguous current profile — run: copilot-accounts switch <name>")
         return 1
-    payload = _read_json(profile) or {}
+    payload = _load_profile(profile) or {}
     payload["oauth_token"] = token
     user = _logged_in_user()
     if user is not None:
         payload["host"], payload["login"] = user
-    if not _write_json(profile, payload):
+    if not _save_profile(profile, payload):
         return 1
     _set_marker(profile)
     success_panel(
@@ -799,7 +835,7 @@ def cmd_refresh(name: str | None = None, *, everything: bool = False) -> int:
 
     failed = 0
     for path in profiles:
-        token = _token(_read_json(path))
+        token = _token(_load_profile(path))
         if token and _fetch_identity(token) is not None:
             ok("Token still valid", path.stem, bold=False)
             continue
