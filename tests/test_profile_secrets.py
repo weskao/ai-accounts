@@ -209,8 +209,10 @@ def test_backup_falls_back_to_single_latest_file(tmp_path, profile_store, capsys
 
 
 @pytest.mark.parametrize("unavailable, label_is_none", [(False, False), (True, True)])
-def test_status(profile_store, unavailable, label_is_none):
+def test_status(monkeypatch, profile_store, unavailable, label_is_none):
     profile_store.unavailable = unavailable
+    # The real label reads the host's backend — "none" on CI runners without one.
+    monkeypatch.setattr(ps.telegram_kit, "backend_label", lambda: "Fake store")
     label, reason = ps.status()
     assert (label == "none") is label_is_none
     assert bool(reason) is unavailable
