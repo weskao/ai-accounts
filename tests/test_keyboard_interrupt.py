@@ -7,7 +7,6 @@ import io
 import signal
 import subprocess
 import sys
-import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
@@ -80,21 +79,23 @@ class QuietKeyboardInterruptTests(unittest.TestCase):
     @unittest.skipIf(sys.platform == "win32", "real Ctrl-C can't target one child on Windows")
     def test_a_real_sigint_exits_130_without_a_traceback(self) -> None:
         script = (
-            "import time\n"
+            "import sys, time\n"
             "from ai_accounts import _utils as u\n"
             "@u.quiet_keyboard_interrupt\n"
             "def main():\n"
+            "    print('ready', flush=True)\n"
             "    time.sleep(30)\n"
             "    return 0\n"
             "raise SystemExit(main())\n"
         )
         process = subprocess.Popen(
-            [sys.executable, "-c", script],
+            [sys.executable, "-u", "-c", script],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
-        time.sleep(0.4)
+        assert process.stdout is not None
+        process.stdout.readline()  # wait until the try/except is actually armed
         process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=5)
         text = stdout + stderr
