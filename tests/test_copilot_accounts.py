@@ -678,3 +678,14 @@ def test_copilot_backup_keeps_one_latest_and_prunes_old_plaintext(tmp_path, monk
     (backups_dir / "token.backup-20200101-000000.json").write_text("{}", encoding="utf-8")
     assert ca._backup_active()
     assert not list(backups_dir.glob("token.backup-*.json"))
+
+
+def test_copilot_switch_still_works_when_store_is_unavailable(tmp_path, monkeypatch, profile_store, capsys):
+    account_dir = _copilot_env(monkeypatch, tmp_path)
+    profile = account_dir / "personal.json"
+    profile.parent.mkdir(parents=True)
+    profile.write_text(json.dumps(_profile()), encoding="utf-8")
+    profile_store.unavailable = True
+
+    assert ca.cmd_switch("personal") == 0
+    capsys.readouterr()

@@ -921,5 +921,16 @@ def test_grok_backup_keeps_one_latest_and_prunes_old_plaintext(tmp_path, monkeyp
     assert not list(backups_dir.glob("auth.backup-*.json"))
 
 
+def test_grok_switch_still_works_when_store_is_unavailable(tmp_path, monkeypatch, profile_store, capsys):
+    account_dir = _grok_env(monkeypatch, tmp_path)
+    profile = account_dir / "personal.json"
+    profile.parent.mkdir(parents=True)
+    profile.write_text(json.dumps(_auth()), encoding="utf-8")
+    profile_store.unavailable = True
+
+    assert ga.cmd_switch("personal") == 0
+    capsys.readouterr()
+
+
 if __name__ == "__main__":
     unittest.main()

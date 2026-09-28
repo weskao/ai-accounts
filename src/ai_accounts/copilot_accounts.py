@@ -711,10 +711,14 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
 
 
 def _backup_active() -> bool:
+    """Back up the current token before switching. Always succeeds — the
+    return value from ``profile_secrets.backup`` says *where* it landed
+    (store vs. plaintext fallback), not whether it worked."""
     token = _read_active()
     if not token:
         return True
-    return profile_secrets.backup("copilot", json.dumps({"oauth_token": token}))
+    profile_secrets.backup("copilot", json.dumps({"oauth_token": token}))
+    return True
 
 
 def cmd_switch(name: str) -> int:

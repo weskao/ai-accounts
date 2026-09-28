@@ -392,3 +392,13 @@ def test_vibe_backup_keeps_one_latest_and_prunes_old_plaintext(tmp_path, monkeyp
     (backups_dir / ".env.backup-20200101-000000.json").write_text("{}", encoding="utf-8")
     assert va._backup_active()
     assert not list(backups_dir.glob(".env.backup-*.json"))
+
+
+def test_vibe_switch_still_works_when_store_is_unavailable(tmp_path, monkeypatch, profile_store, capsys):
+    account_dir = _vibe_env(monkeypatch, tmp_path)
+    profile = account_dir / "personal.json"
+    _seed(profile, {"MISTRAL_API_KEY": "sk-fake-1234567890abcdef"})
+    profile_store.unavailable = True
+
+    assert va.cmd_switch("personal") == 0
+    capsys.readouterr()

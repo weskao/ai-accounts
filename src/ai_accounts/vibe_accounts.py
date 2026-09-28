@@ -412,10 +412,14 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
 
 
 def _backup_active() -> bool:
+    """Back up the current auth before switching. Always succeeds — the
+    return value from ``profile_secrets.backup`` says *where* it landed
+    (store vs. plaintext fallback), not whether it worked."""
     active = _read_active()
     if not active:
         return True
-    return profile_secrets.backup("vibe", json.dumps(active))
+    profile_secrets.backup("vibe", json.dumps(active))
+    return True
 
 
 def cmd_switch(name: str) -> int:
