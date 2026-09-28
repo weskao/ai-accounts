@@ -46,7 +46,9 @@ Windows DPAPI files) instead. Two store stacks until someone unifies them.
 macOS caveat: ``security -i`` batch mode drops lines over ~4 KB, i.e. secrets
 over ~2 KB (a failed write even leaves a truncated item). Values are therefore
 split into ``_KEYCHAIN_CHUNK``-sized parts on the keychain backend only; every
-write is read back and compared before the file loses its plaintext.
+write is read back and compared before the file loses its plaintext. Rewrites
+alternate between two generations of part keys and flip the head last, so a
+crash mid-rewrite leaves the old value loadable (see :func:`_put`).
 """
 
 from __future__ import annotations
@@ -67,6 +69,7 @@ SERVICE = "ai-accounts"
 SECRETS_KEY = "_secrets"
 _REFRESH_NAMES = frozenset({"refresh_token", "refreshToken"})  # mirrors doctor._REFRESH_TOKEN_KEYS
 _KEYCHAIN_CHUNK = 1500  # probed: 1900 B still round-trips with a 130-char account name
+_MAX_PARTS = 64  # ~96 KB on the keychain; a larger head count is treated as corrupt
 
 
 def _root() -> Path:
@@ -117,8 +120,9 @@ def _backup_key(tool: str) -> str:
     return f"backup--{tool}"  # profile keys start with "<tool>--", never "backup--"
 
 
-def _part_key(key: str, index: int) -> str:
-    return f"part{index}--{key}"
+def _part_key(key: str, index: int, gen: int | None = None) -> str:
+    """Part *index* of *key*; ``gen=None`` is the pre-generation (legacy) layout."""
+    return f"part{index}--{key}" if gen is None else f"part{index}g{gen}--{key}"
 
 
 def fingerprint(secret_text: str) -> str:
@@ -134,49 +138,90 @@ def _get(key: str) -> str:
     return _cache[key]
 
 
+def _parse_head(head: str) -> tuple[int, int | None, str] | None:
+    """``(count, gen, chunk0)`` of a head value, or ``None`` if malformed.
+
+    Current heads are ``N:G:<chunk0>`` (parts under generation ``G`` keys);
+    ff17eee wrote ``N:<chunk0>`` (``gen=None``, legacy part keys). JSON text
+    never starts with ``0:``/``1:``, so the two layouts cannot be confused.
+    """
+    count, sep, rest = head.partition(":")
+    if not sep or not count.isdigit() or not 1 <= int(count) <= _MAX_PARTS:
+        return None
+    gen, sep, chunk0 = rest.partition(":")
+    if sep and gen in ("0", "1"):
+        return int(count), int(gen), chunk0
+    return int(count), None, rest
+
+
 def _read(key: str):
     """Decoded JSON value stored under *key*, or ``None``."""
-    head = _get(key)
-    count, sep, text = head.partition(":")
-    if not sep or not count.isdigit():
+    parsed = _parse_head(_get(key))
+    if parsed is None:
         return None
-    parts = [text] + [_get(_part_key(key, i)) for i in range(1, int(count))]
+    count, gen, chunk0 = parsed
+    parts = [chunk0] + [_get(_part_key(key, i, gen)) for i in range(1, count)]
     try:
         return json.loads("".join(parts))
     except ValueError:
         return None
 
 
-def _drop(key: str, keep: int = 0) -> None:
-    """Delete *key*'s parts from index *keep* on (``keep=0`` deletes it all)."""
-    count, _, _ = _get(key).partition(":")
-    total = int(count) if count.isdigit() else 1
-    for i in range(max(keep, 1), total):
-        _store.delete(_part_key(key, i))
-        _cache.pop(_part_key(key, i), None)
-    if keep == 0:
-        _store.delete(key)
-        _cache.pop(key, None)
+def _delete(keys) -> None:
+    for k in keys:
+        _store.delete(k)
+        _cache.pop(k, None)
+
+
+def _drop(key: str) -> None:
+    """Delete *key* and all its parts (head first: a half-done drop leaves orphans, not a torn value)."""
+    parsed = _parse_head(_get(key))
+    _delete([key])
+    if parsed:
+        _delete(_part_key(key, i, parsed[1]) for i in range(1, parsed[0]))
 
 
 def _put(key: str, value) -> bool:
-    """Store *value* (JSON-able) under *key*; True only if it reads back equal."""
+    """Store *value* (JSON-able) under *key*; True only if it reads back equal.
+
+    Crash-safe rewrite: the new parts go under the OTHER generation's keys and
+    are read back, the head flips LAST (one store write), and only then are
+    the old generation's parts deleted. Any failure deletes the new parts and
+    leaves the old head — and so the old value — intact.
+    """
     if not _available():
         return False
     text = json.dumps(value, separators=(",", ":"))  # ASCII-only, newline-free
     size = _chunk_size() or len(text)
     chunks = [text[i:i + size] for i in range(0, len(text), size)]
-    stored = [f"{len(chunks)}:{chunks[0]}"] + chunks[1:]
-    keys = [key] + [_part_key(key, i) for i in range(1, len(chunks))]
-    _drop(key, keep=len(chunks))  # an older, longer value's extra parts
-    for k, v in zip(keys, stored):
+    if len(chunks) > _MAX_PARTS:
+        return False
+    old_head = _store.get(key)  # fresh, not memoised: the generation must be the live one
+    old = _parse_head(old_head)
+    gen = 1 - old[1] if old and old[1] is not None else 0
+    # ponytail: parts left by a crashed write beyond the new count stay orphaned
+    # in gen `gen` until a later write of that length; scan-and-delete if it matters.
+    parts = [(_part_key(key, i, gen), chunks[i]) for i in range(1, len(chunks))]
+    head = f"{len(chunks)}:{gen}:{chunks[0]}"
+    written = []
+    for k, v in parts:
         _cache.pop(k, None)
+        written.append(k)
         if not (_store.set(k, v) and _store.get(k) == v):
-            for written in keys:
-                _store.delete(written)  # a failed keychain write can leave a truncated item
-                _cache.pop(written, None)
+            _delete(written)  # a failed keychain write can leave a truncated item
             return False
-        _cache[k] = v
+    _cache.pop(key, None)
+    if not (_store.set(key, head) and _store.get(key) == head):
+        _delete(written)
+        if old:
+            _store.set(key, old_head)  # best effort: the failed write may have torn it
+        else:
+            _store.delete(key)
+        return False
+    _cache[key] = head
+    _cache.update(parts)
+    if old:
+        _delete(_part_key(key, i, old[1]) for i in range(1, old[0]))
     return True
 
 
@@ -294,6 +339,8 @@ def save(path: Path, tool: str, payload: dict, secret_fields: Sequence[str]) -> 
         return True
     _warn_plaintext()
     u.atomic_write_json(path, _merge(payload, {}))
+    if _available():
+        _drop(key)  # best effort: no stale older secret lingers in the store
     return False
 
 
@@ -327,6 +374,8 @@ def backup(tool: str, text: str) -> bool:
     else:
         _warn_plaintext()
         telegram_kit.write_private(directory / "latest", text)
+        if _available():
+            _drop(_backup_key(tool))  # else read_backup would prefer the stale store copy
     for old in directory.glob("*.backup*"):
         old.unlink(missing_ok=True)
     return in_store
