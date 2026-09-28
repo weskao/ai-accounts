@@ -1,3 +1,19 @@
+## [0.18.0] - 2026-09-28
+
+### 🚀 Features
+
+- **profile-secrets:** Store profile tokens securely
+- **config:** Cap telegram token/chat id field length
+
+### 🐛 Bug Fixes
+
+- **keychain:** Stop decoding numeric secrets as hex
+- **autoswitch:** Include launchd label in timer alerts
+- **test-profile-secrets:** Skip unix mode checks on Windows CI
+
+### 🧪 Testing
+
+- **profile-secrets:** Pin backend label for CI determinism
 ## [0.17.1] - 2026-09-27
 
 ### 💼 Other
