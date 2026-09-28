@@ -15,14 +15,13 @@ import json
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import autoswitch, i18n, usage_format
+from . import autoswitch, i18n, profile_secrets, usage_format
 from . import config_menu as cm
 from ._present import (
     _ANSI_RE as _ANSI_RE,
@@ -62,6 +61,12 @@ from ._utils import (
 
 # ChatGPT paid tiers, low → high (Free is left uncolored by the caller).
 _PLAN_TIERS = ("plus", "pro", "team")
+
+# Saved-profile secrets kept in the OS credential store (profile_secrets). The
+# refresh token is listed FIRST: its fingerprint identifies the profile.
+_SECRET_FIELDS = ("tokens.refresh_token", "tokens.access_token", "tokens.id_token", "OPENAI_API_KEY")
+# Decoded non-secret claims (email, plan, expiry…) kept in the profile file.
+_CLAIMS_KEY = "_claims"
 
 HELP = """codex-accounts — manage multiple Codex CLI login profiles
 
@@ -302,37 +307,108 @@ def _claims_from_text(text: str) -> dict | None:
         return None
 
 
-def _read_claims(auth_path: Path) -> dict | None:
-    """Read non-secret account claims from a Codex auth file. None if missing/unreadable."""
-    if not auth_path.is_file():
-        return None
+def _stored_claims(auth: dict) -> dict:
+    """The decoded, non-secret claims a profile file keeps next to its
+    ``_secrets`` marker, so list/who/matching never need the store."""
+    claims = _claims_from_auth(auth)
+    claims.pop("expires_str", None)  # derived from expires_epoch on read
+    return claims
+
+
+def _parse_auth(text: str | None) -> dict | None:
     try:
-        return _claims_from_auth(json.loads(auth_path.read_text(encoding="utf-8")))
+        auth = json.loads(text) if text is not None else None
+    except ValueError:
+        return None
+    return auth if isinstance(auth, dict) else None
+
+
+def _load_profile(path: Path) -> dict | None:
+    """A saved profile as full vendor-format auth (tokens included).
+
+    Reads the credential store; a legacy plaintext profile is migrated here on
+    first read (see ``profile_secrets.load``) and then gets its claims block, so
+    later metadata-only reads still know the account. None when unreadable or
+    its store entry is gone.
+    """
+    auth = profile_secrets.load(path, "codex", _SECRET_FIELDS)
+    if auth is None:
+        return None
+    if auth.pop(_CLAIMS_KEY, None) is None:
+        meta = profile_secrets.load_metadata(path)
+        if meta is not None and profile_secrets.SECRETS_KEY in meta:
+            meta[_CLAIMS_KEY] = _stored_claims(auth)
+            try:
+                atomic_write_json(path, meta)
+            except OSError:
+                pass  # claims are re-derived next load
+    return auth
+
+
+def _save_profile(path: Path, auth: dict) -> None:
+    """Tokens to the credential store, metadata + claims to *path* (0600)."""
+    auth = {k: v for k, v in auth.items() if k != _CLAIMS_KEY}
+    profile_secrets.save(path, "codex", {**auth, _CLAIMS_KEY: _stored_claims(auth)}, _SECRET_FIELDS)
+
+
+def _write_vendor_auth(auth_path: Path, auth: dict) -> None:
+    """Write codex's own auth.json (0600, atomic) — never our metadata keys."""
+    atomic_write_json(auth_path, {k: v for k, v in auth.items() if k != _CLAIMS_KEY})
+
+
+def _read_claims(auth_path: Path) -> dict | None:
+    """Non-secret account claims of a profile or auth file. None if missing/unreadable.
+
+    Metadata only: a profile whose tokens are in the store answers from its
+    claims block (the store is read once only for a file that lacks it)."""
+    meta = profile_secrets.load_metadata(auth_path)
+    if meta is None:
+        return None
+    stored = meta.get(_CLAIMS_KEY)
+    if isinstance(stored, dict):
+        return {**stored, "expires_str": _format_unix_time(stored.get("expires_epoch"))}
+    if profile_secrets.SECRETS_KEY in meta:
+        meta = _load_profile(auth_path)
+        if meta is None:
+            return None
+    try:
+        return _claims_from_auth(meta)
     except Exception:
         return None
 
 
 def _token_key_from_auth(auth: dict) -> str | None:
+    """The identity-bearing secret, in ``_SECRET_FIELDS`` order (as the fingerprint)."""
     tokens = auth.get("tokens") or {}
     if not isinstance(tokens, dict):
         tokens = {}
-    return tokens.get("refresh_token") or tokens.get("access_token") or auth.get("access_token")
+    for key in ("refresh_token", "access_token", "id_token"):
+        if isinstance(tokens.get(key), str) and tokens[key]:
+            return tokens[key]
+    for key in ("OPENAI_API_KEY", "access_token"):
+        if isinstance(auth.get(key), str) and auth[key]:
+            return auth[key]
+    return None
 
 
 def _token_key_from_text(text: str | None) -> str | None:
-    if text is None:
-        return None
-    try:
-        return _token_key_from_auth(json.loads(text))
-    except ValueError:
-        return None
+    """Fingerprint of the identity token in a raw auth-JSON string."""
+    auth = _parse_auth(text)
+    key = _token_key_from_auth(auth) if auth is not None else None
+    return profile_secrets.fingerprint(key) if key else None
 
 
 def _token_key_from_path(path: Path) -> str | None:
-    try:
-        return _token_key_from_auth(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, UnicodeDecodeError, ValueError):
+    """Fingerprint of the identity token in *path* — from the ``_secrets``
+    marker when its tokens are in the store, so this never reads the store."""
+    meta = profile_secrets.load_metadata(path)
+    if meta is None:
         return None
+    marker = meta.get(profile_secrets.SECRETS_KEY)
+    if isinstance(marker, dict):
+        return marker.get("fingerprint") or None
+    key = _token_key_from_auth(meta)
+    return profile_secrets.fingerprint(key) if key else None
 
 
 def _credential_aliases(profile: Path) -> list[Path]:
@@ -447,17 +523,14 @@ def _read_active_auth_text() -> str | None:
 
 
 def _copy_active_auth_to(dest: Path) -> None:
-    """Copy the active codex auth to dest.
-    Falls back to a plain auth.json file copy if the active auth can't be
-    read as text at all. Refuses to write when dest already holds a DIFFERENT
-    account — fold-back/sync callers only ever sync the same account, and a
-    cross-account write destroys dest's only token copy (observed live when
-    a stale keychain diverged from auth.json)."""
+    """Save the active codex auth as profile dest (and its exact-token aliases).
+    No-op when the active auth is missing or not JSON. Refuses to write when
+    dest already holds a DIFFERENT account — fold-back/sync callers only ever
+    sync the same account, and a cross-account write destroys dest's only
+    token copy (observed live when a stale keychain diverged from auth.json)."""
     text = _read_active_auth_text()
-    if text is None:
-        for alias in _credential_aliases(dest):
-            shutil.copy2(_auth_file(), alias)
-            alias.chmod(0o600)
+    auth = _parse_auth(text)
+    if auth is None:
         return
     if dest.is_file():
         dest_key = _identity_key(_read_claims(dest))
@@ -468,8 +541,7 @@ def _copy_active_auth_to(dest: Path) -> None:
             )
             return
     for alias in _credential_aliases(dest):
-        alias.write_text(text, encoding="utf-8")
-        alias.chmod(0o600)
+        _save_profile(alias, auth)
 
 
 def _identity_label(claims: dict | None) -> str:
@@ -552,18 +624,23 @@ def _oauth_refresh(refresh_token: str) -> tuple[dict | None, str | None]:
     )
 
 
-def _read_refresh_token(path: Path) -> str | None:
-    try:
-        auth = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+def _refresh_token_of(auth: dict | None) -> str | None:
+    if not isinstance(auth, dict):
         return None
     tokens = auth.get("tokens") or {}
     return tokens.get("refresh_token") or auth.get("refresh_token")
 
 
-def _apply_refreshed_tokens(path: Path, refreshed: dict) -> None:
-    """Write refreshed token fields into an auth-format JSON file in place."""
-    auth = json.loads(path.read_text(encoding="utf-8"))
+def _read_refresh_token(path: Path) -> str | None:
+    try:
+        auth = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return _refresh_token_of(auth)
+
+
+def _with_refreshed_tokens(auth: dict, refreshed: dict) -> dict:
+    """Merge refreshed token fields into *auth* (in place) and stamp last_refresh."""
     tokens = auth.setdefault("tokens", {})
     for key in ("id_token", "access_token", "refresh_token"):
         if refreshed.get(key):
@@ -572,7 +649,13 @@ def _apply_refreshed_tokens(path: Path, refreshed: dict) -> None:
     auth["last_refresh"] = (
         datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
     )
-    atomic_write_json(path, auth)
+    return auth
+
+
+def _apply_refreshed_tokens(path: Path, refreshed: dict) -> None:
+    """Write refreshed token fields into codex's auth.json in place."""
+    auth = json.loads(path.read_text(encoding="utf-8"))
+    _write_vendor_auth(path, _with_refreshed_tokens(auth, refreshed))
     # Keep codex's keychain in lock-step when we just rewrote the active auth
     # (no-op for profile files and off-macOS).
     _mirror_active_auth_to_keychain(path)
@@ -596,7 +679,15 @@ def _refresh_file(path: Path, label: str, relogin_hint: str | None = None) -> tu
     isn't a profile name, so `login-switch {label}` would be nonsensical there).
     """
     hint = relogin_hint or f"Re-login with: codex-accounts login-switch {label}"
-    refresh_token = _read_refresh_token(path)
+    is_profile = path.parent == _account_dir()
+    auth = _load_profile(path) if is_profile else None
+    refresh_token = _refresh_token_of(auth) if is_profile else _read_refresh_token(path)
+    if is_profile and auth is None and profile_secrets.SECRETS_KEY in (profile_secrets.load_metadata(path) or {}):
+        # Tokens should be in the store but it did not answer (locked keychain,
+        # no secret-tool session): retry later, not a dead refresh token.
+        log_red(f"❌ Could not read the saved tokens of {label} from the credential store")
+        log_yellow("   Unlock the credential store and retry.")
+        return None, "transient"
     if not refresh_token:
         log_red(f"❌ No refresh_token found in {label}")
         log_yellow(f"   {hint}")
@@ -610,22 +701,24 @@ def _refresh_file(path: Path, label: str, relogin_hint: str | None = None) -> tu
         log_red(f"❌ Refresh failed for {label}: {error}")
         log_yellow("   Token endpoint unreachable — retry later.")
         return None, "transient"
+    if not is_profile:
+        _apply_refreshed_tokens(path, refreshed)
+        return refreshed, None
     aliases = _credential_aliases(path)
-    _apply_refreshed_tokens(path, refreshed)
+    _with_refreshed_tokens(auth, refreshed)
     for alias in aliases:
-        if alias != path:
-            shutil.copy2(path, alias)
-            alias.chmod(0o600)
+        _save_profile(alias, auth)
     return refreshed, None
 
 
 def _sync_refreshed_profile(profile_path: Path) -> bool:
     if _active_profile() != profile_path:
         return False
+    auth = _load_profile(profile_path)  # memoised: the refresh just stored it
+    if auth is None:
+        return False
     auth_path = _auth_file()
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(profile_path, auth_path)
-    auth_path.chmod(0o600)
+    _write_vendor_auth(auth_path, auth)
     _mirror_active_auth_to_keychain(auth_path)
     _set_current_profile(profile_path)
     return True
@@ -757,19 +850,19 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     profile_file = _profile_file(name)
     if profile_file is None:
         return 1
+    auth = _parse_auth(auth_text)
+    if auth is None:
+        log_red(f"❌ Codex auth is not valid JSON: {_auth_file()}")
+        return 1
 
-    _account_dir().mkdir(parents=True, exist_ok=True)
-    _account_dir().chmod(0o700)
     for alias in _credential_aliases(profile_file):
-        alias.write_text(auth_text, encoding="utf-8")
-        alias.chmod(0o600)
+        _save_profile(alias, auth)
 
     # Converge auth.json AND the keychain mirror to the same content:
     # `codex login` writes auth.json without updating the keychain item, so
     # without the mirror the next keychain-first read (ours or codex's own)
     # would resurrect pre-login tokens.
-    _auth_file().write_text(auth_text, encoding="utf-8")
-    _auth_file().chmod(0o600)
+    _write_vendor_auth(_auth_file(), auth)
     _mirror_active_auth_to_keychain(_auth_file())
     _set_current_profile(profile_file)
 
@@ -840,17 +933,19 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
         error=None,
     )
     def _fetch(item: tuple[Path, object]) -> usage_format.UsageSnapshot:
-        # Independent per account: read the token, GET the usage endpoint. No
-        # disk write, so these run concurrently without racing auth.json.
+        # Independent per account: read the token (one store read per saved
+        # profile), GET the usage endpoint. Never writes auth.json, so these run
+        # concurrently; the only write is a legacy profile's one-time migration
+        # of its OWN file.
         profile_path, _claims = item
-        usage_path = profile_path
         if (
             profile_path == active_profile
             and active_text is not None
             and _token_key_from_path(_auth_file()) == _token_key_from_text(active_text)
         ):
-            usage_path = _auth_file()
-        usage = usage_format.fetch_usage(usage_path)
+            usage = usage_format.fetch_usage(_auth_file())
+        else:
+            usage = usage_format.fetch_usage(_load_profile(profile_path))
         if usage.error and usage.error.startswith(("HTTP 401", "HTTP 403")):
             return empty_usage
         return usage
@@ -935,9 +1030,6 @@ def cmd_switch(name: str) -> int:
         return 1
 
     auth_path = _auth_file()
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
-
-    backup_path = None
     if auth_path.is_file():
         # Before overwriting, fold any token rotation codex performed on the
         # active account back into its own saved profile. Codex rotates (and
@@ -945,26 +1037,33 @@ def cmd_switch(name: str) -> int:
         # profile keeps the revoked token, and a later `switch` back to it
         # restores dead credentials — codex then fails MCP startup with
         # HTTP 401 "token_revoked". Keeping the profile current makes switch
-        # idempotent. Pure local file op; no network.
+        # idempotent. Local only (plus the credential store); no network.
         outgoing_profile = _active_profile(_read_active_auth_text())
         if outgoing_profile is not None:
             _copy_active_auth_to(outgoing_profile)
 
-        backup_path = _backup_dir() / f"{auth_path.name}.backup"
-        backup_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(auth_path, backup_path)
-        backup_path.chmod(0o600)
+    # Loaded AFTER the fold-back: switching to the outgoing profile (or one of
+    # its aliases) must restore the tokens just folded in.
+    auth = _load_profile(profile_file)
+    if auth is None:
+        log_red(f"❌ Saved tokens for '{name}' are unreadable or missing from the credential store.")
+        log_yellow(f"   Re-login with: codex-accounts login-switch {name}")
+        return 1
 
-    shutil.copy2(profile_file, auth_path)
-    auth_path.chmod(0o600)
+    backup_label = None
+    if auth_path.is_file():
+        in_store = profile_secrets.backup("codex", auth_path.read_text(encoding="utf-8"))
+        backup_label = profile_secrets.status()[0] if in_store else str(_backup_dir() / "latest")
+
+    _write_vendor_auth(auth_path, auth)
     # codex reads the keychain before auth.json on macOS — without this mirror
     # the copy above is silently ignored and codex keeps the old account.
     _mirror_active_auth_to_keychain(auth_path)
     _set_current_profile(profile_file)
 
     ok("Switched Codex profile to", name)
-    if backup_path:
-        print(f"{DIM}   (previous auth backed up to {backup_path}){RESET}")
+    if backup_label:
+        print(f"{DIM}   (previous auth backed up to {backup_label}){RESET}")
 
     # Self-heal an expired snapshot before codex (and its MCP clients like
     # codex_apps) start with a dead access_token. Only fires when the restored
@@ -1020,7 +1119,10 @@ def _autoswitch_probe(name: str) -> usage_format.UsageWindow | None:
     profile_file = _profile_file(name)
     if profile_file is None or not profile_file.is_file():
         return None
-    snapshot = usage_format.fetch_usage(profile_file)
+    auth = _load_profile(profile_file)
+    if auth is None:
+        return None
+    snapshot = usage_format.fetch_usage(auth)
     if snapshot.error:
         return None
     return autoswitch.pick_window(snapshot.hourly, snapshot.weekly)
@@ -1105,7 +1207,7 @@ def cmd_remove(name: str) -> int:
         log_red(f"❌ Profile not found: {name}")
         return 1
     was_current = _marked_profile() == profile_file
-    profile_file.unlink()
+    profile_secrets.delete(profile_file, "codex")
     if was_current:
         _current_profile_marker().unlink(missing_ok=True)
     ok("Removed Codex profile", name, bold=False)
