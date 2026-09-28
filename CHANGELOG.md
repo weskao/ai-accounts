@@ -1,3 +1,13 @@
+## [0.19.1] - 2026-09-28
+
+### 🐛 Bug Fixes
+
+- **switch:** Don't fail switch when the credential store is unavailable
+- **claude:** Migrate bare-shape legacy profiles too
+- **secrets:** Refuse a torn chunk reassembly instead of returning it
+- **test:** Stop the switch regression tests from touching the real store
+- **secrets:** Torn-reassembly check covers the whole secrets blob
+- **claude:** Don't crash rewrapping a bare profile in a read-only dir
 ## [0.19.0] - 2026-09-28
 
 ### 🚀 Features
