@@ -512,6 +512,8 @@ remain shared across all CLIs.
 `ai-accounts autoswitch setup` installs provider event hooks plus a low-frequency
 OS timer fallback. Re-run it after reinstalling the package so hooks point at
 the current Python environment.
+Telegram notifications from the macOS timer include its full launchd label,
+`com.ai_accounts.autoswitch`. The timer has no dedicated log file.
 
 Status checks are read-only: `enabled` reads the shared config,
 `autoswitch_setup.is_installed()` checks both timer registration and relevant

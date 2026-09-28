@@ -21,6 +21,7 @@ directly — so tests can force a platform without touching the real OS:
 from __future__ import annotations
 
 import plistlib
+import os
 import shlex
 import subprocess
 import sys
@@ -433,4 +434,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if u.IS_MACOS and sys.argv[1:] == ["run"]:
+        os.environ["AI_ACCOUNTS_LAUNCHD_LABEL"] = LABEL
     raise SystemExit(main())
