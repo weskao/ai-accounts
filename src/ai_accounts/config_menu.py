@@ -707,6 +707,11 @@ def _step_editing(
             if field.maximum is not None and int(candidate) > field.maximum:
                 candidate = str(field.maximum)
             return replace(state, edit_buffer=candidate)
+        if field.max_len is not None and len(state.edit_buffer) >= field.max_len:
+            # Live-clamped like the digit cap above: a held key or a pasted
+            # flood stops growing the buffer instead of ballooning it one
+            # redraw at a time.
+            return state
         return replace(state, edit_buffer=state.edit_buffer + event.char)
     if event.key is kr.Key.ENTER:
         if field.masked and not state.edit_buffer:

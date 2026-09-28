@@ -29,6 +29,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import telegram_kit
+
 from ai_accounts import i18n
 
 NOTIFY_CHANNELS = ("desktop", "telegram", "none")
@@ -77,6 +79,9 @@ class Field:
     # judged by looking instead of by reading its help text. A field without
     # one simply shows nothing — the menu stays schema-driven either way.
     preview: Callable[[object], list[str]] | None = None
+    # Longest a typed string value may grow to — a paste-flood/held-key
+    # backstop, not a format check. Only meaningful for an unchoiced str field.
+    max_len: int | None = None
 
     def display_group(self, lang: str | None = None) -> str | None:
         """This field's group heading in *lang*, if it has one.
@@ -156,6 +161,16 @@ class Field:
                     key=self.key,
                     choices=", ".join(self.choices),
                     raw=repr(raw),
+                )
+            )
+        if self.max_len is not None and len(raw) > self.max_len:
+            raise ValueError(
+                i18n.t(
+                    "error.max_len",
+                    default="{key} must be at most {max_len} characters, got {length}",
+                    key=self.key,
+                    max_len=self.max_len,
+                    length=len(raw),
                 )
             )
         return raw
@@ -280,6 +295,7 @@ FIELDS: tuple[Field, ...] = (
         type=str,
         default="",
         masked=True,
+        max_len=telegram_kit.MAX_TOKEN_LEN,
         label="Telegram bot token",
         help="Bot API token used when notify is telegram (masked on display).",
         group="Notifications",
@@ -288,6 +304,7 @@ FIELDS: tuple[Field, ...] = (
         key="telegram_chat_id",
         type=str,
         default="",
+        max_len=telegram_kit.MAX_CHAT_ID_LEN,
         label="Telegram chat id",
         help="Bot API chat id that receives the notification.",
         group="Notifications",

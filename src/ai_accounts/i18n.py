@@ -446,6 +446,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "error.bool": {"zh-TW": "需要布林值（true/false），得到 {raw}"},
     "error.int": {"zh-TW": "{key} 必須是整數{bounds}，得到 {raw}"},
     "error.choice": {"zh-TW": "{key} 必須是 {choices} 之一，得到 {raw}"},
+    "error.max_len": {"zh-TW": "{key} 最多 {max_len} 個字元，目前是 {length} 個"},
     "error.notify_channel": {"zh-TW": "無效的通知方式 {channel}：必須是 {channels} 之一"},
     # ── CLI help text (translations only; English lives in each module's
     # HELP constant — same asymmetric convention as the config labels above:
