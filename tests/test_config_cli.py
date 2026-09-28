@@ -150,7 +150,7 @@ class AllFiveToolsConfigDispatchTest(_ConfigFileMixin):
             with self.subTest(prog=prog):
                 autoswitch.save_config({"enabled": False, **dict.fromkeys(keys, True)})
                 events = iter([
-                    _keyreader.KeyEvent(_keyreader.Key.CHAR, "r"),
+                    _keyreader.KeyEvent(_keyreader.Key.CHAR, "D"),
                     _keyreader.KeyEvent(_keyreader.Key.CHAR, "y"),
                     _keyreader.KeyEvent(_keyreader.Key.CHAR, "q"),
                 ])
@@ -167,7 +167,7 @@ class AllFiveToolsConfigDispatchTest(_ConfigFileMixin):
                     self.assertEqual(self._main(module, ["config"])[0], 0)
                 for key in keys:
                     # A prog that shows these fields resets them to the schema
-                    # default via "r"; a prog that hides them leaves the `True`
+                    # default via "D"; a prog that hides them leaves the `True`
                     # this test set above untouched.
                     expected = (
                         config_schema.field(key).default

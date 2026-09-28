@@ -535,9 +535,10 @@ ai-accounts timer-status
 ```
 
 `ai-accounts config` opens the interactive menu for configuring auto-switch
-behavior and notifications. Arrow keys select and change values, `r` resets
-every setting to its default after a `y` confirmation, and each change is
-saved as you make it — there is no separate save step. When stdin is not a
+behavior and notifications. Arrow keys select and change values, `d` resets
+the highlighted field to its default after a `y` confirmation naming that
+field, `D` resets every setting to its default after a `y` confirmation, and
+each change is saved as you make it — there is no separate save step. When stdin is not a
 TTY the menu falls back to a numbered prompt. On/off settings read as **On**
 / **Off** there (green / dim, translated with the menu); `config get` and
 `config set` keep the scriptable `true` / `false` spelling.

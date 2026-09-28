@@ -109,12 +109,17 @@ validation is ``Field.parse``. Appending a 7th field to
   longer discard anything. What used to be a save-then-quit dance is now one
   keypress, and the only state that survives a quit unsaved is a change whose
   write actually failed, which is reported rather than silently dropped.
-* *``r`` resets every declared field to its default, but only after a ``y``* —
-  one stray keypress must not be able to blank a stored token, so the row list
-  is left untouched until the confirmation arrives, and *any* other key
-  cancels (cancel is the safe default). The reset writes the defaults like any
-  other change: through the same touched-keys path, so a key this ai-accounts
-  knows nothing about is still left alone in the file.
+* *``d`` resets the highlighted field to its default, but only after a
+  ``y``* — same reasoning ``D`` already uses: a stray keypress must not be
+  able to blank a stored token, so the prompt names the field (and the
+  default it would land on) and the value stays untouched until the
+  confirmation arrives, and *any* other key cancels (cancel is the safe
+  default). It is a no-op (no prompt, no touch, no write) when the row is
+  already at its default — there is nothing to confirm. ``D`` resets every
+  declared field to its default, the same way, at the whole-config scope.
+  Both write the defaults like any other change: through the same
+  touched-keys path, so a key this ai-accounts knows nothing about is still
+  left alone in the file.
 * *``config set`` echoes a masked value for a masked key* — the only byte
   divergence from the legacy ``ai_accounts`` block, which echoed the raw
   token back. Every other key, including the ``True``/``False`` Python repr
@@ -150,10 +155,11 @@ _CURSOR_MARK = "❯ "
 _NO_CURSOR_MARK = "  "
 _UNSET_EN = "(unset)"
 _FOOTER_HINT_EN = (
-    "↑↓ select · ←→ change · ⏎ edit/toggle · r reset · Esc cancel · q/Ctrl+C quit"
-    " · saves as you go"
+    "↑↓ select · ←→ change · ⏎ edit/toggle · d reset · D reset all · Esc cancel"
+    " · q/Ctrl+C quit · saves as you go"
 )
 _RESET_CONFIRM_EN = "Reset ALL settings to their defaults? [y/N]"
+_RESET_FIELD_CONFIRM_EN = 'Reset "{label}" to {value}? [y/N]'
 _MIN_WIDTH = 40
 
 
@@ -259,6 +265,16 @@ def _format_value(
     blank cell that reads as a rendering bug."""
     text, color = _value_parts(field, value, lang)
     return f"{color}{text}{RESET}"
+
+
+def _field_default_display(field: config_schema.Field, lang: str | None = None) -> str:
+    """*field*'s default as shown in the single-field reset-confirm prompt —
+    the same "(unset)" spelling an empty value gets everywhere else in the
+    menu (a masked field's empty default included, since ``display_value``
+    would otherwise hand back an empty string that reads as a rendering bug)."""
+    if field.default == "":
+        return i18n.t("menu.unset", lang=lang, default=_UNSET_EN)
+    return field.display_value(field.default, lang)
 
 
 def _empty_buffer_value(field: config_schema.Field) -> object | None:
@@ -408,6 +424,7 @@ def render(
     edit_buffer: str = "",
     error: str | None = None,
     confirm_reset: bool = False,
+    confirm_reset_field: str | None = None,
     width: int | None = None,
     mode: str | None = None,
 ) -> list[str]:
@@ -421,7 +438,10 @@ def render(
     its stored value. ``error``, if given, is shown as its own line — for
     displaying a ``config_schema.parse_value`` ``ValueError`` message.
     ``confirm_reset`` adds the yellow "reset everything?" prompt line, so the
-    ``r`` key visibly waits for a ``y`` instead of acting on the spot.
+    ``D`` key visibly waits for a ``y`` instead of acting on the spot.
+    ``confirm_reset_field``, a field key or ``None``, adds the equivalent
+    per-field prompt — naming that field and the default it would land on —
+    so ``d`` waits for a ``y`` the same way.
 
     ``mode`` picks the layout and defaults to :func:`_present.layout_mode`
     seeded with ``values.get("layout")`` — an in-progress, uncommitted cycle of
@@ -528,6 +548,17 @@ def render(
     if confirm_reset:
         prompt = i18n.t("menu.reset_confirm", lang=lang, default=_RESET_CONFIRM_EN)
         notes.append((f"⚠ {prompt}", YELLOW))
+    if confirm_reset_field is not None:
+        pending = next((f for f in fields if f.key == confirm_reset_field), None)
+        if pending is not None:
+            prompt = i18n.t(
+                "menu.reset_field_confirm",
+                lang=lang,
+                default=_RESET_FIELD_CONFIRM_EN,
+                label=pending.display_label(lang),
+                value=_field_default_display(pending, lang),
+            )
+            notes.append((f"⚠ {prompt}", YELLOW))
     if error is not None:
         notes.append((f"⚠ {error}", RED))
     notes.append(("", ""))
@@ -625,9 +656,14 @@ class MenuState:
     #: A change just landed in ``values`` and is waiting to be written. Set by
     #: every committing transition (autosave), cleared by :func:`_save`.
     pending_save: bool = False
-    #: ``r`` was pressed and the reset is waiting for its ``y``. Nothing in
+    #: ``D`` was pressed and the reset-all is waiting for its ``y``. Nothing in
     #: ``values`` has changed yet, so any other key simply drops the prompt.
     confirm_reset: bool = False
+    #: ``d`` was pressed on this field key and its single-field reset is
+    #: waiting for its ``y``; ``None`` when no such prompt is open. Same
+    #: nothing-has-changed-yet rule as ``confirm_reset`` — any other key just
+    #: drops it.
+    confirm_reset_field: str | None = None
     quitting: bool = False
     #: Keys whose value the USER actually changed this session — the ONLY keys
     #: a save may write. ``values`` is a snapshot taken when the menu opened,
@@ -662,6 +698,25 @@ def _cycled(state: MenuState, field: config_schema.Field, delta: int) -> MenuSta
     return replace(
         state,
         values={**state.values, field.key: chosen},
+        touched=state.touched | {field.key},
+        pending_save=True,
+        error=None,
+    )
+
+
+def _reset_field(state: MenuState, field: config_schema.Field) -> MenuState:
+    """Reset *field* to its default, through the same touched-keys autosave
+    path as any other edit — called once the ``d``/``y`` confirmation in
+    :func:`_step_confirm_reset_field` has landed. A no-op (no touch, no
+    write) when the row is already at its default, same as committing an
+    unchanged value in :func:`_step_editing` (also the reason ``d`` never
+    needs to *ask* on an already-default row — see :func:`_step_browsing`)."""
+    current = state.values.get(field.key, field.default)
+    if current == field.default:
+        return replace(state, error=None)
+    return replace(
+        state,
+        values={**state.values, field.key: field.default},
         touched=state.touched | {field.key},
         pending_save=True,
         error=None,
@@ -752,7 +807,7 @@ def _step_editing(
 def _step_confirm_reset(
     state: MenuState, event: kr.KeyEvent, fields: Sequence[config_schema.Field]
 ) -> MenuState:
-    """Answer the ``r`` prompt: ``y`` resets, ANYTHING else cancels.
+    """Answer the ``D`` prompt: ``y`` resets, ANYTHING else cancels.
 
     Cancel-by-default is deliberate — a reset blanks a stored token, so a
     keypress the user did not mean as "yes" must never be read as one.
@@ -772,10 +827,25 @@ def _step_confirm_reset(
     )
 
 
+def _step_confirm_reset_field(
+    state: MenuState, event: kr.KeyEvent, fields: Sequence[config_schema.Field]
+) -> MenuState:
+    """Answer the ``d`` prompt for the single field named by
+    ``state.confirm_reset_field``: ``y`` resets just that field, ANYTHING
+    else cancels back to browsing with no change — same cancel-by-default
+    rule as :func:`_step_confirm_reset`."""
+    if not (event.key is kr.Key.CHAR and event.char in ("y", "Y")):
+        return replace(state, confirm_reset_field=None, error=None)
+    field = next((f for f in fields if f.key == state.confirm_reset_field), None)
+    if field is None:
+        return replace(state, confirm_reset_field=None, error=None)
+    return replace(_reset_field(state, field), confirm_reset_field=None)
+
+
 def _step_browsing(
     state: MenuState, event: kr.KeyEvent, fields: Sequence[config_schema.Field]
 ) -> MenuState:
-    if event.key is kr.Key.CHAR and event.char == "r":
+    if event.key is kr.Key.CHAR and event.char == "D":
         return replace(state, confirm_reset=True, error=None)
     if not fields:
         # No rows to move over, cycle or edit — only quit stays meaningful.
@@ -783,6 +853,10 @@ def _step_browsing(
             return replace(state, quitting=True)
         return state
     field = fields[state.cursor]
+    if event.key is kr.Key.CHAR and event.char == "d":
+        if state.values.get(field.key, field.default) == field.default:
+            return replace(state, error=None)  # already at default: nothing to confirm
+        return replace(state, confirm_reset_field=field.key, error=None)
     if event.key is kr.Key.UP:
         return replace(state, cursor=(state.cursor - 1) % len(fields), error=None)
     if event.key is kr.Key.DOWN:
@@ -813,9 +887,17 @@ def step(
     returns *state* unchanged rather than raising.
     """
     if event.key is kr.Key.CTRL_C:
-        return replace(state, quitting=True, editing=False, confirm_reset=False)
+        return replace(
+            state,
+            quitting=True,
+            editing=False,
+            confirm_reset=False,
+            confirm_reset_field=None,
+        )
     if state.confirm_reset:
         return _step_confirm_reset(state, event, fields)
+    if state.confirm_reset_field is not None:
+        return _step_confirm_reset_field(state, event, fields)
     if state.editing:
         return _step_editing(state, event, fields[state.cursor])
     return _step_browsing(state, event, fields)
@@ -867,6 +949,7 @@ def run_menu(
                         edit_buffer=state.edit_buffer,
                         error=state.error,
                         confirm_reset=state.confirm_reset,
+                        confirm_reset_field=state.confirm_reset_field,
                     ),
                     out,
                     painted,

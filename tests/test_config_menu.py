@@ -449,7 +449,7 @@ class EmptyFieldsTest(unittest.TestCase):
         self.assertTrue(cm.step(cm.MenuState(values={}), char("q"), ()).quitting)
 
     def test_a_confirmed_reset_with_no_fields_saves_nothing(self) -> None:
-        state = cm.step(cm.MenuState(values={}), char("r"), ())
+        state = cm.step(cm.MenuState(values={}), char("D"), ())
         self.assertTrue(state.confirm_reset)
         after = cm.step(state, char("y"), ())
         self.assertFalse(after.pending_save)
@@ -457,7 +457,7 @@ class EmptyFieldsTest(unittest.TestCase):
 
 
 class ResetIntentTest(unittest.TestCase):
-    """``r`` asks; only ``y`` acts. Everything else leaves the config alone —
+    """``D`` asks; only ``y`` acts. Everything else leaves the config alone —
     a reset blanks a stored token, so it must never ride on one stray key."""
 
     def state(self) -> cm.MenuState:
@@ -469,22 +469,22 @@ class ResetIntentTest(unittest.TestCase):
         }
         return cm.MenuState(values=values)
 
-    def test_r_only_asks_and_changes_nothing_yet(self) -> None:
-        after = cm.step(self.state(), char("r"))
+    def test_shift_r_only_asks_and_changes_nothing_yet(self) -> None:
+        after = cm.step(self.state(), char("D"))
         self.assertTrue(after.confirm_reset)
         self.assertFalse(after.pending_save)
         self.assertEqual(after.touched, frozenset())
         self.assertIs(after.values["enabled"], True)
 
     def test_y_restores_every_declared_default_and_saves(self) -> None:
-        after = cm.step(cm.step(self.state(), char("r")), char("y"))
+        after = cm.step(cm.step(self.state(), char("D")), char("y"))
         self.assertFalse(after.confirm_reset)
         self.assertTrue(after.pending_save)
         self.assertEqual(after.values, config_schema.defaults())
         self.assertEqual(after.touched, frozenset(config_schema.defaults()))
 
     def test_any_other_key_cancels_the_reset(self) -> None:
-        asked = cm.step(self.state(), char("r"))
+        asked = cm.step(self.state(), char("D"))
         for event in (char("n"), char("x"), KeyEvent(Key.ESCAPE), KeyEvent(Key.DOWN)):
             with self.subTest(event=event):
                 after = cm.step(asked, event)
@@ -493,7 +493,7 @@ class ResetIntentTest(unittest.TestCase):
                 self.assertEqual(after.values, asked.values)
 
     def test_ctrl_c_while_confirming_quits_without_resetting(self) -> None:
-        after = cm.step(cm.step(self.state(), char("r")), KeyEvent(Key.CTRL_C))
+        after = cm.step(cm.step(self.state(), char("D")), KeyEvent(Key.CTRL_C))
         self.assertTrue(after.quitting)
         self.assertFalse(after.confirm_reset)
         self.assertEqual(after.values["switch_when_used_pct"], 42)
@@ -502,11 +502,95 @@ class ResetIntentTest(unittest.TestCase):
         lines = cm.render("t", config_schema.FIELDS, {}, 0, confirm_reset=True)
         self.assertTrue(any("[y/N]" in line for line in lines))
 
-    def test_r_is_literal_text_while_editing(self) -> None:
+    def test_shift_r_is_literal_text_while_editing(self) -> None:
         state = state_at("telegram_chat_id", editing=True, edit_buffer="")
-        after = cm.step(state, char("r"))
-        self.assertEqual(after.edit_buffer, "r")
+        after = cm.step(state, char("D"))
+        self.assertEqual(after.edit_buffer, "D")
         self.assertFalse(after.confirm_reset)
+
+    def test_lowercase_r_no_longer_triggers_anything(self) -> None:
+        """``r`` used to be reset-all; it must now be an inert, unrecognized
+        key in browsing mode (the row list and cursor stay untouched)."""
+        after = cm.step(self.state(), char("r"))
+        self.assertFalse(after.confirm_reset)
+        self.assertFalse(after.pending_save)
+        self.assertEqual(after.values, self.state().values)
+
+
+class ResetRowIntentTest(unittest.TestCase):
+    """``d`` asks; only ``y`` resets the highlighted row. Everything else
+    leaves it alone — same cancel-by-default rule ``D`` uses, just scoped to
+    one field."""
+
+    def test_d_only_asks_and_changes_nothing_yet(self) -> None:
+        values = {**config_schema.defaults(), "switch_when_used_pct": 42}
+        state = cm.MenuState(values=values, cursor=index_of("switch_when_used_pct"))
+        after = cm.step(state, char("d"))
+        self.assertEqual(after.confirm_reset_field, "switch_when_used_pct")
+        self.assertFalse(after.pending_save)
+        self.assertEqual(after.touched, frozenset())
+        self.assertEqual(after.values["switch_when_used_pct"], 42)
+
+    def test_d_then_y_resets_the_highlighted_field_and_saves(self) -> None:
+        values = {**config_schema.defaults(), "switch_when_used_pct": 42}
+        state = cm.MenuState(values=values, cursor=index_of("switch_when_used_pct"))
+        after = cm.step(cm.step(state, char("d")), char("y"))
+        self.assertIsNone(after.confirm_reset_field)
+        self.assertEqual(after.values["switch_when_used_pct"], 90)
+        self.assertTrue(after.pending_save)
+        self.assertEqual(after.touched, frozenset({"switch_when_used_pct"}))
+
+    def test_d_then_any_other_key_cancels_and_leaves_the_field_unchanged(self) -> None:
+        values = {**config_schema.defaults(), "switch_when_used_pct": 42}
+        state = cm.MenuState(values=values, cursor=index_of("switch_when_used_pct"))
+        asked = cm.step(state, char("d"))
+        for event in (char("n"), char("x"), KeyEvent(Key.ESCAPE), KeyEvent(Key.DOWN)):
+            with self.subTest(event=event):
+                after = cm.step(asked, event)
+                self.assertIsNone(after.confirm_reset_field)
+                self.assertFalse(after.pending_save)
+                self.assertEqual(after.values, asked.values)
+
+    def test_ctrl_c_while_confirming_a_field_reset_quits_without_resetting(self) -> None:
+        values = {**config_schema.defaults(), "switch_when_used_pct": 42}
+        state = cm.MenuState(values=values, cursor=index_of("switch_when_used_pct"))
+        after = cm.step(cm.step(state, char("d")), KeyEvent(Key.CTRL_C))
+        self.assertTrue(after.quitting)
+        self.assertIsNone(after.confirm_reset_field)
+        self.assertEqual(after.values["switch_when_used_pct"], 42)
+
+    def test_d_on_an_already_default_field_is_a_noop_with_no_prompt(self) -> None:
+        state = state_at("switch_when_used_pct")
+        after = cm.step(state, char("d"))
+        self.assertIsNone(after.confirm_reset_field)
+        self.assertEqual(after.values, state.values)
+        self.assertFalse(after.pending_save)
+        self.assertEqual(after.touched, frozenset())
+
+    def test_d_does_not_touch_other_fields(self) -> None:
+        values = {**config_schema.defaults(), "enabled": True, "switch_when_used_pct": 42}
+        state = cm.MenuState(values=values, cursor=index_of("switch_when_used_pct"))
+        after = cm.step(cm.step(state, char("d")), char("y"))
+        self.assertIs(after.values["enabled"], True)
+        self.assertEqual(after.touched, frozenset({"switch_when_used_pct"}))
+
+    def test_d_is_literal_text_while_editing(self) -> None:
+        state = state_at("telegram_chat_id", editing=True, edit_buffer="")
+        after = cm.step(state, char("d"))
+        self.assertEqual(after.edit_buffer, "d")
+        self.assertFalse(after.confirm_reset)
+        self.assertIsNone(after.confirm_reset_field)
+
+    def test_the_prompt_names_the_field_and_its_default(self) -> None:
+        values = {**config_schema.defaults(), "switch_when_used_pct": 42}
+        state = cm.MenuState(values=values, cursor=index_of("switch_when_used_pct"))
+        after = cm.step(state, char("d"))
+        lines = cm.render(
+            "t", config_schema.FIELDS, after.values, after.cursor,
+            confirm_reset_field=after.confirm_reset_field,
+        )
+        joined = "\n".join(lines)
+        self.assertIn('Reset "↳ Switch at usage (%)" to 90? [y/N]', joined)
 
 
 class QuitAndSaveIntentTest(unittest.TestCase):
@@ -649,7 +733,7 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
         autoswitch.save_config(
             {"enabled": True, "switch_when_used_pct": 42, "telegram_bot_token": TOKEN}
         )
-        rc, _, _ = self.run_menu(keys(char("r"), char("y"), char("q")))
+        rc, _, _ = self.run_menu(keys(char("D"), char("y"), char("q")))
         self.assertEqual(rc, 0)
         stored = self.stored()
         self.assertIs(stored["enabled"], False)
@@ -662,7 +746,7 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
     def test_a_cancelled_reset_leaves_the_file_byte_identical(self) -> None:
         autoswitch.save_config({"switch_when_used_pct": 42})
         before = self.config_path.read_text(encoding="utf-8")
-        rc, out, _ = self.run_menu(keys(char("r"), char("n"), char("q")))
+        rc, out, _ = self.run_menu(keys(char("D"), char("n"), char("q")))
         self.assertEqual(rc, 0)
         self.assertEqual(self.config_path.read_text(encoding="utf-8"), before)
         self.assertIn("[y/N]", out)
@@ -672,10 +756,26 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
             json.dumps({"enabled": True, "from_a_newer_ai_accounts": "keep me"}),
             encoding="utf-8",
         )
-        rc, _, _ = self.run_menu(keys(char("r"), char("y"), char("q")))
+        rc, _, _ = self.run_menu(keys(char("D"), char("y"), char("q")))
         self.assertEqual(rc, 0)
         self.assertEqual(self.stored()["from_a_newer_ai_accounts"], "keep me")
         self.assertIs(self.stored()["enabled"], False)
+
+    def test_d_then_y_resets_the_highlighted_row_and_reaches_disk(self) -> None:
+        autoswitch.save_config({"switch_when_used_pct": 42})
+        downs = [KeyEvent(Key.DOWN)] * index_of("switch_when_used_pct")
+        rc, _, _ = self.run_menu(keys(*downs, char("d"), char("y"), char("q")))
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.stored()["switch_when_used_pct"], 90)
+
+    def test_d_then_other_key_leaves_the_file_byte_identical(self) -> None:
+        autoswitch.save_config({"switch_when_used_pct": 42})
+        before = self.config_path.read_text(encoding="utf-8")
+        downs = [KeyEvent(Key.DOWN)] * index_of("switch_when_used_pct")
+        rc, out, _ = self.run_menu(keys(*downs, char("d"), char("n"), char("q")))
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.config_path.read_text(encoding="utf-8"), before)
+        self.assertIn("[y/N]", out)
 
     def test_an_over_range_edit_clamps_and_reaches_disk(self) -> None:
         autoswitch.save_config({"switch_when_used_pct": 42})
