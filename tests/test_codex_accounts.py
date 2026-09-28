@@ -123,7 +123,9 @@ class _CodexHomeMixin(unittest.TestCase):
 
     def stored(self, key: str):
         """Decoded value the fake store holds under *key* (single chunk)."""
-        return json.loads(self.store.slots[key].partition(":")[2])
+        parsed = profile_secrets._parse_head(self.store.slots[key])
+        assert parsed is not None and parsed[0] == 1, "expected a single-chunk value"
+        return json.loads(parsed[2])
 
     def saved(self, path: Path) -> dict:
         """A profile as persisted: its file's metadata merged with the tokens
