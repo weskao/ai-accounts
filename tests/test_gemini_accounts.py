@@ -13,6 +13,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from ai_accounts import _utils as u
 from ai_accounts import gemini_accounts as ga
 from ai_accounts import gemini_usage as gu
@@ -117,8 +118,6 @@ class _HomeMixin(unittest.TestCase):
         if ga._keyring_secret_from_auth(value) is None:
             return False
         self.active = value
-        mirror = self.home / "oauth_creds.json"
-        mirror.write_text(json.dumps(value), encoding="utf-8")
         return True
 
     def _delete(self) -> bool:
@@ -160,9 +159,6 @@ class StoragePathTests(unittest.TestCase):
             )
             self.assertEqual(
                 ga._account_dir(), Path("/tmp/home/.ai-accounts/antigravity/accounts")
-            )
-            self.assertEqual(
-                ga._auth_file(), Path("/tmp/home/.ai-accounts/antigravity/oauth_creds.json")
             )
 
     def test_legacy_codexbar_store_migrates_with_profiles_and_marker(self) -> None:
@@ -262,6 +258,8 @@ class KeyringTests(unittest.TestCase):
             ga, "_store_keychain_secret", return_value=True
         ) as store:
             self.assertTrue(ga._write_cli_auth_text(json.dumps(auth)))
+            # Only the keyring slot is written — no plaintext oauth_creds.json mirror.
+            self.assertEqual(list(Path(tmp).iterdir()), [])
         secret = store.call_args.args[0]
         self.assertFalse(secret.startswith("go-keyring-base64:"))
         self.assertEqual(
@@ -624,7 +622,7 @@ class ProfileCommandTests(_HomeMixin):
             ga.gemini_usage, "fetch_usage", return_value=_usage(email="w@x.com")
         ):
             self.assertEqual(self.quiet(ga.cmd_save, "work"), 0)
-        saved = json.loads((self.home / "accounts" / "work.json").read_text())
+        saved = ga._load_profile(self.home / "accounts" / "work.json")
         self.assertEqual(saved["refresh_token"], "rt-live")
         # agy's keyring token carries no identity — email is backfilled from usage.
         self.assertEqual(saved["email"], "w@x.com")
@@ -649,7 +647,7 @@ class ProfileCommandTests(_HomeMixin):
         self.set_active(_creds("sub-o", "o@x.com", refresh_token="rt-rotated"))
         self.mark_current("old")
         self.quiet(ga.cmd_switch, "new")
-        old = json.loads((self.home / "accounts" / "old.json").read_text())
+        old = ga._load_profile(self.home / "accounts" / "old.json")
         self.assertEqual(old["refresh_token"], "rt-rotated")
         self.assertEqual(old["id_token"], _creds("sub-o", "o@x.com")["id_token"])
 
@@ -788,7 +786,7 @@ class ProfileCommandTests(_HomeMixin):
         self.assertEqual(rows[0]["gemini_weekly"], rows[1]["gemini_weekly"])
         self.assertIn("c@x.com", rows[2]["account"])
         for path in (first, alias):
-            self.assertEqual(json.loads(path.read_text())["refresh_token"], "rt-rotated")
+            self.assertEqual(ga._load_profile(path)["refresh_token"], "rt-rotated")
         self.assertEqual(self.active["refresh_token"], "rt-rotated")
 
     def test_list_does_not_reuse_failed_snapshot(self) -> None:
@@ -931,7 +929,7 @@ class ProfileCommandTests(_HomeMixin):
         ):
             _, output, _ = self.capture(ga.cmd_list)
         self.assertIn("RELOGIN", ga._ANSI_RE.sub("", output))
-        saved = json.loads((self.home / "accounts" / "a.json").read_text())
+        saved = ga._load_profile(self.home / "accounts" / "a.json")
         self.assertEqual(saved["refresh_token"], "rt-a")
 
     def test_sync_merges_rotated_tokens_without_losing_identity(self) -> None:
@@ -943,7 +941,7 @@ class ProfileCommandTests(_HomeMixin):
         self.set_active(active)
         self.mark_current("work")
         self.assertEqual(self.quiet(ga.cmd_sync), 0)
-        merged = json.loads(profile.read_text())
+        merged = ga._load_profile(profile)
         self.assertEqual(merged["refresh_token"], "rt-live")
         self.assertEqual(merged["id_token"], saved["id_token"])
 
@@ -955,7 +953,7 @@ class ProfileCommandTests(_HomeMixin):
             self.assertEqual(self.quiet(ga.cmd_save), 0)
         # The name lookup and the email backfill share the single RPC.
         self.assertEqual(fetch.call_count, 1)
-        saved = json.loads((self.home / "accounts" / "person.json").read_text())
+        saved = ga._load_profile(self.home / "accounts" / "person.json")
         self.assertEqual(saved["refresh_token"], "rt-live")
         self.assertEqual(saved["email"], "person@example.com")
 
@@ -1015,6 +1013,119 @@ class ProfileCommandTests(_HomeMixin):
         self.assertFalse((self.home / "accounts" / ".current-profile").exists())
 
 
+class ProfileSecretStoreTests(_HomeMixin):
+    """Saved-profile tokens live in the OS credential store, not the file."""
+
+    @pytest.fixture(autouse=True)
+    def _fake_store(self, profile_store):
+        self.store = profile_store
+
+    def _legacy(self, name: str = "work") -> Path:
+        return self.write_profile(
+            name, _creds("sub-w", "user@example.com", refresh_token="rt-work")
+        )
+
+    def test_legacy_profile_migrates_to_metadata_plus_marker(self) -> None:
+        path = self._legacy()
+        self.assertEqual(self.quiet(ga.cmd_switch, "work"), 0)
+        assert self.active is not None
+        self.assertEqual(self.active["refresh_token"], "rt-work")
+
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        on_disk = json.loads(path.read_text())
+        for secret in ("access_token", "refresh_token", "id_token"):
+            self.assertNotIn(secret, on_disk)
+        self.assertNotIn("rt-work", path.read_text())
+        self.assertEqual(
+            on_disk[ga.ps.SECRETS_KEY],
+            {
+                "store": "ai-accounts",
+                "key": "antigravity--work",
+                "has_refresh_token": True,
+                "fingerprint": ga.ps.fingerprint("rt-work"),
+            },
+        )
+        self.assertIn("expiry_date", on_disk)  # doctor judges expiry from metadata
+        self.assertIn("rt-work", self.store.slots["antigravity--work"])
+        # Identity (from the id_token that moved to the store) still reads locally.
+        claims = ga._read_claims(path)
+        assert claims is not None
+        self.assertEqual(claims["email"], "user@example.com")
+        self.assertEqual(claims["account_id"], "sub-w")
+        self.assertTrue(claims["refreshable"])
+        self.assertFalse(claims["malformed"])
+
+    def test_second_load_is_a_no_op(self) -> None:
+        path = self._legacy()
+        first = ga._load_profile(path)
+        text, slots = path.read_text(), dict(self.store.slots)
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(output):
+            second = ga._load_profile(path)
+        self.assertEqual(second, first)
+        self.assertEqual(path.read_text(), text)
+        self.assertEqual(self.store.slots, slots)
+        self.assertNotIn("Moved secrets", output.getvalue())
+
+    def test_active_match_and_list_need_no_store_reads(self) -> None:
+        path = self._legacy()
+        self.quiet(ga._load_profile, path)
+        self.set_active(_creds("sub-w", "user@example.com", refresh_token="rt-work"))
+        ga.ps._cache.clear()
+        self.store.gets = 0
+        self.assertEqual(ga._active_profile(), path)
+        self.assertEqual(self.quiet(lambda: ga.cmd_list(fetch_usage=False)), 0)
+        self.assertEqual(self.store.gets, 0)
+
+    def test_unavailable_store_keeps_the_file_byte_identical(self) -> None:
+        self.store.unavailable = True
+        path = self._legacy()
+        before = path.read_bytes()
+        _, out, err = self.capture(ga.cmd_switch, "work")
+        ga._load_profile(path)  # a later read in the same process stays quiet
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual((out + err).count("No OS credential store"), 1)
+        assert self.active is not None
+        self.assertEqual(self.active["refresh_token"], "rt-work")
+
+    def test_remove_deletes_the_store_entry(self) -> None:
+        path = self._legacy()
+        self.quiet(ga._load_profile, path)
+        self.assertIn("antigravity--work", self.store.slots)
+        self.assertEqual(self.quiet(ga.cmd_remove, "work"), 0)
+        self.assertFalse(path.exists())
+        self.assertNotIn("antigravity--work", self.store.slots)
+
+    def test_sync_with_a_lost_store_entry_keeps_the_file_metadata(self) -> None:
+        auth = {**_creds("sub-w", "user@example.com", refresh_token="rt-work"), "email": "user@example.com"}
+        path = self.write_profile("work", auth)
+        self.quiet(ga._load_profile, path)
+        self.store.slots.clear()  # e.g. the file was synced to a machine without its keychain item
+        ga.ps._cache.clear()
+        self.set_active(auth)
+        self.assertEqual(self.quiet(ga.cmd_sync), 0)
+        saved = ga._load_profile(path)
+        assert saved is not None
+        self.assertEqual(saved["email"], "user@example.com")
+        self.assertEqual(saved["refresh_token"], "rt-work")
+
+    def test_save_writes_no_mirror_and_drops_a_stale_one(self) -> None:
+        stale = self.home / "oauth_creds.json"
+        stale.write_text("{}", encoding="utf-8")
+        vendor = self.home.parent / "vendor-oauth.json"
+        vendor.write_text('{"vendor": true}', encoding="utf-8")
+        os.environ["ANTIGRAVITY_OAUTH_JSON"] = str(vendor)
+        self.set_active(_creds("sub-w", "user@example.com", refresh_token="rt-live"))
+        with mock.patch.object(
+            ga.gemini_usage, "fetch_usage", return_value=_usage(email="user@example.com")
+        ):
+            self.assertEqual(self.quiet(ga.cmd_save, "work"), 0)
+        self.assertFalse(stale.exists())
+        self.assertEqual(vendor.read_text(), '{"vendor": true}')
+        self.assertNotIn("rt-live", (self.home / "accounts" / "work.json").read_text())
+        self.assertEqual(sorted(p.name for p in self.home.iterdir()), ["accounts"])
+
+
 class LoginAndRefreshTests(_HomeMixin):
     def test_login_switch_saves_session_when_agy_writes_new_credentials(self) -> None:
         fresh = _creds("sub-new", "new@x.com", refresh_token="rt-new")
@@ -1038,7 +1149,7 @@ class LoginAndRefreshTests(_HomeMixin):
 
         self.assertEqual(popen.call_args.args[0], ["agy"])
         process.terminate.assert_called_once_with()
-        saved = json.loads((self.home / "accounts" / "new.json").read_text())
+        saved = ga._load_profile(self.home / "accounts" / "new.json")
         self.assertEqual(saved["refresh_token"], "rt-new")
         # Identity is backfilled from usage, so the saved profile isn't "(unknown)".
         self.assertEqual(saved["email"], "new@x.com")
@@ -1095,7 +1206,7 @@ class LoginAndRefreshTests(_HomeMixin):
 
         with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=refresh):
             self.assertEqual(self.quiet(ga.cmd_refresh, "work"), 0)
-        self.assertEqual(json.loads(profile.read_text())["access_token"], "rotated")
+        self.assertEqual(ga._load_profile(profile)["access_token"], "rotated")
 
     def test_refresh_failure_restores_original_session(self) -> None:
         old = _creds("sub-old", "old@x.com", refresh_token="rt-old")
@@ -2135,7 +2246,7 @@ class AgyDirectRefreshTests(_HomeMixin):
             self.assertEqual(self.quiet(ga.cmd_refresh, "work"), 0)
         spawn.assert_not_called()  # no agy subprocess on the fast path
 
-        saved = json.loads(profile.read_text())
+        saved = ga._load_profile(profile)
         self.assertEqual(saved["access_token"], "at-fresh")
         self.assertEqual(saved["refresh_token"], "rt-old")  # Google never rotates it
         self.assertAlmostEqual(
@@ -2171,7 +2282,7 @@ class AgyDirectRefreshTests(_HomeMixin):
 
         with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=refresh):
             self.assertEqual(self.quiet(ga.cmd_refresh, "work"), 0)
-        self.assertEqual(json.loads(profile.read_text())["access_token"], "at-via-agy")
+        self.assertEqual(ga._load_profile(profile)["access_token"], "at-via-agy")
 
     def test_active_profile_refresh_updates_the_keyring_blob_too(self) -> None:
         auth = _creds("sub-w", "user@example.com", access_token="at-stale")
@@ -2181,7 +2292,7 @@ class AgyDirectRefreshTests(_HomeMixin):
         self.enable(({"access_token": "at-fresh", "expires_in": 3600}, None))
         self.assertEqual(self.quiet(ga.cmd_refresh, "work"), 0)
 
-        self.assertEqual(json.loads(profile.read_text())["access_token"], "at-fresh")
+        self.assertEqual(ga._load_profile(profile)["access_token"], "at-fresh")
         if self.active is None:
             self.fail("expected a live session")
         self.assertEqual(self.active["access_token"], "at-fresh")
@@ -2203,7 +2314,7 @@ class AgyDirectRefreshTests(_HomeMixin):
         with mock.patch.object(ga.gemini_usage, "fetch_usage") as spawn:
             self.assertEqual(self.quiet(ga.cmd_refresh, None), 0)
         spawn.assert_not_called()
-        self.assertEqual(json.loads(profile.read_text())["access_token"], "at-fresh")
+        self.assertEqual(ga._load_profile(profile)["access_token"], "at-fresh")
 
     def test_switch_self_heals_an_expired_snapshot(self) -> None:
         profile = self.write_profile(
@@ -2214,7 +2325,7 @@ class AgyDirectRefreshTests(_HomeMixin):
         )
         self.enable(({"access_token": "at-fresh", "expires_in": 3600}, None))
         self.assertEqual(self.quiet(ga.cmd_switch, "work"), 0)
-        self.assertEqual(json.loads(profile.read_text())["access_token"], "at-fresh")
+        self.assertEqual(ga._load_profile(profile)["access_token"], "at-fresh")
         if self.active is None:
             self.fail("expected a live session")
         self.assertEqual(self.active["access_token"], "at-fresh")

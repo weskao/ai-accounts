@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 from contextlib import nullcontext
-import hashlib
 import json
 import os
 import re
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from . import autoswitch, gemini_usage, i18n
+from . import profile_secrets as ps
 from . import config_menu as cm
 from ._present import (
     _ANSI_RE as _ANSI_RE,
@@ -146,12 +146,23 @@ def _account_dir() -> Path:
     return Path(override) if override else _antigravity_dir() / "accounts"
 
 
-def _auth_file() -> Path:
-    return Path(
-        os.environ.get(
-            "ANTIGRAVITY_OAUTH_JSON", str(_antigravity_dir() / "oauth_creds.json")
-        )
-    )
+def _drop_stale_mirror() -> None:
+    """Delete the plaintext ``oauth_creds.json`` mirror older versions kept.
+
+    The live session only ever lived in the keyring; the mirror was a cache
+    nothing reads any more. Only the default path under the store root — a
+    user-set ``ANTIGRAVITY_OAUTH_JSON`` may point at a vendor file.
+    """
+    try:
+        (_antigravity_dir() / "oauth_creds.json").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+# Saved-profile tokens live in the OS credential store (see profile_secrets).
+# refresh_token first: the metadata fingerprint is taken from the first one.
+_STORE_TOOL = "antigravity"
+_SECRET_FIELDS = ("refresh_token", "access_token", "id_token", "client_secret")
 
 
 _KEYCHAIN_SERVICE = "gemini"
@@ -229,13 +240,7 @@ def _write_cli_auth_text(auth_text: str) -> bool:
         return False
     # A switch to the already-live profile needs no Keychain mutation.  Besides
     # avoiding needless writes, this keeps the normal path entirely noninteractive.
-    if _read_cli_keyring_secret() != secret and not _store_keychain_secret(secret):
-        return False
-    try:
-        atomic_write_json(_auth_file(), auth)
-    except OSError:
-        return False
-    return True
+    return _read_cli_keyring_secret() == secret or _store_keychain_secret(secret)
 
 
 def _delete_cli_auth() -> bool:
@@ -336,7 +341,10 @@ def _claims_from_auth(auth: JsonDict) -> Claims:
     Identity comes from the ``id_token`` JWT (email / name / Google ``sub``).
     Token expiry comes from ``expiry_date`` (epoch **milliseconds**, Google's
     convention), falling back to the id_token's ``exp`` (seconds)."""
-    claims = _decode_jwt_payload(_string(auth.get("id_token"))) or {}
+    id_claims = auth.get("id_token_claims")
+    claims = _decode_jwt_payload(_string(auth.get("id_token"))) or (
+        id_claims if isinstance(id_claims, dict) else {}
+    )
 
     exp = None
     expiry_ms = auth.get("expiry_date")
@@ -369,41 +377,84 @@ def _claims_from_text(text: str) -> Claims | None:
 
 
 def _read_claims(auth_path: Path) -> Claims | None:
-    if not auth_path.is_file():
+    """Claims of a saved profile from its file alone — never reads the store."""
+    meta = ps.load_metadata(auth_path)
+    if meta is None:
         return None
     try:
-        return _claims_from_auth(json.loads(auth_path.read_text(encoding="utf-8")))
+        claims = _claims_from_auth(meta)
     except Exception:
         return None
+    marker = meta.get(ps.SECRETS_KEY)
+    if isinstance(marker, dict):
+        claims["refreshable"] = bool(marker.get("has_refresh_token"))
+        claims["malformed"] = False
+    return claims
+
+
+def _with_id_claims(auth: JsonDict) -> JsonDict:
+    """*auth* plus its id_token's decoded (non-secret) claims, so a profile
+    whose id_token went to the store still shows its identity from metadata."""
+    claims = _decode_jwt_payload(_string(auth.get("id_token")))
+    return {**auth, "id_token_claims": claims} if claims else auth
+
+
+def _load_profile(path: Path) -> JsonDict | None:
+    """The full saved profile, tokens included (migrates a plaintext file)."""
+    auth = ps.load(path, _STORE_TOOL, _SECRET_FIELDS)
+    if auth is None or "id_token_claims" in auth:
+        return auth
+    auth = _with_id_claims(auth)
+    if "id_token_claims" not in auth:
+        return auth  # the usual agy profile: no id_token at all
+    meta = ps.load_metadata(path)
+    if meta is not None and ps.SECRETS_KEY in meta:
+        # The migration just moved id_token out of the file: keep its identity.
+        meta["id_token_claims"] = auth["id_token_claims"]
+        try:
+            atomic_write_json(path, meta)
+        except OSError:
+            pass
+    return auth
+
+
+def _profile_base(path: Path) -> JsonDict:
+    """What a fold-back merges onto: the full profile, or — when its store entry
+    is gone — at least its metadata (email etc.); the marker is dropped on save."""
+    return _load_profile(path) or ps.load_metadata(path) or {}
+
+
+def _save_profile(path: Path, auth: JsonDict) -> None:
+    """Tokens to the OS store, metadata to *path* (plaintext fallback, 0600)."""
+    ps.save(path, _STORE_TOOL, _with_id_claims(auth), _SECRET_FIELDS)
 
 
 def _token_key_from_auth(auth: JsonDict) -> str | None:
     for key in ("refresh_token", "access_token"):
         value = auth.get(key)
         if isinstance(value, str) and value:
-            return value
+            return ps.fingerprint(value)
     return None
 
 
 def _token_key_from_path(path: Path) -> str | None:
-    try:
-        return _token_key_from_auth(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, UnicodeDecodeError, ValueError):
+    """Token fingerprint of a saved profile — metadata only, no store read."""
+    meta = ps.load_metadata(path)
+    if meta is None:
         return None
+    marker = meta.get(ps.SECRETS_KEY)
+    if isinstance(marker, dict):
+        return _string(marker.get("fingerprint"))
+    return _token_key_from_auth(meta)
 
 
 def _read_active_auth_text() -> str | None:
+    _drop_stale_mirror()
     secret = _read_cli_keyring_secret()
     if secret is None:
         return None
     auth = _auth_from_keyring_secret(secret)
-    if auth is None:
-        return None
-    mirror = _auth_file()
-    mirror.parent.mkdir(parents=True, exist_ok=True)
-    mirror.write_text(json.dumps(auth, indent=2) + "\n", encoding="utf-8")
-    mirror.chmod(0o600)
-    return json.dumps(auth)
+    return None if auth is None else json.dumps(auth)
 
 
 def _read_active_claims() -> Claims | None:
@@ -479,11 +530,8 @@ def _copy_active_auth_to(dest: Path) -> None:
             return
     active_auth = json.loads(text)
     if dest.is_file():
-        saved_auth = json.loads(dest.read_text(encoding="utf-8"))
-        saved_auth.update(active_auth)
-        active_auth = saved_auth
-    dest.write_text(json.dumps(active_auth, indent=2) + "\n", encoding="utf-8")
-    dest.chmod(0o600)
+        active_auth = {**_profile_base(dest), **active_auth}
+    _save_profile(dest, active_auth)
 
 
 # ── direct Google OAuth refresh (no agy subprocess) ─────────────────────────
@@ -619,17 +667,14 @@ def _direct_refresh_profile(profile_file: Path) -> tuple[JsonDict | None, str | 
     On success the profile file is rewritten atomically and — when it is the
     live account — mirrored into the keyring blob (`expiry_date` ms → the
     keyring's ISO-8601 `expiry`) so agy sees the fresh token too."""
-    try:
-        auth = json.loads(profile_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None, "unreadable credential file"
-    if not isinstance(auth, dict):
+    auth = _load_profile(profile_file)
+    if auth is None:
         return None, "unreadable credential file"
     updated, error = _direct_refresh_auth(auth)
     if updated is None:
         return None, error
     try:
-        atomic_write_json(profile_file, updated)
+        _save_profile(profile_file, updated)
     except OSError as exc:
         return None, f"could not write {profile_file.name}: {exc.strerror}"
     if _active_profile() == profile_file:
@@ -857,17 +902,12 @@ def _backfill_email(profile_file: Path, email: str | None = None) -> None:
         email = gemini_usage.fetch_usage(timeout=8).email
     if not email:
         return
-    try:
-        saved = json.loads(profile_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    if not isinstance(saved, dict) or saved.get("email") == email:
+    # Metadata-only edit: the tokens (in the store or inline) are untouched.
+    saved = ps.load_metadata(profile_file)
+    if saved is None or saved.get("email") == email:
         return
     saved["email"] = email
-    text = json.dumps(saved, indent=2) + "\n"
-    for path in (profile_file, _auth_file()):
-        path.write_text(text, encoding="utf-8")
-        path.chmod(0o600)
+    atomic_write_json(profile_file, saved)
 
 
 def _save_profile_auth(name: str, auth_text: str, known_email: str | None = None) -> int:
@@ -877,12 +917,7 @@ def _save_profile_auth(name: str, auth_text: str, known_email: str | None = None
 
     _account_dir().mkdir(parents=True, exist_ok=True)
     _account_dir().chmod(0o700)
-    profile_file.write_text(auth_text, encoding="utf-8")
-    profile_file.chmod(0o600)
-
-    _auth_file().parent.mkdir(parents=True, exist_ok=True)
-    _auth_file().write_text(auth_text, encoding="utf-8")
-    _auth_file().chmod(0o600)
+    _save_profile(profile_file, json.loads(auth_text))
     _set_current_profile(profile_file)
 
     # Name-less `save` already paid for the identity lookup; skip both the second
@@ -903,7 +938,7 @@ def _save_profile_auth(name: str, auth_text: str, known_email: str | None = None
 def cmd_save(name: str | None = None) -> int:
     auth_text = _read_active_auth_text()
     if auth_text is None:
-        log_red(f"❌ No Antigravity auth file found: {_auth_file()}")
+        log_red("❌ No Antigravity session found in the agy keyring")
         log_yellow("   Run: agy-accounts login-switch <profile_name>")
         return 1
     known_email: str | None = None
@@ -919,7 +954,8 @@ def cmd_save(name: str | None = None) -> int:
             if token is None:
                 log_red("❌ Could not derive a name from the active account.")
                 return 1
-            name = f"agy-{hashlib.sha256(token.encode()).hexdigest()[:8]}"
+            # The fingerprint is sha256(token)[:16], so names match older saves.
+            name = f"agy-{token[:8]}"
             known_email = ""
     return _save_profile_auth(name, auth_text, known_email)
 
@@ -1024,7 +1060,9 @@ def cmd_list(
                     spinner.update(
                         f"Fetching Antigravity usage… {DIM}({index}/{len(profile_claims)}){RESET} {MAGENTA}{name}{RESET}"
                     )
-                    profile_text = profile_path.read_text(encoding="utf-8")
+                    # {} (tokens gone from the store) fails activation → blank row.
+                    profile_auth = _load_profile(profile_path) or {}
+                    profile_text = json.dumps(profile_auth)
                     refreshed_text = None
                     if profile_text in fetched:
                         usage, refreshed_text = fetched[profile_text]
@@ -1040,15 +1078,11 @@ def cmd_list(
                     if usage is not empty_usage and usage.error is None:
                         _cache_snapshot(name, usage)
                     if refreshed_text is not None:
-                        refreshed = json.loads(refreshed_text)
-                        saved = json.loads(profile_text)
-                        saved.update(refreshed)
+                        saved = {**profile_auth, **json.loads(refreshed_text)}
                         if usage.email:
                             saved["email"] = usage.email
-                        profile_path.write_text(
-                            json.dumps(saved, indent=2) + "\n", encoding="utf-8"
-                        )
-                        profile_path.chmod(0o600)
+                        if saved != profile_auth:  # skip a no-op store round-trip
+                            _save_profile(profile_path, saved)
                         if is_active:
                             restore_text = json.dumps(saved)
                 expires_text, expires_color = _list_expiry_status(claims)
@@ -1156,7 +1190,12 @@ def cmd_switch(name: str) -> int:
         if outgoing_profile is not None:
             _copy_active_auth_to(outgoing_profile)
 
-    if not _write_cli_auth_text(profile_file.read_text(encoding="utf-8")):
+    profile_auth = _load_profile(profile_file)
+    if profile_auth is None:
+        log_red(f"❌ Saved tokens for '{name}' are missing from the credential store")
+        log_yellow(f"   Re-login with: agy-accounts login-switch {name}")
+        return 1
+    if not _write_cli_auth_text(json.dumps(profile_auth)):
         log_red("❌ Could not update the agy CLI keyring session")
         return 1
     _set_current_profile(profile_file)
@@ -1196,7 +1235,7 @@ def cmd_remove(name: str) -> int:
         log_red(f"❌ Profile not found: {name}")
         return 1
     was_current = _marked_profile() == profile_file
-    profile_file.unlink()
+    ps.delete(profile_file, _STORE_TOOL)
     if was_current:
         _current_profile_marker().unlink(missing_ok=True)
     ok("Removed Antigravity profile", name, bold=False)
@@ -1248,19 +1287,17 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
 
     original_text = _read_active_auth_text()
     is_active = _active_profile(original_text) == profile_file
-    profile_text = profile_file.read_text(encoding="utf-8")
-    if not _write_cli_auth_text(profile_text):
+    profile_auth = _load_profile(profile_file)
+    if profile_auth is None or not _write_cli_auth_text(json.dumps(profile_auth)):
         log_red(f"❌ Could not activate agy profile: {name}")
         return 1, "keyring"
     usage = _validated_usage(gemini_usage.fetch_usage(), _read_claims(profile_file))
     refreshed_text = _read_active_auth_text() if usage.error is None else None
     if refreshed_text is not None:
-        saved = json.loads(profile_text)
-        saved.update(json.loads(refreshed_text))
+        saved = {**profile_auth, **json.loads(refreshed_text)}
         if usage.email:
             saved["email"] = usage.email
-        profile_file.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
-        profile_file.chmod(0o600)
+        _save_profile(profile_file, saved)
         refreshed_text = json.dumps(saved)
     if is_active and refreshed_text is not None:
         _restore_cli_auth(refreshed_text)
@@ -1318,9 +1355,7 @@ def _refresh_active_auth() -> int:
             log_red("❌ Could not update the agy CLI keyring session")
             return 1
         if profile_path is not None:
-            saved = json.loads(profile_path.read_text(encoding="utf-8"))
-            saved.update(updated)
-            atomic_write_json(profile_path, saved)
+            _save_profile(profile_path, {**_profile_base(profile_path), **updated})
             _set_current_profile(profile_path)
             details = (f"(synced back to profile: {profile_path.stem})",)
         else:
@@ -1331,7 +1366,7 @@ def _refresh_active_auth() -> int:
         success_panel(
             "Refreshed active Antigravity auth.",
             None,
-            _claims_lines(_read_claims(_auth_file())),
+            _claims_lines(_claims_from_auth(updated)),
             title="Current Auth Claims",
             details=details,
         )
@@ -1353,12 +1388,10 @@ def _refresh_active_auth() -> int:
     refreshed_text = _read_active_auth_text()
 
     if profile_path is not None and refreshed_text is not None:
-        saved = json.loads(profile_path.read_text(encoding="utf-8"))
-        saved.update(json.loads(refreshed_text))
+        saved = {**_profile_base(profile_path), **json.loads(refreshed_text)}
         if usage.email:
             saved["email"] = usage.email
-        profile_path.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
-        profile_path.chmod(0o600)
+        _save_profile(profile_path, saved)
         _set_current_profile(profile_path)
         details = (f"(synced back to profile: {profile_path.stem})",)
     else:
@@ -1370,7 +1403,7 @@ def _refresh_active_auth() -> int:
     success_panel(
         "Refreshed active Antigravity auth.",
         None,
-        _claims_lines(_read_claims(_auth_file())),
+        _claims_lines(_claims_from_text(refreshed_text or active_text)),
         title="Current Auth Claims",
         details=details,
     )
@@ -1761,7 +1794,8 @@ def _probe_saved_profile(name: str, restore_text: str | None) -> UsageWindow | N
     if profile is None or not profile.is_file():
         return None
     claims = _read_claims(profile)
-    if not _write_cli_auth_text(profile.read_text(encoding="utf-8")):
+    profile_auth = _load_profile(profile)
+    if profile_auth is None or not _write_cli_auth_text(json.dumps(profile_auth)):
         return None
     try:
         snapshot = _validated_usage(gemini_usage.fetch_usage(timeout=8), claims)
