@@ -127,10 +127,11 @@ def _install_linux_systemd(interval_sec: int) -> None:
         "[Install]\nWantedBy=timers.target\n",
         encoding="utf-8",
     )
-    # daemon-reload before enable: systemd caches unit contents, so a re-install
+    # Reload before restarting: systemd caches unit contents, so a re-install
     # with a new interval is ignored until it re-reads them.
-    u.run(["systemctl", "--user", "daemon-reload"])
-    u.run(["systemctl", "--user", "enable", "--now", f"{LABEL}.timer"])
+    u.run(["systemctl", "--user", "daemon-reload"], check=True)
+    u.run(["systemctl", "--user", "enable", f"{LABEL}.timer"], check=True)
+    u.run(["systemctl", "--user", "restart", f"{LABEL}.timer"], check=True)
 
 
 def _install_linux_cron(interval_sec: int) -> None:

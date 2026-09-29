@@ -210,13 +210,12 @@ class LinuxInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.T
         service_text = service_path.read_text(encoding="utf-8")
         self.assertIn("ai_accounts.autoswitch_timer run", service_text)
 
-        # And: systemd re-read the units, THEN enabled the timer — no crontab
-        # touched. daemon-reload must precede enable, otherwise a re-install
-        # with a new interval is ignored (systemd caches unit contents).
+        # Reapplying must restart an already active timer so its new interval
+        # takes effect; enable --now alone leaves it running unchanged.
         systemctl_verbs = [
             c["cmd"][2] for c in calls if c["cmd"][0] == "systemctl"
         ]
-        self.assertEqual(systemctl_verbs, ["daemon-reload", "enable"])
+        self.assertEqual(systemctl_verbs, ["daemon-reload", "enable", "restart"])
         self.assertFalse(any(c["cmd"][0] == "crontab" for c in calls))
 
     def test_install_without_systemctl_falls_back_to_cron(self) -> None:

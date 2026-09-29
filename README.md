@@ -573,8 +573,14 @@ the hidden settings. Explicit `config get <key>` and `config set <key> <value>`
 remain shared across all CLIs.
 
 `ai-accounts autoswitch setup` installs provider event hooks plus a low-frequency
-OS timer fallback. Re-run it after reinstalling the package so hooks point at
-the current Python environment.
+OS timer fallback. Re-run it after reinstalling the package if hook commands or
+the installed Python path changed.
+To restart or re-register the timer on any supported OS, re-run
+`ai-accounts install-timer --interval 1800` (use your existing interval if it
+differs). This unloads and loads the LaunchAgent on macOS, reloads and restarts
+the systemd user timer on Linux (or replaces the cron entry), and replaces the
+Task Scheduler task on Windows. `ai-accounts config` changes are read on the
+next timer tick; they do not require a restart.
 Telegram notifications from timer runs include the scheduler and job label:
 `launchd: com.ai_accounts.autoswitch` on macOS,
 `systemd: com.ai_accounts.autoswitch.timer` or `cron: ai-accounts-autoswitch`
