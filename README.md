@@ -730,7 +730,8 @@ Detection runs across every saved profile for a covered provider, not just
 the currently active one, so an account benched by auto-switch still gets
 its "usable again" notification. Each timer tick sends at most one grouped
 notification over the configured `notify` channel, covering every window
-that reset since the previous tick.
+that reset since the previous tick. The title counts the windows per
+provider (`codex ×1, claude ×2, agy ×1`).
 
 `docs/quota-reset-cases.md` is the full case table — every scenario the
 detection rule was verified against, with the number of notifications each

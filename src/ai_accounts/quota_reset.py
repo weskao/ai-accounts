@@ -33,6 +33,7 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -447,7 +448,10 @@ def report(events: list[ResetEvent], now: int | None = None) -> bool:
         title = i18n.t(
             "notify.reset.many.title",
             count=len(events),
-            providers=", ".join(dict.fromkeys(event.provider for event in events)),
+            providers=", ".join(
+                f"{name} ×{n}"
+                for name, n in Counter(event.provider for event in events).items()
+            ),
         )
         body = "\n".join(
             i18n.t(

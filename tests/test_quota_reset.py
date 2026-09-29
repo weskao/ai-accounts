@@ -252,6 +252,20 @@ class ReportTests(unittest.TestCase):
         self.assertIn("codex", body)
         self.assertIn("claude", body)
 
+    def test_the_grouped_title_counts_the_windows_of_each_provider(self) -> None:
+        events = [
+            qr.ResetEvent("codex", "a", "weekly", 95, 2000),
+            qr.ResetEvent("claude", "b", "hourly", 95, 2000),
+            qr.ResetEvent("claude", "b", "weekly", 95, 2000),
+            qr.ResetEvent("agy", "c", "gemini_weekly", 95, 2000),
+        ]
+
+        with mock.patch.object(qr.aw, "notify", return_value=True) as notify:
+            qr.report(events)
+
+        title, _ = notify.call_args[0]
+        self.assertIn("codex ×1, claude ×2, agy ×1", title)
+
     def test_single_event_sends_one_notification(self) -> None:
         events = [qr.ResetEvent("codex", "work", "hourly", 95, 2000)]
 
