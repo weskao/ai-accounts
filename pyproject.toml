@@ -4,7 +4,7 @@ version = "0.20.0"
 description = "Manage and switch profiles across AI coding CLIs"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "ai-accounts" }]
+authors = [{ name = "Wes Kao" }]
 license = { text = "MIT" }
 dependencies = [
     "telegram-kit>=0.2.0,<0.3",
