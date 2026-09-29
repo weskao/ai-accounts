@@ -174,6 +174,7 @@ failure never reads as a reset.
 | Several windows resetting in one tick? | One grouped notification, never one per window |
 | Repeat notifications for the same reset? | Impossible — `detect` is a state machine, and the reading it stores after firing is under the `min_used_pct` gate |
 | Feature inert without a timer? | Yes. With no timer installed, `reset_notify` makes no extra `list --json` calls and sends nothing |
+| A reset noticed days late (timer down, collection failing, stale agy cache)? | Still reported once, but each line says how long ago it reset: `reset 2d 9h ago` on schedule (dated by `prev.reset_time`), `reset within the last 30m` off schedule (bounded by `prev.seen_at`), omitted when `seen_at` is missing |
 
 ## How these counts were produced
 

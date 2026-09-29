@@ -190,6 +190,32 @@ class DetectTests(unittest.TestCase):
 
         self.assertEqual(fired, [0, 1, 0, 1])
 
+    def test_a_scheduled_reset_is_dated_by_the_deadline_it_passed(self) -> None:
+        # Collection for this provider failed for days, so the 100% reading is
+        # stale. The scheduled route knows exactly when the reset happened.
+        state = {"codex/work/weekly": {"reset_time": 1_000, "used_pct": 100, "seen_at": 500}}
+        snapshot = {"codex": {"work": {"weekly": _win(45, 605_800)}}}
+
+        _, events = qr.detect(state, snapshot, now=206_000, min_used_pct=90)
+
+        self.assertEqual((events[0].reset_at, events[0].reset_at_bound), (1_000, False))
+
+    def test_an_early_reset_is_bounded_by_the_previous_reading(self) -> None:
+        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96, "seen_at": 3_200}}
+        snapshot = {"codex": {"work": {"hourly": _win(0, 20_000)}}}
+
+        _, events = qr.detect(state, snapshot, now=5_000, min_used_pct=90)
+
+        self.assertEqual((events[0].reset_at, events[0].reset_at_bound), (3_200, True))
+
+    def test_an_early_reset_with_no_seen_at_has_no_known_age(self) -> None:
+        state = {"codex/work/hourly": {"reset_time": 9_000, "used_pct": 96}}
+        snapshot = {"codex": {"work": {"hourly": _win(0, 9_000)}}}
+
+        _, events = qr.detect(state, snapshot, now=5_000, min_used_pct=90)
+
+        self.assertIsNone(events[0].reset_at)
+
     def test_failed_collect_preserves_prior_state_for_that_provider(self) -> None:
         state = {
             "codex/work/hourly": {"reset_time": 1000, "used_pct": 95},
@@ -233,6 +259,56 @@ class ReportTests(unittest.TestCase):
             qr.report(events)
 
         notify.assert_called_once()
+
+    def test_a_late_noticed_reset_says_how_long_ago_it_happened(self) -> None:
+        # The timer or a provider's collection was down for days: the reset is
+        # still reported, but as old news rather than "just came back".
+        now = 1_000_000
+        events = [
+            qr.ResetEvent("codex", "work", "weekly", 100, now + 400_000, reset_at=now - 206_000),
+            qr.ResetEvent("claude", "personal", "hourly", 95, now + 9_000,
+                          reset_at=now - 1_800, reset_at_bound=True),
+            qr.ResetEvent("agy", "old", "gemini_weekly", 95, now + 9_000),  # reset_at unknown
+        ]
+
+        with mock.patch.object(qr.aw, "notify", return_value=True) as notify, \
+                mock.patch.object(qr.i18n, "current_language", return_value="en"):
+            qr.report(events, now=now)
+
+        _, body = notify.call_args[0]
+        lines = body.splitlines()
+        self.assertIn("reset 2d 9h ago, was 100%", lines[0])
+        self.assertIn("reset within the last 30m, was 95%", lines[1])
+        self.assertIn("(was 95%)", lines[2])
+
+    def test_the_age_units_follow_the_notification_language(self) -> None:
+        now = 1_000_000
+        events = [
+            qr.ResetEvent("codex", "work", "weekly", 100, now + 400_000, reset_at=now - 206_000),
+            qr.ResetEvent("claude", "personal", "hourly", 95, now + 9_000,
+                          reset_at=now - 30, reset_at_bound=True),
+        ]
+
+        with mock.patch.object(qr.aw, "notify", return_value=True) as notify, \
+                mock.patch.object(qr.i18n, "current_language", return_value="zh-TW"):
+            qr.report(events, now=now)
+
+        _, body = notify.call_args[0]
+        lines = body.splitlines()
+        self.assertIn("（2 天 9 小時前已重置，重置前已用 100%）", lines[0])
+        self.assertIn("（重置前已用 95%）", lines[1])  # under a minute: no age label
+        self.assertNotIn("已重置", lines[1])
+
+    def test_a_single_event_title_carries_its_age(self) -> None:
+        now = 1_000_000
+        events = [qr.ResetEvent("codex", "work", "hourly", 95, now + 9_000, reset_at=now - 600)]
+
+        with mock.patch.object(qr.aw, "notify", return_value=True) as notify, \
+                mock.patch.object(qr.i18n, "current_language", return_value="en"):
+            qr.report(events, now=now)
+
+        title, _ = notify.call_args[0]
+        self.assertIn("(reset 10m ago, was 95% used)", title)
 
     def test_an_estimated_event_does_not_quote_a_next_reset_time(self) -> None:
         # A cache-derived deadline is a computed boundary, not something the

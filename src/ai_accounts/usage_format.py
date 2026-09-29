@@ -10,7 +10,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Final, TypeAlias
+from typing import Callable, Final, TypeAlias
 
 from ._utils import DIM, GREEN, RESET, YELLOW, log_yellow
 
@@ -276,6 +276,25 @@ def format_reset_remaining(value: int | None, *, include_days: bool) -> str:
         return f"{days}d {hours}h {minutes}m"
     hours, minutes = divmod(minutes_total, 60)
     return f"{hours}h {minutes}m"
+
+
+def format_elapsed(
+    seconds: int, unit: Callable[[int, str], str] = lambda n, u: f"{n}{u}"
+) -> str:
+    """A past duration in its two largest units, e.g. "2d 9h", "3h 12m",
+    "12m". Unlike :func:`format_reset_remaining`, zero leading units are
+    dropped: this reads as "how long ago", not a table column. Under a minute
+    it reads "0m" — callers that want nothing there must check first. *unit*
+    renders one amount for a unit key ``"d"``/``"h"``/``"m"``, which is how a
+    caller localises it (this module stays free of i18n)."""
+    minutes_total = max(0, seconds) // 60
+    days, rest = divmod(minutes_total, 1_440)
+    hours, minutes = divmod(rest, 60)
+    if days:
+        return f"{unit(days, 'd')} {unit(hours, 'h')}"
+    if hours:
+        return f"{unit(hours, 'h')} {unit(minutes, 'm')}"
+    return unit(minutes, "m")
 
 
 def format_usage_window(window: UsageWindow | None, window_kind: str, percentage_text: str | None = None) -> str:

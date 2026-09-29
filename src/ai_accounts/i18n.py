@@ -252,17 +252,34 @@ MESSAGES: dict[str, dict[str, str]] = {
     # per-provider/profile row inside that grouped body; `.body` is the
     # follow-up line shown either way.
     "notify.reset.title": {
-        "en": "🔋 {provider}: {profile} {window} quota is available again (was {used}% used)",
-        "zh-TW": "🔋 {provider}：{profile} 的 {window} 配額已恢復可用（重置前已用 {used}%）",
+        "en": "🔋 {provider}: {profile} {window} quota is available again ({when}was {used}% used)",
+        "zh-TW": "🔋 {provider}：{profile} 的 {window} 配額已恢復可用（{when}重置前已用 {used}%）",
     },
     "notify.reset.many.title": {
         "en": "🔋 ai-accounts: {count} quota windows reset — {providers}",
         "zh-TW": "🔋 ai-accounts：{count} 個配額視窗已重置 — {providers}",
     },
     "notify.reset.line": {
-        "en": "• {provider} · {profile} · {window} (was {used}%)",
-        "zh-TW": "• {provider} · {profile} · {window}（重置前已用 {used}%）",
+        "en": "• {provider} · {profile} · {window} ({when}was {used}%)",
+        "zh-TW": "• {provider} · {profile} · {window}（{when}重置前已用 {used}%）",
     },
+    # The `{when}` prefix inside `.title` / `.line`: how long ago the window
+    # reset, so a reset noticed late reads as old news. `.within` is for an
+    # off-schedule reset, bounded only by the previous reading. Each carries
+    # its own trailing separator, since `{when}` is empty when unknown.
+    "notify.reset.ago": {
+        "en": "reset {ago} ago, ",
+        "zh-TW": "{ago}前已重置，",
+    },
+    "notify.reset.within": {
+        "en": "reset within the last {ago}, ",
+        "zh-TW": "{ago}內已重置，",
+    },
+    # The units `{ago}` is built from (usage_format.format_elapsed's "d"/"h"/
+    # "m" keys): one amount each, the two largest joined by a space.
+    "elapsed.d": {"en": "{n}d", "zh-TW": "{n} 天"},
+    "elapsed.h": {"en": "{n}h", "zh-TW": "{n} 小時"},
+    "elapsed.m": {"en": "{n}m", "zh-TW": "{n} 分鐘"},
     "notify.reset.body": {
         "en": "Next reset: {next}",
         "zh-TW": "下次重置：{next}",

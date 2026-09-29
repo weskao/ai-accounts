@@ -715,6 +715,17 @@ if the fresh window was re-consumed to within 10 points of the old reading
 inside a single tick (95% down to 86%, say) — at that point the fall is
 indistinguishable from reporting jitter.
 
+Every notification also says **how long ago** each window reset, e.g.
+`• codex · work · weekly (reset 2d 9h ago, was 100%)` — the units follow the
+notification language (zh-TW: `2 天 9 小時前已重置`). A reset can be noticed
+late — the timer was not running, a provider's `list --json` kept failing, or
+agy's cache was stale — and it is still reported then, but the age makes it
+read as old news instead of quota that just came back. A scheduled reset is
+dated by the deadline it passed; an off-schedule one only by the previous
+scan, so it reads `reset within the last 30m`. The age is left out when
+unknown (a state entry from an older version) and when under a minute, so a
+reset that fresh keeps the plain wording (`was 95%`).
+
 Detection runs across every saved profile for a covered provider, not just
 the currently active one, so an account benched by auto-switch still gets
 its "usable again" notification. Each timer tick sends at most one grouped

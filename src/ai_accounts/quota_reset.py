@@ -110,6 +110,13 @@ class ResetEvent:
     used_pct: int  # usage right before the reset — what the notification shows
     reset_time: int  # the fresh window's next reset instant
     estimated: bool = False  # next reset inferred, not reported (see WindowSnapshot)
+    # When the reset happened, so a late-noticed one (timer down, collection
+    # failing, a stale agy cache) says how old it is instead of reading as
+    # news. On schedule it is the old deadline itself; off schedule only the
+    # previous reading bounds it, so reset_at_bound marks it "within the last
+    # …". None when unknown (a state entry from before seen_at existed).
+    reset_at: int | None = None
+    reset_at_bound: bool = False
 
 
 # ── state file ───────────────────────────────────────────────────────────────
@@ -354,12 +361,16 @@ def detect(
                 key = f"{provider}/{profile}/{window}"
                 fresh_keys.add(key)
                 prev = state.get(key)
-                if prev is not None and prev["used_pct"] >= min_used_pct and (
+                # (reset_at, reset_at_bound) once a route fires, else None.
+                fired: tuple[int | None, bool] | None = None
+                if prev is not None and prev["used_pct"] >= min_used_pct:
                     # the recorded deadline arrived and a later one replaced it
-                    (now >= prev["reset_time"] and fresh.reset_time >= prev["reset_time"] + 60)
+                    if now >= prev["reset_time"] and fresh.reset_time >= prev["reset_time"] + 60:
+                        fired = (prev["reset_time"], False)
                     # or the provider reset early, off its own schedule
-                    or _reset_early(prev, fresh, now)
-                ):
+                    elif _reset_early(prev, fresh, now):
+                        fired = (prev.get("seen_at"), True)
+                if fired is not None:
                     events.append(
                         ResetEvent(
                             provider,
@@ -368,6 +379,7 @@ def detect(
                             prev["used_pct"],
                             fresh.reset_time,
                             fresh.estimated,
+                            *fired,
                         )
                     )
                 new_state[key] = {
@@ -385,9 +397,25 @@ def detect(
 # ── notification ─────────────────────────────────────────────────────────────
 
 
-def report(events: list[ResetEvent]) -> bool:
+def _when(event: ResetEvent, now: int) -> str:
+    """The "reset 2d 9h ago, " prefix for *event*, or "" when the age is
+    unknown or under a minute — a reset that fresh is just news, no label."""
+    if event.reset_at is None or now - event.reset_at < 60:
+        return ""
+    key = "notify.reset.within" if event.reset_at_bound else "notify.reset.ago"
+    ago = usage_format.format_elapsed(
+        now - event.reset_at, unit=lambda n, u: i18n.t(f"elapsed.{u}", n=n)
+    )
+    return i18n.t(key, ago=ago)
+
+
+def report(events: list[ResetEvent], now: int | None = None) -> bool:
     """One notification for *events* — a single line for one event, the
     grouped `.many` wording for several — via ``aw.notify()``.
+
+    Each event says how long ago it reset (as of *now*, default the current
+    time): a reset only noticed days later is still reported, but reads as
+    old news rather than as quota that just came back.
 
     Never ``notify_once``: a reset is a one-shot fact already de-duplicated by
     :func:`detect`'s state machine (it cannot fire twice for the same reset),
@@ -395,6 +423,8 @@ def report(events: list[ResetEvent]) -> bool:
     """
     if not events:
         return False
+    if now is None:
+        now = int(time.time())
     if len(events) == 1:
         event = events[0]
         title = i18n.t(
@@ -403,6 +433,7 @@ def report(events: list[ResetEvent]) -> bool:
             profile=event.profile,
             window=i18n.t(f"window.{event.window}", default=event.window),
             used=event.used_pct,
+            when=_when(event, now),
         )
         body = (
             i18n.t("notify.reset.cached")
@@ -425,6 +456,7 @@ def report(events: list[ResetEvent]) -> bool:
                 profile=event.profile,
                 window=i18n.t(f"window.{event.window}", default=event.window),
                 used=event.used_pct,
+                when=_when(event, now),
             )
             for event in events
         )
@@ -456,5 +488,5 @@ def run_tick(collect: Callable[[], Snapshot] | None = None) -> list[ResetEvent]:
     new_state, events = detect(state, snapshot, now, min_used_pct)
     _write_state(new_state)
     if events:
-        report(events)
+        report(events, now)
     return events
