@@ -1,9 +1,18 @@
+## [0.21.2] - 2026-09-29
+
+### 🐛 Bug Fixes
+
+- **ai-accounts:** Restart active systemd timer
 ## [0.21.1] - 2026-09-29
 
 ### 🧪 Testing
 
 - Ignore tmux env so Telegram payload tests are hermetic
 - **codex:** Build shared auth payload once to avoid clock-tick flake
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.21.1
 ## [0.21.0] - 2026-09-29
 
 ### 🚀 Features
