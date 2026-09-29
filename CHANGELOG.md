@@ -1,3 +1,19 @@
+## [0.21.0] - 2026-09-29
+
+### 🚀 Features
+
+- **notify:** Show how long ago a quota reset happened
+- **quota-reset:** Count windows by provider
+- Add launchd footer helper
+
+### 🐛 Bug Fixes
+
+- Include scheduler name in autoswitch notifications
+
+### ⚙️ Miscellaneous Tasks
+
+- Replace personal identity with project name
+- Update author attribution
 ## [0.20.0] - 2026-09-28
 
 ### 🚀 Features
