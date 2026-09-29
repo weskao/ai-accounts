@@ -565,7 +565,7 @@ class TokenRefreshGateTests(_ConfigMixin, unittest.TestCase):
         aw.save_config({"enabled": False, "token_refresh": True})
         refresh = mock.Mock(
             return_value=(
-                "❌ Refresh failed for wes: HTTP 503 from token endpoint "
+                "❌ Refresh failed for ai-accounts: HTTP 503 from token endpoint "
                 "(refresh token may be expired or revoked)\n"
                 "   Token endpoint unreachable — retry later."
             )

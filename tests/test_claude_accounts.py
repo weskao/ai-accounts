@@ -457,7 +457,7 @@ class ProfileCommandTests(_HomeMixin):
             json.dumps(
                 {
                     "claudeAiOauth": _oauth(access="at-a", refresh="rt-a"),
-                    "aiAccountsAccount": {"email": "wes@example.com", "name": "Wes"},
+                    "aiAccountsAccount": {"email": "ai-accounts@example.com", "name": "ai-accounts"},
                 }
             ),
             encoding="utf-8",
@@ -467,7 +467,7 @@ class ProfileCommandTests(_HomeMixin):
             _, output, _ = self.capture(ca.cmd_list)
         text = ca._ANSI_RE.sub("", output)
         self.assertIn("ACCOUNT", text)
-        self.assertIn("Wes <wes@example.com>", text)
+        self.assertIn("ai-accounts <ai-accounts@example.com>", text)
 
     def test_usage_shows_only_active_profile(self) -> None:
         active = _oauth(access="at-a", refresh="rt-a")
