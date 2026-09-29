@@ -575,8 +575,11 @@ remain shared across all CLIs.
 `ai-accounts autoswitch setup` installs provider event hooks plus a low-frequency
 OS timer fallback. Re-run it after reinstalling the package so hooks point at
 the current Python environment.
-Telegram notifications from the macOS timer include its full launchd label,
-`com.ai_accounts.autoswitch`. The timer has no dedicated log file.
+Telegram notifications from timer runs include the scheduler and job label:
+`launchd: com.ai_accounts.autoswitch` on macOS,
+`systemd: com.ai_accounts.autoswitch.timer` or `cron: ai-accounts-autoswitch`
+on Linux, and `Task Scheduler: com.ai_accounts.autoswitch` on Windows.
+The timer has no dedicated log file.
 
 Status checks are read-only: `enabled` reads the shared config,
 `autoswitch_setup.is_installed()` checks both timer registration and relevant

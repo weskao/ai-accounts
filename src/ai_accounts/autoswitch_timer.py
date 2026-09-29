@@ -34,6 +34,7 @@ from . import ai_accounts
 from . import autoswitch_hooks
 from . import autoswitch as aw
 from . import i18n
+from . import host_identity
 from . import quota_reset
 from . import refresh_report
 
@@ -433,7 +434,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+def _scheduler_footer() -> str:
+    if u.IS_MACOS:
+        return host_identity.launchd_footer(LABEL)
+    if u.IS_WINDOWS:
+        return host_identity.scheduler_footer("Task Scheduler", LABEL)
+    if u.IS_LINUX and _systemd_timer_path().exists():
+        return host_identity.scheduler_footer("systemd", f"{LABEL}.timer")
+    if u.IS_LINUX:
+        return host_identity.scheduler_footer("cron", CRON_TAG.removeprefix("# "))
+    return ""
+
+
 if __name__ == "__main__":
-    if u.IS_MACOS and sys.argv[1:] == ["run"]:
-        os.environ["AI_ACCOUNTS_LAUNCHD_LABEL"] = LABEL
+    if sys.argv[1:] == ["run"]:
+        os.environ["AI_ACCOUNTS_SCHEDULER_FOOTER"] = _scheduler_footer()
     raise SystemExit(main())

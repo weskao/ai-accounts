@@ -205,8 +205,10 @@ def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
         u.log_red("Telegram notifications need telegram_bot_token and telegram_chat_id")
         return False
     text = "\n".join(part for part in (title, message) if part)
-    if label := os.environ.get("AI_ACCOUNTS_LAUNCHD_LABEL"):
-        text += f"\nlaunchd: {label}"
+    footer = os.environ.get("AI_ACCOUNTS_SCHEDULER_FOOTER")
+    if not footer and (label := os.environ.get("AI_ACCOUNTS_LAUNCHD_LABEL")):
+        footer = f"\nlaunchd: {label}"
+    text += footer or ""
     return telegram_kit.send_message(token, chat_id, text)
 
 

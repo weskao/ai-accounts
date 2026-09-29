@@ -115,6 +115,47 @@ class _SubprocessMixin:
         return calls
 
 
+class SchedulerFooterTests(_HomeMixin, unittest.TestCase):
+    def test_timer_footer_names_each_platform_scheduler(self) -> None:
+        timer_path = self.home / f"{at.LABEL}.timer"
+        cases = (
+            ("macos", False, f"\n\nlaunchd: {at.LABEL}"),
+            ("linux", True, f"\n\nsystemd: {at.LABEL}.timer"),
+            ("linux", False, "\n\ncron: ai-accounts-autoswitch"),
+            ("windows", False, f"\n\nTask Scheduler: {at.LABEL}"),
+        )
+        for platform, systemd, expected in cases:
+            with self.subTest(platform=platform, systemd=systemd):
+                if systemd:
+                    timer_path.touch()
+                else:
+                    timer_path.unlink(missing_ok=True)
+                with mock.patch.multiple(
+                    u,
+                    IS_MACOS=platform == "macos",
+                    IS_LINUX=platform == "linux",
+                    IS_WINDOWS=platform == "windows",
+                ), mock.patch.object(at, "_systemd_timer_path", return_value=timer_path):
+                    self.assertEqual(at._scheduler_footer(), expected)
+
+    def test_telegram_message_includes_timer_footer(self) -> None:
+        footer = f"\n\nsystemd: {at.LABEL}.timer"
+        cfg = {"telegram_bot_token": "test-token", "telegram_chat_id": "test-chat"}
+        with mock.patch.dict(os.environ, {"AI_ACCOUNTS_SCHEDULER_FOOTER": footer}), mock.patch.object(
+            aw.telegram_kit, "send_message", return_value=True
+        ) as send:
+            self.assertTrue(aw._telegram_notify("Title", "Body", cfg))
+        send.assert_called_once_with("test-token", "test-chat", f"Title\nBody{footer}")
+
+    def test_legacy_macos_label_still_works(self) -> None:
+        cfg = {"telegram_bot_token": "test-token", "telegram_chat_id": "test-chat"}
+        with mock.patch.dict(os.environ, {"AI_ACCOUNTS_LAUNCHD_LABEL": at.LABEL}, clear=True), mock.patch.object(
+            aw.telegram_kit, "send_message", return_value=True
+        ) as send:
+            self.assertTrue(aw._telegram_notify("Title", "Body", cfg))
+        send.assert_called_once_with("test-token", "test-chat", f"Title\nBody\nlaunchd: {at.LABEL}")
+
+
 class MacOSInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
     def test_install_writes_launchd_plist_with_label_and_interval(self) -> None:
         # Given: a forced macOS platform, a temp HOME, and a mocked launchctl
