@@ -90,6 +90,23 @@ def device_label() -> str:
     return f"{host_emoji(name)} {name} · {masked_device_code()}"
 
 
+def launchd_footer(label: str, *paths) -> str:
+    """Footer naming the launchd job and its logs; a directory shared by several
+    files is printed once ("logs: <dir>/" + "a.log · b.log"). Empty and duplicate
+    paths are dropped. Shell twin: notification_launchd_footer in
+    lib/notification-utils.sh — keep both in sync."""
+    groups: dict = {}
+    for path in map(Path, filter(None, paths)):
+        names = groups.setdefault(path.parent, [])
+        if path.name not in names:
+            names.append(path.name)
+    lines = [f"launchd: {label}"]
+    for directory, names in groups.items():
+        lines += ([f"log: {directory / names[0]}"] if len(names) == 1
+                  else [f"logs: {directory}/", " · ".join(names)])
+    return "".join(f"\n\n{line}" for line in lines)
+
+
 if __name__ == "__main__":
     # CLI entry point for the shell scripts (see notification_host_label in
     # lib/notification-utils.sh) so they never re-derive the name/emoji/id.
