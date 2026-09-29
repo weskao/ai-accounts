@@ -67,6 +67,16 @@ def _pin_wide_layout(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_tmux(monkeypatch):
+    """``telegram_kit`` appends a "Tmux: <session>" line to every Telegram
+    message when ``TMUX`` is set, so the payload tests fail for anyone running
+    pytest inside tmux. Same rule as the width pin above: ambient terminal
+    state must not decide a test's result."""
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_real_config(monkeypatch, tmp_path):
     """Point every test at a throwaway config file instead of the real
     ``~/.ai-accounts/config.json``.
