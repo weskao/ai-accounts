@@ -1,3 +1,9 @@
+## [0.21.1] - 2026-09-29
+
+### 🧪 Testing
+
+- Ignore tmux env so Telegram payload tests are hermetic
+- **codex:** Build shared auth payload once to avoid clock-tick flake
 ## [0.21.0] - 2026-09-29
 
 ### 🚀 Features
@@ -10,6 +16,10 @@
 
 - Include scheduler name in autoswitch notifications
 
+### 📚 Documentation
+
+- **changelog:** Release v0.21.0
+
 ### ⚙️ Miscellaneous Tasks
 
 - Replace personal identity with project name
@@ -19,6 +29,10 @@
 ### 🚀 Features
 
 - **menu:** [**breaking**] Replace r reset-all with d/D confirm-and-reset
+
+### 📚 Documentation
+
+- **changelog:** Release v0.20.0
 ## [0.19.1] - 2026-09-28
 
 ### 🐛 Bug Fixes
@@ -29,6 +43,10 @@
 - **test:** Stop the switch regression tests from touching the real store
 - **secrets:** Torn-reassembly check covers the whole secrets blob
 - **claude:** Don't crash rewrapping a bare profile in a read-only dir
+
+### 📚 Documentation
+
+- **changelog:** Release v0.19.1
 ## [0.19.0] - 2026-09-28
 
 ### 🚀 Features
@@ -50,6 +68,7 @@
 
 - **readme:** Explain where profile secrets live
 - **help:** Stop claiming saved profiles unconditionally hold tokens
+- **changelog:** Release v0.19.0
 
 ### 🧪 Testing
 
