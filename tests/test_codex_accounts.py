@@ -1320,10 +1320,14 @@ class UsageRequestTests(_CodexHomeMixin):
 
     def test_list_marks_active_and_fetches_each_profile_once(self):
         self.write_auth(_auth_payload("acct-a", "a@x.com", refresh_token="rt-stale"))
-        active_profile = self.write_profile("active", _auth_payload("acct-a", "a@x.com", refresh_token="rt-live"))
-        duplicate_profile = self.write_profile("duplicate", _auth_payload("acct-a", "a@x.com", refresh_token="rt-dupe"))
+        # One payload for both copies: its JWT embeds time.time(), so two calls
+        # can straddle a second boundary and differ.
+        live_auth = _auth_payload("acct-a", "a@x.com", refresh_token="rt-live")
+        active_profile = self.write_profile("active", live_auth)
+        dupe_auth = _auth_payload("acct-a", "a@x.com", refresh_token="rt-dupe")
+        duplicate_profile = self.write_profile("duplicate", dupe_auth)
         self.write_profile("other", _auth_payload("acct-b", "b@x.com", refresh_token="rt-other"))
-        live_text = json.dumps(_auth_payload("acct-a", "a@x.com", refresh_token="rt-live"))
+        live_text = json.dumps(live_auth)
 
         with mock.patch.object(ca, "_read_keychain_auth", return_value=live_text), \
                 mock.patch.object(
@@ -1344,9 +1348,7 @@ class UsageRequestTests(_CodexHomeMixin):
         self.assertEqual(text.count("ACTIVE"), 1)
         self.assertEqual(text.count("SAME ACCT"), 1)
         self.assertEqual(self.saved(active_profile), json.loads(live_text))
-        self.assertEqual(
-            self.saved(duplicate_profile), _auth_payload("acct-a", "a@x.com", refresh_token="rt-dupe")
-        )
+        self.assertEqual(self.saved(duplicate_profile), dupe_auth)
 
     def test_usage_shows_only_active_profile(self):
         self.write_auth(_auth_payload("acct-a", "a@x.com", refresh_token="rt-a"))
