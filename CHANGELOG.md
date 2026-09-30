@@ -1,8 +1,22 @@
+## [0.22.0] - 2026-09-30
+
+### 🚀 Features
+
+- Add version command support
+
+### ⚙️ Miscellaneous Tasks
+
+- Ignore .codegraph/ directory
 ## [0.21.2] - 2026-09-29
 
 ### 🐛 Bug Fixes
 
 - **ai-accounts:** Restart active systemd timer
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Bump version to 0.21.2
+- **release:** Include uv.lock in 0.21.2
 ## [0.21.1] - 2026-09-29
 
 ### 🧪 Testing
