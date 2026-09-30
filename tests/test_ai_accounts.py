@@ -287,6 +287,17 @@ class AiAccountsTest(unittest.TestCase):
         self.assertIn("USAGE", buf.getvalue())
         run.assert_not_called()
 
+    def test_version_aliases_print_the_current_package_version_without_forwarding(self) -> None:
+        for argv in (["--version"], ["version"]):
+            with self.subTest(argv=argv), mock.patch.object(aa.subprocess, "run") as run:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    rc = aa.main(argv)
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(output.getvalue(), f"ai-accounts {aa.package_version()}\n")
+            run.assert_not_called()
+
     def test_forward_passes_command_and_args_to_every_provider(self) -> None:
         calls = []
 

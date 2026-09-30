@@ -512,6 +512,7 @@ MESSAGES: dict[str, dict[str, str]] = {
                                       預設印出成功/失敗表格，--json 則印出單一
                                       JSON 文件
   ai-accounts -h | --help | help     顯示這份說明
+  ai-accounts --version | version    顯示目前的 ai-accounts 版本
 
 每個指令都會轉發給 codex-accounts、claude-accounts、agy-accounts、grok-accounts、
 vibe-accounts 與 copilot-accounts。

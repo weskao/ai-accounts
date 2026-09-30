@@ -94,6 +94,7 @@ USAGE
                                       validity/expiry, and auto-switch timer status;
                                       pass/fail table by default, one JSON document with --json
   ai-accounts -h | --help | help     Show this help
+  ai-accounts --version | version    Show the current ai-accounts version
 
 Each command is forwarded to codex-accounts, claude-accounts, agy-accounts, grok-accounts, vibe-accounts, and copilot-accounts.
 `list` runs them concurrently and prints each table as soon as it finishes
@@ -276,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(_present.format_help(i18n.t("help.ai_accounts", default=HELP)))
         return 0
-    if argv[0] == "--version":
+    if argv[0] in ("--version", "version"):
         print(f"ai-accounts {package_version()}")
         return 0
 

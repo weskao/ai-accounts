@@ -92,6 +92,7 @@ the exit code never changes. Turn it off with
 | Command | Purpose |
 | --- | --- |
 | `ai-accounts` | Run one operation across every provider |
+| `ai-accounts --version` / `ai-accounts version` | Print the current ai-accounts version |
 | `codex-accounts` | Manage Codex CLI profiles and ChatGPT OAuth usage |
 | `claude-accounts` | Manage Claude Code profiles and quota usage |
 | `agy-accounts` | Manage Antigravity profiles and quota usage |
@@ -114,6 +115,7 @@ ai-accounts sync                              # Sync active auth back to matchin
 ai-accounts login-switch <profile_name>       # Log in again and save each login under this name
 ai-accounts doctor                            # Run offline health checks for every provider
 ai-accounts help                              # Show available commands
+ai-accounts --version                         # Print the current ai-accounts version
 ```
 
 Replace `<profile_name>` with a name you choose for the saved profile.
