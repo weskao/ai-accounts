@@ -108,6 +108,9 @@ USAGE
                                      by their last reading, and a candidate with no
                                      reading at all needs "agy_blind_switch": true)
   agy-accounts login-switch <name>   Antigravity Google login + save as <name>
+  agy-accounts api-schema            Print the field names and types of agy's quota and
+                                     user-status replies as JSON (no values) — for
+                                     watching agy's undocumented API for changes
   agy-accounts config                Interactive config menu shared by every ai-accounts CLI
                                      (works even where the credential store is
                                      unreachable)
@@ -2040,6 +2043,34 @@ def _render_autoswitch(
             )
 
 
+def cmd_api_schema() -> int:
+    """Field paths and JSON types of the live session's two agy RPC replies.
+
+    agy's local API is undocumented, so this is the closest thing to a spec a
+    watcher can diff day to day. Values are never printed: no email, name or
+    quota number leaves this process. Reads the live keyring session only —
+    no profile is ever made live for it."""
+    payloads, error = gemini_usage.fetch_payloads()
+    result: JsonDict = {
+        "agy_version": gemini_usage.agy_version(),
+        "buckets": [],
+        "error": error,
+        "methods": {},
+        "parsed": {},
+        "watched": {m: list(f) for m, f in gemini_usage.WATCHED_FIELDS.items()},
+    }
+    if payloads is not None:
+        summary, status = payloads
+        result["methods"] = {
+            gemini_usage.SUMMARY_METHOD: gemini_usage.payload_schema(summary),
+            gemini_usage.STATUS_METHOD: gemini_usage.payload_schema(status),
+        }
+        result["parsed"] = gemini_usage.parsed_fields(summary, status)
+        result["buckets"] = gemini_usage.bucket_catalog(summary)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if error is None else 1
+
+
 # ── entry point ───────────────────────────────────────────────────────────
 
 
@@ -2092,6 +2123,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_sync()
     if command == "autoswitch":
         return cmd_autoswitch()
+    if command == "api-schema":
+        return cmd_api_schema()
     if command == "login-switch":
         if not rest:
             log_red("Usage: agy-accounts login-switch <profile_name>")

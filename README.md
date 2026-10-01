@@ -166,7 +166,7 @@ differs per tool:
 | Command | Worth knowing |
 | --- | --- |
 | `claude-accounts` | Same workflow as Codex; `login-switch` runs `claude auth login` |
-| `agy-accounts` | `list` is slow (one account at a time) — see [Fast Antigravity lists](#fast-antigravity-lists); `usage` checks only the active account |
+| `agy-accounts` | `list` is slow (one account at a time) — see [Fast Antigravity lists](#fast-antigravity-lists); `usage` checks only the active account; `api-schema` prints agy's reply fields for [change watching](#watching-agys-api-for-changes) |
 | `grok-accounts` | `list` shows SuperGrok plan and weekly usage; no auto-switch |
 | `vibe-accounts` | API-key profiles with no quota data; `refresh` is not needed for static keys; no auto-switch |
 | `copilot-accounts` | `list` shows the monthly AI-credit balance; `refresh` only checks the token is still valid; no auto-switch yet |
@@ -384,6 +384,37 @@ To query only the selected Antigravity account, use:
 ```sh
 agy-accounts usage
 ```
+
+### Watching agy's API for changes
+
+agy's local API has no public spec. `api-schema` prints the closest thing: the
+field names and JSON types of the two replies quota reading depends on
+(`RetrieveUserQuotaSummary` and `GetUserStatus`), as one JSON object. It never
+prints a value, so no email, name, or quota number appears.
+
+```sh
+agy-accounts api-schema
+```
+
+The object holds:
+
+| Key | Meaning |
+| --- | --- |
+| `agy_version` | Output of `agy --version` |
+| `methods` | Per reply, every field path mapped to its JSON types. `[]` marks list items. A map keyed by non-identifiers, such as `supportedMimeTypes`, collapses to `{*}` |
+| `watched` | The field paths the quota and plan parsers read |
+| `parsed` | Whether each parsed value (weekly and 5-hour windows, email, plan) was found |
+| `buckets` | Each quota bucket as `group · bucketId · window`, without numbers |
+| `error` | `null`, or why agy could not be read (the exit status is then 1) |
+
+It reads only the live session, so no saved profile is ever made live for it.
+agy omits fields that hold a default value, so a spent bucket's
+`remainingFraction` can be missing without any API change.
+
+agy can answer `GetUserStatus` before its keyring session has loaded. That
+early reply carries only an error message and no email or tier. Quota reading
+ignores it and keeps polling, so the PLAN column no longer goes blank for a
+healthy account.
 
 ### Fast Antigravity lists
 

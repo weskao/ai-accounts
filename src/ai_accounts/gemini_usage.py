@@ -253,6 +253,29 @@ def _stop_spawned(process: subprocess.Popen) -> None:
         raise
 
 
+SUMMARY_METHOD = "RetrieveUserQuotaSummary"
+STATUS_METHOD = "GetUserStatus"
+
+# The reply fields the parsers above read. `agy-accounts api-schema` reports
+# them so a watcher can tell "agy renamed a field we depend on" apart from
+# churn in the rest of the ~50 KB status payload.
+WATCHED_FIELDS: dict[str, tuple[str, ...]] = {
+    SUMMARY_METHOD: (
+        "response.groups[].displayName",
+        "response.groups[].buckets[].bucketId",
+        "response.groups[].buckets[].displayName",
+        "response.groups[].buckets[].remainingFraction",
+        "response.groups[].buckets[].resetTime",
+    ),
+    STATUS_METHOD: (
+        "userStatus.email",
+        "userStatus.userTier.id",
+        "userStatus.userTier.name",
+        "userStatus.planStatus.planInfo.planName",
+    ),
+}
+
+
 def _status_ready(status: JsonDict | None) -> bool:
     """Whether a GetUserStatus reply describes a logged-in session.
 
@@ -264,7 +287,7 @@ def _status_ready(status: JsonDict | None) -> bool:
     return isinstance(user, dict) and bool(user.get("email"))
 
 
-def fetch_usage_from_pid(pid: int, csrf_token: str) -> UsageSnapshot | None:
+def _payloads_from_pid(pid: int, csrf_token: str) -> tuple[JsonDict, JsonDict] | None:
     summary = status = None
     for port in _ports(pid):
         context = _tls_context(port)
@@ -273,11 +296,11 @@ def fetch_usage_from_pid(pid: int, csrf_token: str) -> UsageSnapshot | None:
         # Both read the same PID's session; no shared keyring writes here.
         with ThreadPoolExecutor(max_workers=2) as pool:
             summary_request = (
-                pool.submit(_post, port, "RetrieveUserQuotaSummary", context, csrf_token)
+                pool.submit(_post, port, SUMMARY_METHOD, context, csrf_token)
                 if not summary else None
             )
             status_request = (
-                pool.submit(_post, port, "GetUserStatus", context, csrf_token)
+                pool.submit(_post, port, STATUS_METHOD, context, csrf_token)
                 if not status else None
             )
             if summary_request is not None:
@@ -290,6 +313,15 @@ def fetch_usage_from_pid(pid: int, csrf_token: str) -> UsageSnapshot | None:
             break
     if summary is None or status is None:
         return None
+    return summary, status
+
+
+def fetch_usage_from_pid(pid: int, csrf_token: str) -> UsageSnapshot | None:
+    payloads = _payloads_from_pid(pid, csrf_token)
+    return None if payloads is None else _snapshot(*payloads)
+
+
+def _snapshot(summary: JsonDict, status: JsonDict) -> UsageSnapshot:
     gemini_weekly, gemini_session, other_weekly, other_session = _parse_summary(summary)
     email, plan = _identity(status)
     return UsageSnapshot(
@@ -304,21 +336,21 @@ def fetch_usage_from_pid(pid: int, csrf_token: str) -> UsageSnapshot | None:
     )
 
 
-def fetch_usage(timeout: float = 15) -> UsageSnapshot:
+def _agy_binary() -> str | None:
+    return os.environ.get("ANTIGRAVITY_CLI_PATH") or shutil.which("agy")
+
+
+def _run_agy(timeout: float, probe):
+    """Start a throwaway agy on the live keyring session and poll
+    ``probe(pid, csrf_token)`` until it returns something.
+
+    ``(result or None, terminal output, None)``, or ``(None, b"", error)`` when
+    agy cannot be started here. The keyring is only read, by agy itself."""
     if os.name == "nt":
-        return UsageSnapshot(
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "agy usage inspection requires macOS or Linux",
-        )
-    binary = os.environ.get("ANTIGRAVITY_CLI_PATH") or shutil.which("agy")
+        return None, b"", "agy usage inspection requires macOS or Linux"
+    binary = _agy_binary()
     if not binary:
-        return UsageSnapshot(None, None, None, None, None, None, None, "agy not found")
+        return None, b"", "agy not found"
     master, slave = _open_pty()
     csrf_token = secrets.token_hex(16)
     process = subprocess.Popen(
@@ -334,11 +366,11 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
     drain = threading.Thread(target=_drain, args=(master, output), daemon=True)
     drain.start()
     deadline = time.monotonic() + timeout
-    usage = None
+    result = None
     try:
         while time.monotonic() < deadline and process.poll() is None:
-            usage = fetch_usage_from_pid(process.pid, csrf_token)
-            if usage is not None:
+            result = probe(process.pid, csrf_token)
+            if result is not None:
                 break
             # ponytail: poll cost is ~0 (lsof + localhost conn-refused), so a
             # tight interval only trims readiness-detection latency; the ~3s
@@ -349,16 +381,114 @@ def fetch_usage(timeout: float = 15) -> UsageSnapshot:
             _stop_spawned(process)
         finally:
             os.close(master)
+    return result, bytes(output), None
 
-    terminal_email = _terminal_email(bytes(output))
-    if usage is None:
-        if b"Select login method:" in output:
-            return UsageSnapshot(
-                None, None, None, None, None, None, None, "re-login required"
-            )
-        return UsageSnapshot(
-            None, None, None, None, terminal_email, None, None, "agy unavailable"
+
+def _spawn_error(output: bytes) -> str:
+    return "re-login required" if b"Select login method:" in output else "agy unavailable"
+
+
+def fetch_payloads(timeout: float = 15) -> tuple[tuple[JsonDict, JsonDict] | None, str | None]:
+    """The live session's raw ``(quota summary, user status)`` replies, or ``(None, error)``."""
+    payloads, output, error = _run_agy(timeout, _payloads_from_pid)
+    if error is not None:
+        return None, error
+    if payloads is None:
+        return None, _spawn_error(output)
+    return payloads, None
+
+
+def agy_version() -> str | None:
+    binary = _agy_binary()
+    if not binary:
+        return None
+    try:
+        result = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=15, check=False
         )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() or None
+
+
+_JSON_TYPES = {
+    dict: "object",
+    list: "array",
+    str: "string",
+    bool: "boolean",
+    int: "number",
+    float: "number",
+    type(None): "null",
+}
+
+
+def payload_schema(payload: JsonValue) -> dict[str, list[str]]:
+    """Every field path of *payload* with its JSON type(s); values are dropped.
+
+    ``[]`` marks list items (all items merged). A dict with any key that is not
+    an identifier is a proto map, not a message — ``supportedMimeTypes`` is
+    keyed by mime type — so its keys collapse to ``{*}`` and a new mime type
+    does not read as an API change."""
+    out: dict[str, set[str]] = {}
+
+    def walk(value: JsonValue, path: str) -> None:
+        out.setdefault(path or "$", set()).add(_JSON_TYPES.get(type(value), "unknown"))
+        if isinstance(value, dict):
+            is_map = any(not key.isidentifier() for key in value)
+            for key, sub in value.items():
+                name = "{*}" if is_map else key
+                walk(sub, f"{path}.{name}" if path else name)
+        elif isinstance(value, list):
+            for sub in value:
+                walk(sub, f"{path}[]")
+
+    walk(payload, "")
+    return {path: sorted(kinds) for path, kinds in sorted(out.items())}
+
+
+def bucket_catalog(summary: JsonDict) -> list[str]:
+    """``"<group> · <bucketId> · <window>"`` per quota bucket — labels only, no numbers.
+
+    The bucket set is data, not schema: a returning 5-hour bucket or a renamed
+    id changes no field path, yet `_window` files buckets by their id/name."""
+    root = summary.get("response") or summary.get("summary") or summary
+    groups = root.get("groups") if isinstance(root, dict) else None
+    rows = []
+    for group in groups if isinstance(groups, list) else []:
+        if not isinstance(group, dict):
+            continue
+        buckets = group.get("buckets")
+        for bucket in buckets if isinstance(buckets, list) else []:
+            if isinstance(bucket, dict):
+                rows.append(
+                    f"{group.get('displayName', '?')} · {bucket.get('bucketId', '?')} · {bucket.get('window', '?')}"
+                )
+    return sorted(rows)
+
+
+def parsed_fields(summary: JsonDict, status: JsonDict) -> dict[str, bool]:
+    """Which values the parsers above still extract — the parser-health half of
+    `agy-accounts api-schema`."""
+    snapshot = _snapshot(summary, status)
+    return {
+        "gemini_weekly": snapshot.gemini_weekly is not None,
+        "gemini_session": snapshot.gemini_session is not None,
+        "other_weekly": snapshot.other_weekly is not None,
+        "other_session": snapshot.other_session is not None,
+        "email": snapshot.email is not None,
+        "plan": snapshot.plan is not None,
+    }
+
+
+def fetch_usage(timeout: float = 15) -> UsageSnapshot:
+    usage, output, error = _run_agy(timeout, fetch_usage_from_pid)
+    if error is not None:
+        return UsageSnapshot(None, None, None, None, None, None, None, error)
+    terminal_email = _terminal_email(output)
+    if usage is None:
+        error = _spawn_error(output)
+        email = terminal_email if error == "agy unavailable" else None
+        return UsageSnapshot(None, None, None, None, email, None, None, error)
     if usage.email is None and terminal_email:
         return UsageSnapshot(
             usage.gemini_weekly,

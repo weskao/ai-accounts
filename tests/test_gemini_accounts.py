@@ -354,6 +354,28 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(usage.plan, "Free")
         self.assertEqual(usage.email, "a@x.com")
 
+    def test_payload_schema_keeps_paths_and_types_but_no_values(self) -> None:
+        payload = {
+            "userStatus": {
+                "email": "user@example.com",
+                "tier": {"id": "free-tier", "level": 2, "paid": False},
+                "configs": [
+                    {"label": "A", "mime": {"text/plain": True, "image/png": True}},
+                    {"label": None},
+                ],
+            }
+        }
+        schema = gu.payload_schema(payload)
+        self.assertEqual(schema["userStatus.email"], ["string"])
+        self.assertEqual(schema["userStatus.tier.level"], ["number"])
+        self.assertEqual(schema["userStatus.tier.paid"], ["boolean"])
+        self.assertEqual(schema["userStatus.configs"], ["array"])
+        self.assertEqual(schema["userStatus.configs[].label"], ["null", "string"])
+        # A map keyed by mime types collapses: a new mime type is data, not API.
+        self.assertEqual(schema["userStatus.configs[].mime.{*}"], ["boolean"])
+        self.assertNotIn("userStatus.configs[].mime.text/plain", schema)
+        self.assertNotIn("user@example.com", json.dumps(schema))
+
     def test_ports_parse_lsof_listener_rows(self) -> None:
         output = (
             "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
@@ -553,6 +575,44 @@ class UsageTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 gu.fetch_usage(timeout=5)
         process.terminate.assert_called_once()
+
+    def test_api_schema_prints_types_only_and_flags_parser_health(self) -> None:
+        summary = {"response": {"groups": [{"displayName": "Gemini", "buckets": [
+            {"bucketId": "weekly", "remainingFraction": 0.5, "resetTime": "2030-01-01T00:00:00Z"}
+        ]}]}}
+        status = {"userStatus": {"email": "user@example.com", "userTier": {"id": "free-tier"}}}
+        out = io.StringIO()
+        with (
+            mock.patch.object(gu, "fetch_payloads", return_value=((summary, status), None)),
+            mock.patch.object(gu, "agy_version", return_value="9.9.9"),
+            redirect_stdout(out),
+        ):
+            self.assertEqual(ga.cmd_api_schema(), 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["agy_version"], "9.9.9")
+        self.assertIsNone(result["error"])
+        self.assertEqual(
+            result["methods"]["GetUserStatus"]["userStatus.email"], ["string"]
+        )
+        self.assertTrue(result["parsed"]["plan"])
+        self.assertTrue(result["parsed"]["gemini_weekly"])
+        self.assertFalse(result["parsed"]["other_weekly"])
+        self.assertIn("userStatus.email", result["watched"]["GetUserStatus"])
+        self.assertEqual(result["buckets"], ["Gemini · weekly · ?"])
+        self.assertNotIn("user@example.com", out.getvalue())
+        self.assertNotIn("0.5", out.getvalue())
+
+    def test_api_schema_reports_the_agy_error_and_fails(self) -> None:
+        out = io.StringIO()
+        with (
+            mock.patch.object(gu, "fetch_payloads", return_value=(None, "re-login required")),
+            mock.patch.object(gu, "agy_version", return_value="9.9.9"),
+            redirect_stdout(out),
+        ):
+            self.assertEqual(ga.cmd_api_schema(), 1)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["error"], "re-login required")
+        self.assertEqual(result["methods"], {})
 
     def test_relogin_error_has_an_actionable_label(self) -> None:
         snapshot = _usage(error="re-login required")

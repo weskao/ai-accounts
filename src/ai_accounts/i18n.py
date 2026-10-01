@@ -640,6 +640,8 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
                                      實際量測候選帳號；否則依上次讀到的配額排序，
                                      完全沒有讀數的候選需要 "agy_blind_switch": true）
   agy-accounts login-switch <name>   Antigravity Google 登入並存成 <name>
+  agy-accounts api-schema            以 JSON 印出 agy 配額與使用者狀態回應的欄位名稱與型別
+                                     （不含任何值）— 用來監看 agy 未公開 API 的變動
   agy-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
                                      （即使憑證儲存區無法使用也能運作）
   agy-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
