@@ -515,6 +515,27 @@ def _active_profile(active_text: str | None = None) -> Path | None:
     return identity_matches[0] if len(identity_matches) == 1 else None
 
 
+_SLOT_TAKEN_NOTE = (
+    "another agy session rewrote the keyring in the meantime, so its token was not "
+    "folded back into the profile."
+)
+
+
+def _fold_back_text(profile_auth: JsonDict, live_text: str | None) -> str | None:
+    """*live_text* if the keyring still carries *profile_auth*'s refresh token, else None.
+
+    The keyring slot is shared: a running `agy` session or the IDE can rewrite
+    it between our probe and the read-back. Google never rotates a refresh
+    token on the refresh grant, so a different one means the blob is another
+    session's — folding it back hands this profile another account's tokens
+    (five of six saved profiles ended up on the wrong Google account that way)."""
+    if live_text is None:
+        return None
+    expected = _string(profile_auth.get("refresh_token"))
+    live = _string(json.loads(live_text).get("refresh_token"))
+    return live_text if expected and live == expected else None
+
+
 def _copy_active_auth_to(dest: Path) -> None:
     """Copy the active Antigravity auth to dest. Refuses to write when dest already
     holds a DIFFERENT account — fold-back/sync callers only ever sync the same
@@ -529,6 +550,16 @@ def _copy_active_auth_to(dest: Path) -> None:
             log_yellow(
                 f"⚠️  Not syncing active auth into {dest.name}: it belongs to a different account."
             )
+            return
+        # agy keyring blobs carry no id_token/email, so identity can't be
+        # compared; the refresh-token fingerprint is then the only tie to dest.
+        dest_token = _token_key_from_path(dest)
+        if (
+            (dest_key is None or text_key is None)
+            and dest_token is not None
+            and dest_token != _token_key_from_auth(json.loads(text))
+        ):
+            log_yellow(f"⚠️  Not syncing active auth into {dest.name}: {_SLOT_TAKEN_NOTE}")
             return
     active_auth = json.loads(text)
     if dest.is_file():
@@ -1073,7 +1104,9 @@ def cmd_list(
                             gemini_usage.fetch_usage(timeout=8), claims
                         )
                         if usage.error is None:
-                            refreshed_text = _read_active_auth_text()
+                            refreshed_text = _fold_back_text(
+                                profile_auth, _read_active_auth_text()
+                            )
                             fetched[profile_text] = usage, refreshed_text
                     # Keep autoswitch readings for aliases too, without another
                     # agy launch or writing their stale tokens into the keyring.
@@ -1294,7 +1327,13 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
         log_red(f"❌ Could not activate agy profile: {name}")
         return 1, "keyring"
     usage = _validated_usage(gemini_usage.fetch_usage(), _read_claims(profile_file))
-    refreshed_text = _read_active_auth_text() if usage.error is None else None
+    refreshed_text = (
+        _fold_back_text(profile_auth, _read_active_auth_text())
+        if usage.error is None
+        else None
+    )
+    if usage.error is None and refreshed_text is None:
+        log_yellow(f"⚠️  {name}: {_SLOT_TAKEN_NOTE}")
     if refreshed_text is not None:
         saved = {**profile_auth, **json.loads(refreshed_text)}
         if usage.email:
@@ -1387,9 +1426,12 @@ def _refresh_active_auth() -> int:
             _restore_cli_auth(active_text)
         log_red(f"❌ agy refresh failed: {usage.error}")
         return 1
-    refreshed_text = _read_active_auth_text()
+    refreshed_text = _fold_back_text(json.loads(active_text), _read_active_auth_text())
 
-    if profile_path is not None and refreshed_text is not None:
+    if refreshed_text is None:
+        log_yellow(f"⚠️  {_SLOT_TAKEN_NOTE}")
+        details = ()
+    elif profile_path is not None:
         saved = {**_profile_base(profile_path), **json.loads(refreshed_text)}
         if usage.email:
             saved["email"] = usage.email

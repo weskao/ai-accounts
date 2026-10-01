@@ -397,6 +397,14 @@ agy-accounts list --refresh  # populate or update the saved readings
 agy-accounts list            # current account live; other accounts from cache
 ```
 
+A live probe makes each profile the keyring session for a moment and, when agy
+rotated its access token, folds the fresh token back into the profile. That
+fold-back only happens while the keyring still holds the profile's own refresh
+token: a running `agy` session or the Antigravity IDE can rewrite the shared
+slot in between, and saving that blob would hand the profile another account's
+tokens (the row then shows `RELOGIN` until fixed). `refresh`, `switch`, `sync`
+and `login-switch` apply the same check.
+
 Cached readings can be stale. The list labels this mode and repeats the refresh
 command; turn the setting off when every listing must fetch live quota:
 

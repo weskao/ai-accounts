@@ -644,12 +644,47 @@ class ProfileCommandTests(_HomeMixin):
     def test_switch_folds_rotated_outgoing_token_into_profile(self) -> None:
         self.write_profile("old", _creds("sub-o", "o@x.com", refresh_token="rt-stale"))
         self.write_profile("new", _creds("sub-n", "n@x.com", refresh_token="rt-new"))
-        self.set_active(_creds("sub-o", "o@x.com", refresh_token="rt-rotated"))
+        self.set_active(
+            _creds("sub-o", "o@x.com", refresh_token="rt-stale", access_token="at-rotated")
+        )
         self.mark_current("old")
         self.quiet(ga.cmd_switch, "new")
         old = ga._load_profile(self.home / "accounts" / "old.json")
-        self.assertEqual(old["refresh_token"], "rt-rotated")
+        self.assertEqual(old["access_token"], "at-rotated")
         self.assertEqual(old["id_token"], _creds("sub-o", "o@x.com")["id_token"])
+
+    def test_list_never_folds_a_foreign_slot_token_into_the_probed_profile(self) -> None:
+        profile = self.write_profile("work", _creds("sub", "a@x.com", refresh_token="rt-work"))
+
+        def intrude(**_: object) -> gu.UsageSnapshot:
+            self.active = _creds("sub-x", "x@x.com", refresh_token="rt-intruder")
+            return _usage()
+
+        with (
+            mock.patch.object(ga.autoswitch, "config_flag", return_value=False),
+            mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=intrude),
+        ):
+            self.quiet(ga.cmd_list)
+        self.assertEqual(ga._load_profile(profile)["refresh_token"], "rt-work")
+
+    def test_switch_refuses_an_unidentified_foreign_token_for_the_marked_profile(self) -> None:
+        # Real agy keyring blobs carry no id_token/email, so identity cannot be
+        # compared; the refresh-token fingerprint is the only tie to the profile.
+        def agy(refresh_token: str) -> ga.JsonDict:
+            return {
+                "access_token": "at",
+                "refresh_token": refresh_token,
+                "token_type": "Bearer",
+                "expiry_date": int(time.time() * 1000) + 3600 * 1000,
+                "auth_method": "consumer",
+            }
+
+        old = self.write_profile("old", {**agy("rt-old"), "email": "o@x.com"})
+        self.write_profile("new", {**agy("rt-new"), "email": "n@x.com"})
+        self.set_active(agy("rt-intruder"))
+        self.mark_current("old")
+        self.quiet(ga.cmd_switch, "new")
+        self.assertEqual(ga._load_profile(old)["refresh_token"], "rt-old")
 
     def test_list_matches_codex_claim_columns_and_shows_quota_columns(self) -> None:
         auth = _creds("sub-a", "a@x.com", refresh_token="rt-a")
@@ -766,7 +801,10 @@ class ProfileCommandTests(_HomeMixin):
 
         def fetch(*, timeout):
             if self.active["refresh_token"] == "rt-a":
-                self.set_active(_creds("sub-a", "a@x.com", refresh_token="rt-rotated"))
+                # agy rotates the access token on refresh; the refresh token stays.
+                self.set_active(
+                    _creds("sub-a", "a@x.com", refresh_token="rt-a", access_token="at-rotated")
+                )
                 return _usage()
             return _usage("c@x.com")
 
@@ -786,8 +824,8 @@ class ProfileCommandTests(_HomeMixin):
         self.assertEqual(rows[0]["gemini_weekly"], rows[1]["gemini_weekly"])
         self.assertIn("c@x.com", rows[2]["account"])
         for path in (first, alias):
-            self.assertEqual(ga._load_profile(path)["refresh_token"], "rt-rotated")
-        self.assertEqual(self.active["refresh_token"], "rt-rotated")
+            self.assertEqual(ga._load_profile(path)["access_token"], "at-rotated")
+        self.assertEqual(self.active["access_token"], "at-rotated")
 
     def test_list_does_not_reuse_failed_snapshot(self) -> None:
         original = _creds("sub-a", "a@x.com", refresh_token="rt-a")
@@ -937,12 +975,12 @@ class ProfileCommandTests(_HomeMixin):
         profile = self.write_profile("work", saved)
         active = saved.copy()
         active.pop("id_token")
-        active["refresh_token"] = "rt-live"
+        active["access_token"] = "at-live"
         self.set_active(active)
         self.mark_current("work")
         self.assertEqual(self.quiet(ga.cmd_sync), 0)
         merged = ga._load_profile(profile)
-        self.assertEqual(merged["refresh_token"], "rt-live")
+        self.assertEqual(merged["access_token"], "at-live")
         self.assertEqual(merged["id_token"], saved["id_token"])
 
     def test_save_no_args_derives_name_from_email_with_one_fetch(self) -> None:
@@ -1210,6 +1248,21 @@ class LoginAndRefreshTests(_HomeMixin):
         with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=refresh):
             self.assertEqual(self.quiet(ga.cmd_refresh, "work"), 0)
         self.assertEqual(ga._load_profile(profile)["access_token"], "rotated")
+
+    def test_refresh_profile_ignores_a_foreign_token_left_in_the_slot(self) -> None:
+        # Another agy session rewrote the shared keyring slot between our probe
+        # and the read-back. Folding that blob back would hand "work" another
+        # account's tokens — the shuffle that put saved profiles on the wrong
+        # Google account.
+        profile = self.write_profile("work", _creds("sub", "a@x.com", refresh_token="rt-work"))
+
+        def intrude(**_: object) -> gu.UsageSnapshot:
+            self.active = _creds("sub-x", "x@x.com", refresh_token="rt-intruder")
+            return _usage()
+
+        with mock.patch.object(ga.gemini_usage, "fetch_usage", side_effect=intrude):
+            self.quiet(ga.cmd_refresh, "work")
+        self.assertEqual(ga._load_profile(profile)["refresh_token"], "rt-work")
 
     def test_refresh_failure_restores_original_session(self) -> None:
         old = _creds("sub-old", "old@x.com", refresh_token="rt-old")
