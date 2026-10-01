@@ -253,6 +253,17 @@ def _stop_spawned(process: subprocess.Popen) -> None:
         raise
 
 
+def _status_ready(status: JsonDict | None) -> bool:
+    """Whether a GetUserStatus reply describes a logged-in session.
+
+    agy can answer before it has loaded the keyring session: verified live on
+    1.2.14 (2026-10-02), the first reply was only
+    ``cascadeModelConfigData.errorMessage`` ("You are not logged into
+    Antigravity"), with no email or tier. Taking it blanks the PLAN column."""
+    user = status.get("userStatus") if isinstance(status, dict) else None
+    return isinstance(user, dict) and bool(user.get("email"))
+
+
 def fetch_usage_from_pid(pid: int, csrf_token: str) -> UsageSnapshot | None:
     summary = status = None
     for port in _ports(pid):
@@ -273,6 +284,8 @@ def fetch_usage_from_pid(pid: int, csrf_token: str) -> UsageSnapshot | None:
                 summary = summary_request.result()
             if status_request is not None:
                 status = status_request.result()
+                if not _status_ready(status):
+                    status = None
         if summary is not None and status is not None:
             break
     if summary is None or status is None:

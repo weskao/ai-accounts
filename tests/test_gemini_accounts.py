@@ -332,6 +332,28 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(usage.email, "b@x.com")
         self.assertEqual(rpc.call_count, 3)
 
+    def test_rpc_ignores_a_status_reply_sent_before_agy_is_logged_in(self) -> None:
+        # Live agy 1.2.14: the first GetUserStatus can arrive before the keyring
+        # session is loaded, carrying only an error and no email or tier. Keeping
+        # it blanks the PLAN column for a perfectly healthy account.
+        early = {"userStatus": {"cascadeModelConfigData": {
+            "errorMessage": "error getting token source: You are not logged into Antigravity."
+        }}}
+
+        def post(port, method, context, csrf_token):
+            if method == "RetrieveUserQuotaSummary":
+                return {"groups": []}
+            return early if port == 100 else {
+                "userStatus": {"email": "a@x.com", "userTier": {"id": "free-tier"}}
+            }
+
+        with mock.patch.object(gu, "_ports", return_value=[100, 200]), mock.patch.object(
+            gu, "_tls_context", return_value=mock.sentinel.context
+        ), mock.patch.object(gu, "_post", side_effect=post):
+            usage = gu.fetch_usage_from_pid(123, "tok")
+        self.assertEqual(usage.plan, "Free")
+        self.assertEqual(usage.email, "a@x.com")
+
     def test_ports_parse_lsof_listener_rows(self) -> None:
         output = (
             "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
