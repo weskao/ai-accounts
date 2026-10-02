@@ -231,7 +231,8 @@ class CopilotAccountsTests(unittest.TestCase):
         self.assertEqual(document["authTokens"][f"{_HOST}:testuser"], {"token": _TOKEN})
         # the old account stays logged in, so Copilot can still switch back
         self.assertEqual(document["authTokens"][f"{_HOST}:olduser"], {"token": "ghu_old_token"})
-        self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
 
     def test_switch_keeps_a_plaintext_token_in_step_with_the_keyring(self) -> None:
         # Both stores hold a token: whichever one Copilot reads first must name
