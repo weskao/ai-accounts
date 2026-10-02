@@ -794,8 +794,10 @@ $COPILOT_ACCOUNT_DIR 覆寫）。請把這個目錄當成敏感資料 — 帳號
 在有 OS 憑證儲存區可用時會存放在裡面，否則以純文字方式留在檔案內作為備援。
 
 即時 token 依序查詢 Copilot CLI 設定目錄（~/.copilot，遵循
-$XDG_CONFIG_HOME）、作業系統鑰匙圈，最後是
-$COPILOT_GITHUB_TOKEN／$GH_TOKEN／$GITHUB_TOKEN。已匯出的環境變數
+$XDG_CONFIG_HOME）、作業系統鑰匙圈（macOS 鑰匙圈、Linux Secret Service、
+Windows 認證管理員）、config.json 的純文字 authTokens，最後是
+$COPILOT_GITHUB_TOKEN／$GH_TOKEN／$GITHUB_TOKEN。只有在 Copilot CLI 本身已用
+純文字保存 token 時，`switch` 才會寫入純文字項目。已匯出的環境變數
 token 會蓋過這些指令寫入的任何值，因此 `switch` 在偵測到時會提出警告。
 
 Copilot 的配額端點（premium/chat/completions 用量）尚未對照真實登入

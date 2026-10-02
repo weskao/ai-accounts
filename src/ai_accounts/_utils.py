@@ -680,6 +680,22 @@ _GO_KEYRING_B64_PREFIX = "go-keyring-base64:"
 
 _CRED_TYPE_GENERIC = 1
 _CRED_PERSIST_LOCAL_MACHINE = 2
+_CRED_PERSIST_ENTERPRISE = 3
+
+
+def _encode_secret(secret: str, encoding: str) -> bytes:
+    return secret.encode(encoding)
+
+
+def _decode_secret(blob: bytes, encoding: str) -> str | None:
+    """*blob* as text, or None when it is empty or not valid *encoding* — an
+    odd-length blob is never UTF-16, and a garbled token is worse than none."""
+    if not blob or (encoding == "utf-16-le" and len(blob) % 2):
+        return None
+    try:
+        return blob.decode(encoding) or None
+    except UnicodeDecodeError:
+        return None
 
 
 @lru_cache(maxsize=1)
@@ -741,7 +757,7 @@ def _wincred_target(service: str, account: str) -> str:
     return f"{service}:{account}"
 
 
-def _wincred_read(target: str) -> str | None:
+def _wincred_read(target: str, *, encoding: str = "utf-8") -> str | None:
     api = _wincred_api()
     if api is None:
         return None
@@ -754,25 +770,29 @@ def _wincred_read(target: str) -> str | None:
         blob = ctypes.string_at(cred.CredentialBlob, cred.CredentialBlobSize)
     finally:
         advapi32.CredFree(ctypes.cast(handle, ctypes.c_void_p))
-    try:
-        return blob.decode("utf-8") or None
-    except UnicodeDecodeError:
-        return None
+    return _decode_secret(blob, encoding)
 
 
-def _wincred_write(target: str, account: str, secret: str) -> bool:
+def _wincred_write(
+    target: str,
+    account: str,
+    secret: str,
+    *,
+    encoding: str = "utf-8",
+    persist: int = _CRED_PERSIST_LOCAL_MACHINE,
+) -> bool:
     api = _wincred_api()
     if api is None:
         return False
     ctypes, advapi32, credentialw = api
-    blob = secret.encode("utf-8")
+    blob = _encode_secret(secret, encoding)
     buffer = ctypes.create_string_buffer(blob, len(blob))
     cred = credentialw()  # ctypes zero-initializes; only the used fields are set
     cred.Type = _CRED_TYPE_GENERIC
     cred.TargetName = target
     cred.CredentialBlobSize = len(blob)
     cred.CredentialBlob = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char))
-    cred.Persist = _CRED_PERSIST_LOCAL_MACHINE
+    cred.Persist = persist
     cred.UserName = account
     return bool(advapi32.CredWriteW(ctypes.byref(cred), 0))
 
@@ -878,6 +898,66 @@ def go_keyring_delete(service: str, account: str) -> bool:
         return result is not None and result.returncode == 0
     if IS_WINDOWS:
         return _wincred_delete(_wincred_target(service, account))
+    return False
+
+
+# ── keyring-core credential slots ────────────────────────────────────────────
+# Rust CLIs built on keyring-core 1.x default stores — the Copilot CLI is one
+# (its 1.0.91 native modules link apple-native-, zbus-secret-service- and
+# windows-native-keyring-store) — use a third dialect:
+#
+#   macOS    `security` generic-password, service/account verbatim, secret
+#            verbatim (no go-keyring marker).
+#   Linux    Secret Service item in the default collection, found by
+#            {service, username} across ALL collections; a second matching
+#            item makes keyring-core refuse the read as ambiguous, so a write
+#            clears before it stores. Label `keyring:{user}@{service}`.
+#   Windows  Credential Manager generic credential targeted "<user>.<service>",
+#            secret stored as a UTF-16LE blob, Enterprise persistence.
+#
+# ASSUMPTION: the CLI uses each store's default configuration (no `target`
+# modifier, default '.' divider) — read off the crate sources, not observed on
+# a live Linux/Windows login.
+
+def keyring_core_read(service: str, user: str) -> str | None:
+    """Read a keyring-core secret as plaintext. None if absent or unsupported."""
+    if IS_MACOS:
+        return keychain_read(service, user)
+    if IS_LINUX:
+        result = _secret_tool("lookup", "service", service, "username", user)
+        if result is None or result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+    if IS_WINDOWS:
+        return _wincred_read(f"{user}.{service}", encoding="utf-16-le")
+    return None
+
+
+def keyring_core_write(service: str, user: str, secret: str) -> bool:
+    """Create-or-replace a keyring-core secret. False if unsupported or on failure."""
+    if IS_MACOS:
+        return keychain_write(service, user, secret)
+    if IS_LINUX:
+        if _secret_tool("clear", "service", service, "username", user) is None:
+            return False
+        result = _secret_tool(
+            "store",
+            f"--label=keyring:{user}@{service}",
+            "service",
+            service,
+            "username",
+            user,
+            stdin=secret,
+        )
+        return result is not None and result.returncode == 0
+    if IS_WINDOWS:
+        return _wincred_write(
+            f"{user}.{service}",
+            user,
+            secret,
+            encoding="utf-16-le",
+            persist=_CRED_PERSIST_ENTERPRISE,
+        )
     return False
 
 

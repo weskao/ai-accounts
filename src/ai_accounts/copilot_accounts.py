@@ -56,8 +56,8 @@ from ._utils import (
     email_local_part,
     fetch_parallel,
     has_control_chars,
-    keychain_read,
-    keychain_write,
+    keyring_core_read,
+    keyring_core_write,
     log_red,
     log_yellow,
     normalize_command_argv,
@@ -114,9 +114,11 @@ GitHub tokens live in the OS credential store when one is available, or
 inline as a plaintext fallback otherwise.
 
 The signed-in login comes from the Copilot CLI's config.json (~/.copilot, honoring
-$XDG_CONFIG_HOME) and its token from the OS keyring, then $COPILOT_GITHUB_TOKEN /
-$GH_TOKEN / $GITHUB_TOKEN. An exported token wins over anything these commands write, so
-`switch` warns when one is set.
+$XDG_CONFIG_HOME) and its token from the OS keyring (macOS Keychain, Linux Secret
+Service, Windows Credential Manager), then config.json's plaintext authTokens, then
+$COPILOT_GITHUB_TOKEN / $GH_TOKEN / $GITHUB_TOKEN. `switch` writes the plaintext entry
+only when the Copilot CLI already stores tokens that way. An exported token wins over
+anything these commands write, so `switch` warns when one is set.
 """
 
 
@@ -126,8 +128,11 @@ $GH_TOKEN / $GITHUB_TOKEN. An exported token wins over anything these commands w
 # config.json is JSONC (leading `//` comment lines) whose `lastLoggedInUser`
 # is {"host", "login"} with *no token*, and the token is a Keychain
 # generic-password item: service "copilot-cli", account "<host>:<login>".
-# ASSUMPTION: Linux/Windows stores are unverified — keychain_read is a no-op
-# there, so those platforms read as "not logged in" until someone checks.
+# Linux/Windows go through the same keyring-core service/user pair (see
+# _utils.keyring_core_read). With no credential store — or `storeTokenPlaintext`
+# in settings.json — the CLI instead keeps config.json
+# authTokens["<host>:<login>"] = {"token": …} (verified with
+# `copilot login --with-token`, CLI 1.0.91).
 
 def _copilot_home() -> Path:
     explicit = os.environ.get("COPILOT_HOME")
@@ -253,8 +258,30 @@ def _read_keychain_token() -> str | None:
     user = _logged_in_user()
     if user is None:
         return None
-    secret = keychain_read(_KEYCHAIN_SERVICE, _keychain_account(*user))
+    secret = keyring_core_read(_KEYCHAIN_SERVICE, _keychain_account(*user))
     return secret.strip() if secret and secret.strip() else None
+
+
+def _read_plaintext_token(document: JsonDict | None = None) -> str | None:
+    """The signed-in login's token from config.json's plaintext `authTokens`."""
+    document = _read_json(_config_path()) if document is None else document
+    user = _logged_in_user(document)
+    tokens = (document or {}).get("authTokens")
+    if user is None or not isinstance(tokens, dict):
+        return None
+    entry = tokens.get(_keychain_account(*user))
+    token = entry.get("token") if isinstance(entry, dict) else None
+    return token.strip() if isinstance(token, str) and token.strip() else None
+
+
+def _plaintext_mode(document: JsonDict) -> bool:
+    """Is the CLI already keeping tokens in config.json? Only then may a switch
+    write one there — the CLI asks before it falls back to plaintext, and a
+    switch must not answer that question for the user."""
+    if isinstance(document.get("authTokens"), dict) and document["authTokens"]:
+        return True
+    settings = _read_json(_copilot_home() / "settings.json") or {}
+    return settings.get("storeTokenPlaintext") is True
 
 
 def _env_token() -> tuple[str, str] | None:
@@ -268,10 +295,11 @@ def _env_token() -> tuple[str, str] | None:
 
 def _read_active() -> str | None:
     """The token the Copilot CLI would use: the keyring item for config.json's
-    signed-in login, then an exported env var as the last resort."""
-    from_keychain = _read_keychain_token()
-    if from_keychain:
-        return from_keychain
+    signed-in login, then its plaintext `authTokens` entry, then an exported
+    env var as the last resort."""
+    from_store = _read_keychain_token() or _read_plaintext_token()
+    if from_store:
+        return from_store
     env = _env_token()
     return env[1] if env else None
 
@@ -281,6 +309,8 @@ def _active_source() -> str:
     user = _logged_in_user()
     if user is not None and _read_keychain_token():
         return f"OS keyring ({_KEYCHAIN_SERVICE} · {_keychain_account(*user)})"
+    if user is not None and _read_plaintext_token():
+        return f"plaintext {_config_path()} (authTokens · {_keychain_account(*user)})"
     env = _env_token()
     return f"${env[0]}" if env else "—"
 
@@ -297,7 +327,9 @@ def _write_active(token: str, host: str, login: str) -> bool:
     """Install a saved profile as the live Copilot credential: its token goes
     into the keyring item the CLI reads for `<host>:<login>`, then config.json's
     `lastLoggedInUser` is pointed at that account (and it is added to
-    `loggedInUsers`), keeping the `//` header the CLI writes."""
+    `loggedInUsers`), keeping the `//` header the CLI writes. When the CLI is
+    in plaintext mode the config's `authTokens` entry is written too, so
+    whichever store it reads first names the same account."""
     if not token.strip():
         # Never persist an empty secret — an empty keychain item reads back as
         # a successful login and logs the user out of the real one.
@@ -305,23 +337,34 @@ def _write_active(token: str, host: str, login: str) -> bool:
         return False
     token = token.strip()
 
-    if not keychain_write(_KEYCHAIN_SERVICE, _keychain_account(host, login), token):
-        log_red("❌ Could not write the Copilot token to the OS keyring")
-        return False
-
     path = _config_path()
     try:
         header, _ = _split_jsonc(path.read_text(encoding="utf-8"))
     except OSError:
         header = ""
     document = _read_json(path) or {}
-    user = {"host": host, "login": login}
-    document["lastLoggedInUser"] = user
-    users = document.get("loggedInUsers")
-    users = [u for u in users if isinstance(u, dict)] if isinstance(users, list) else []
-    if user not in users:
-        users.append(user)
-    document["loggedInUsers"] = users
+    plaintext = _plaintext_mode(document)
+    account = _keychain_account(host, login)
+    if not keyring_core_write(_KEYCHAIN_SERVICE, account, token) and not plaintext:
+        log_red("❌ Could not write the Copilot token to the OS keyring")
+        return False
+    if plaintext:
+        tokens = document.get("authTokens")
+        tokens = tokens if isinstance(tokens, dict) else {}
+        tokens[account] = {"token": token}
+        document["authTokens"] = tokens
+
+    document["lastLoggedInUser"] = {"host": host, "login": login}
+    # Keyed on identity only: the CLI tags its entries (`"kind": …`), so the
+    # old whole-dict comparison appended a second copy of the same login —
+    # collapsing on (host, login) also cleans up copies earlier switches left.
+    users: dict[tuple[object, object], JsonDict] = {}
+    raw_users = document.get("loggedInUsers")
+    for entry in raw_users if isinstance(raw_users, list) else []:
+        if isinstance(entry, dict):
+            users.setdefault((entry.get("host"), entry.get("login")), entry)
+    users.setdefault((host, login), {"host": host, "login": login})
+    document["loggedInUsers"] = list(users.values())
     # The env-shadow warning is left to cmd_who, which every switch ends with —
     # warning here too printed it twice for one `switch`.
     return _write_json(path, document, header=header)

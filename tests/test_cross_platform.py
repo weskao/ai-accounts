@@ -226,12 +226,111 @@ class GoKeyringDispatchTests(_PlatformMixin, unittest.TestCase):
         self.force_platform(macos=True)
         self.assertEqual(u.go_keyring_available(), (True, ""))
 
+    def test_go_keyring_windows_blob_stays_utf8(self):
+        self.force_platform(windows=True)
+        with mock.patch.object(u, "_wincred_read", return_value=self.SECRET) as read, \
+                mock.patch.object(u, "_wincred_write", return_value=True) as write:
+            u.go_keyring_read(self.SERVICE, self.ACCOUNT)
+            u.go_keyring_write(self.SERVICE, self.ACCOUNT, self.SECRET)
+        self.assertEqual(read.call_args.kwargs.get("encoding", "utf-8"), "utf-8")
+        self.assertEqual(write.call_args.kwargs.get("encoding", "utf-8"), "utf-8")
+
     def test_unknown_platform_degrades_instead_of_raising(self):
         self.force_platform()  # none of the three
         self.assertIsNone(u.go_keyring_read(self.SERVICE, self.ACCOUNT))
         self.assertFalse(u.go_keyring_write(self.SERVICE, self.ACCOUNT, self.SECRET))
         self.assertFalse(u.go_keyring_delete(self.SERVICE, self.ACCOUNT))
         self.assertFalse(u.go_keyring_available()[0])
+
+
+class KeyringCoreDispatchTests(_PlatformMixin, unittest.TestCase):
+    """keyring-core (Rust) default stores — the convention the Copilot CLI
+    uses, verified against its 1.0.91 native modules and the
+    zbus-secret-service / windows-native keyring-store crate sources."""
+
+    SERVICE = "copilot-cli"
+    USER = "https://github.com:testuser"
+    SECRET = "ghu_fake1234567890abcdef"
+
+    _fake_secret_tool = GoKeyringDispatchTests._fake_secret_tool
+
+    def test_macos_is_a_plain_generic_password(self):
+        self.force_platform(macos=True)
+        with mock.patch.object(u, "keychain_write", return_value=True) as write, \
+                mock.patch.object(u, "keychain_read", return_value=self.SECRET) as read:
+            self.assertTrue(u.keyring_core_write(self.SERVICE, self.USER, self.SECRET))
+            self.assertEqual(u.keyring_core_read(self.SERVICE, self.USER), self.SECRET)
+        self.assertEqual(write.call_args.args, (self.SERVICE, self.USER, self.SECRET))
+        self.assertEqual(read.call_args.args, (self.SERVICE, self.USER))
+
+    def test_linux_reads_by_service_and_username(self):
+        self.force_platform(linux=True)
+        calls = self._fake_secret_tool(stdout=self.SECRET + "\n")
+        self.assertEqual(u.keyring_core_read(self.SERVICE, self.USER), self.SECRET)
+        self.assertEqual(
+            calls[0][0],
+            ["secret-tool", "lookup", "service", self.SERVICE, "username", self.USER],
+        )
+
+    def test_linux_write_replaces_the_item_instead_of_adding_a_second(self):
+        # keyring-core searches on service+username across every collection
+        # and refuses an ambiguous match, so a duplicate item would leave the
+        # CLI unable to read either token.
+        self.force_platform(linux=True)
+        calls = self._fake_secret_tool()
+        self.assertTrue(u.keyring_core_write(self.SERVICE, self.USER, self.SECRET))
+        self.assertEqual(
+            calls[0][0],
+            ["secret-tool", "clear", "service", self.SERVICE, "username", self.USER],
+        )
+        cmd, stdin = calls[1]
+        self.assertEqual(
+            cmd,
+            [
+                "secret-tool", "store", f"--label=keyring:{self.USER}@{self.SERVICE}",
+                "service", self.SERVICE, "username", self.USER,
+            ],
+        )
+        self.assertEqual(stdin, self.SECRET)
+
+    def test_linux_write_reports_a_failed_store(self):
+        self.force_platform(linux=True)
+        self._fake_secret_tool(returncode=1)
+        self.assertFalse(u.keyring_core_write(self.SERVICE, self.USER, self.SECRET))
+
+    def test_linux_without_secret_tool_is_unavailable(self):
+        self.force_platform(linux=True)
+        with mock.patch.object(u, "have", return_value=False):
+            self.assertIsNone(u.keyring_core_read(self.SERVICE, self.USER))
+            self.assertFalse(u.keyring_core_write(self.SERVICE, self.USER, self.SECRET))
+
+    def test_windows_uses_user_dot_service_and_a_utf16_blob(self):
+        self.force_platform(windows=True)
+        with mock.patch.object(u, "_wincred_read", return_value=self.SECRET) as read, \
+                mock.patch.object(u, "_wincred_write", return_value=True) as write:
+            self.assertEqual(u.keyring_core_read(self.SERVICE, self.USER), self.SECRET)
+            self.assertTrue(u.keyring_core_write(self.SERVICE, self.USER, self.SECRET))
+        target = f"{self.USER}.{self.SERVICE}"
+        self.assertEqual(read.call_args.args, (target,))
+        self.assertEqual(read.call_args.kwargs, {"encoding": "utf-16-le"})
+        self.assertEqual(write.call_args.args, (target, self.USER, self.SECRET))
+        self.assertEqual(
+            write.call_args.kwargs,
+            {"encoding": "utf-16-le", "persist": u._CRED_PERSIST_ENTERPRISE},
+        )
+
+    def test_windows_blob_codec_round_trips_utf16(self):
+        blob = u._encode_secret(self.SECRET, "utf-16-le")
+        self.assertEqual(blob, self.SECRET.encode("utf-16-le"))
+        self.assertEqual(u._decode_secret(blob, "utf-16-le"), self.SECRET)
+        # an odd-length blob is not UTF-16 — None, never a garbled token
+        self.assertIsNone(u._decode_secret(b"abc", "utf-16-le"))
+        self.assertIsNone(u._decode_secret(b"", "utf-16-le"))
+
+    def test_unknown_platform_degrades_instead_of_raising(self):
+        self.force_platform()
+        self.assertIsNone(u.keyring_core_read(self.SERVICE, self.USER))
+        self.assertFalse(u.keyring_core_write(self.SERVICE, self.USER, self.SECRET))
 
 
 class AgyLinuxSlotTests(_PlatformMixin, unittest.TestCase):

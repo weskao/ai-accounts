@@ -87,7 +87,7 @@ class CopilotAccountsTests(unittest.TestCase):
             self.keychain[(service, account)] = secret
             return True
 
-        for name, fake in (("keychain_read", fake_read), ("keychain_write", fake_write)):
+        for name, fake in (("keyring_core_read", fake_read), ("keyring_core_write", fake_write)):
             patcher = mock.patch.object(ca, name, fake)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -194,6 +194,108 @@ class CopilotAccountsTests(unittest.TestCase):
         # the CLI's own `//` header survives the rewrite
         raw = (self.copilot_home / "config.json").read_text(encoding="utf-8")
         self.assertTrue(raw.startswith("// User settings"))
+
+    # ── no OS credential store (headless Linux, a locked Windows vault) ─────
+    # Layout verified with `copilot login --with-token` + storeTokenPlaintext
+    # (Copilot CLI 1.0.91): config.json gains
+    # authTokens["<host>:<login>"] = {"token": …} next to lastLoggedInUser.
+
+    def _sign_in_plaintext(self, token: str = _TOKEN, *, login: str = "testuser") -> Path:
+        path = self.copilot_home / "config.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        user = {"host": _HOST, "login": login, "kind": "githubDotCom"}
+        document = {
+            "authTokens": {f"{_HOST}:{login}": {"token": token}},
+            "lastLoggedInUser": {"host": _HOST, "login": login},
+            "loggedInUsers": [user],
+        }
+        path.write_text("// managed\n" + json.dumps(document), encoding="utf-8")
+        return path
+
+    def test_a_plaintext_login_is_the_active_token(self) -> None:
+        self._sign_in_plaintext()
+        self.assertEqual(ca._read_active(), _TOKEN)
+        self.assertIn("config.json", ca._active_source())
+
+    def test_switch_without_a_keyring_rewrites_the_plaintext_token(self) -> None:
+        self._install_fake_keychain(writable=False)
+        config = self._sign_in_plaintext("ghu_old_token", login="olduser")
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(ca.cmd_switch("personal"), 0)
+
+        self.assertEqual(ca._read_active(), _TOKEN)
+        document = ca._read_json(config)
+        assert document is not None
+        self.assertEqual(document["authTokens"][f"{_HOST}:testuser"], {"token": _TOKEN})
+        # the old account stays logged in, so Copilot can still switch back
+        self.assertEqual(document["authTokens"][f"{_HOST}:olduser"], {"token": "ghu_old_token"})
+        self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
+
+    def test_switch_keeps_a_plaintext_token_in_step_with_the_keyring(self) -> None:
+        # Both stores hold a token: whichever one Copilot reads first must name
+        # the account we switched to.
+        config = self._sign_in_plaintext("ghu_old_token", login="olduser")
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(ca.cmd_switch("personal"), 0)
+        self.assertEqual(self.keychain[(ca._KEYCHAIN_SERVICE, f"{_HOST}:testuser")], _TOKEN)
+        document = ca._read_json(config)
+        assert document is not None
+        self.assertEqual(document["authTokens"][f"{_HOST}:testuser"], {"token": _TOKEN})
+
+    def test_switch_never_starts_storing_a_token_in_plaintext(self) -> None:
+        # Copilot asks before it falls back to plaintext; a switch must not
+        # make that choice for the user.
+        self._install_fake_keychain(writable=False)
+        self._sign_in("ghu_old_token", login="olduser")
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(ca.cmd_switch("personal"), 1)
+        raw = (self.copilot_home / "config.json").read_text(encoding="utf-8")
+        self.assertNotIn(_TOKEN, raw)
+
+    def test_the_plaintext_setting_alone_enables_the_plaintext_write(self) -> None:
+        self._install_fake_keychain(writable=False)
+        self._sign_in("ghu_old_token", login="olduser")
+        (self.copilot_home / "settings.json").write_text(
+            json.dumps({"storeTokenPlaintext": True}), encoding="utf-8"
+        )
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(ca.cmd_switch("personal"), 0)
+        document = ca._read_json(self.copilot_home / "config.json")
+        assert document is not None
+        self.assertEqual(document["authTokens"][f"{_HOST}:testuser"], {"token": _TOKEN})
+
+    def test_switch_does_not_duplicate_a_logged_in_user_the_cli_tagged(self) -> None:
+        # Copilot writes {"host", "login", "kind"}; comparing whole dicts
+        # appended a second, kind-less copy on every switch back.
+        config = self._sign_in_plaintext(login="testuser")
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(ca.cmd_switch("personal"), 0)
+        document = ca._read_json(config)
+        assert document is not None
+        self.assertEqual(
+            document["loggedInUsers"],
+            [{"host": _HOST, "login": "testuser", "kind": "githubDotCom"}],
+        )
+
+    def test_switch_collapses_duplicates_left_by_earlier_switches(self) -> None:
+        config = self._sign_in_plaintext(login="olduser")
+        document = ca._read_json(config)
+        assert document is not None
+        tagged = {"host": _HOST, "login": "testuser", "kind": "githubDotCom"}
+        document["loggedInUsers"] += [tagged, {"host": _HOST, "login": "testuser"}]
+        self.assertTrue(ca._write_json(config, document))
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(ca.cmd_switch("personal"), 0)
+        users = (ca._read_json(config) or {})["loggedInUsers"]
+        self.assertEqual([u["login"] for u in users], ["olduser", "testuser"])
+        self.assertIn(tagged, users)  # the CLI's own entry is the one kept
 
     def test_switch_refuses_a_profile_without_a_login(self) -> None:
         # Pre-fix profiles carry only the token; the keyring item is keyed on
@@ -310,7 +412,7 @@ class CopilotAccountsTests(unittest.TestCase):
     def test_list_identifies_active_profile_without_reading_keychain(self) -> None:
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
         self._sign_in()
-        with mock.patch.object(ca, "keychain_read", side_effect=AssertionError("keychain read")):
+        with mock.patch.object(ca, "keyring_core_read", side_effect=AssertionError("keychain read")):
             out = io.StringIO()
             with redirect_stdout(out):
                 self.assertEqual(ca.cmd_list(fetch_usage=False), 0)
@@ -320,7 +422,7 @@ class CopilotAccountsTests(unittest.TestCase):
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
         self.assertTrue(ca._write_json(self.account_dir / "personal-old.json", _profile("ghu_old_token")))
         self._sign_in()
-        with mock.patch.object(ca, "keychain_read", side_effect=AssertionError("keychain read")):
+        with mock.patch.object(ca, "keyring_core_read", side_effect=AssertionError("keychain read")):
             self.assertIsNone(ca._listed_active_profile(ca._profiles()))
             (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
             out = io.StringIO()
@@ -535,6 +637,16 @@ class CopilotAccountsTests(unittest.TestCase):
         self.assertEqual(ca._read_active(), _TOKEN)
         self.assertIn("below the switch threshold", out)
 
+    def test_autoswitch_works_on_a_machine_with_only_a_plaintext_login(self) -> None:
+        # Headless Linux: no keyring, Copilot kept the token in config.json.
+        self._autoswitch_setup({_TOKEN: 100, self._SPARE_TOKEN: 0})
+        self._install_fake_keychain(writable=False)
+        self._sign_in_plaintext(_TOKEN, login="activeuser")
+        rc, out = self._run_autoswitch()
+        self.assertEqual(rc, 0)
+        self.assertEqual(ca._read_active(), self._SPARE_TOKEN)
+        self.assertIn("spare", out)
+
     def test_autoswitch_skips_a_spare_whose_quota_cannot_be_read(self) -> None:
         self._autoswitch_setup({_TOKEN: 100, self._SPARE_TOKEN: None})
         rc, _out = self._run_autoswitch()
@@ -742,8 +854,8 @@ def test_copilot_switch_still_works_when_store_is_unavailable(tmp_path, monkeypa
     account_dir = _copilot_env(monkeypatch, tmp_path)
     # Fake keychain — never the developer's real copilot-cli item.
     keychain: dict[tuple[str, str], str] = {(ca._KEYCHAIN_SERVICE, ca._keychain_account(_HOST, "olduser")): "old-token"}
-    monkeypatch.setattr(ca, "keychain_read", lambda service, account: keychain.get((service, account)))
-    monkeypatch.setattr(ca, "keychain_write",
+    monkeypatch.setattr(ca, "keyring_core_read", lambda service, account: keychain.get((service, account)))
+    monkeypatch.setattr(ca, "keyring_core_write",
                          lambda service, account, secret: keychain.__setitem__((service, account), secret) or True)
 
     profile = account_dir / "personal.json"
