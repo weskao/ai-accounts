@@ -264,9 +264,11 @@ def _run_autoswitch_everywhere() -> None:
     """Default *check*: quota probe/switch across eligible providers in parallel.
 
     The provider registry lives with the hook installer, keeping timed and
-    event-triggered checks on the same cross-platform support matrix.
+    event-triggered checks on the same cross-platform support matrix. copilot
+    has no Stop hook to install, so the timer is its only trigger.
     """
     modules = [autoswitch_hooks.module(provider) for provider in autoswitch_hooks.providers()]
+    modules.append("ai_accounts.copilot_accounts")
     with ThreadPoolExecutor(max_workers=len(modules)) as pool:
         _ = list(pool.map(_run_provider, modules))
 

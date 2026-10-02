@@ -30,6 +30,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import autoswitch
 from . import config_menu as cm
 from . import copilot_usage
 from . import i18n
@@ -65,6 +66,7 @@ from ._utils import (
 )
 from .config_schema import mask_secret
 from .usage_format import (
+    UsageWindow,
     align_numeric_cells,
     align_usage_cells,
     format_usage_window,
@@ -91,7 +93,7 @@ USAGE
   copilot-accounts refresh [<name>]      Verify the profile's token is still valid
   copilot-accounts refresh --all         Verify every saved profile's token
   copilot-accounts sync                  Copy the active auth back to its matching profile
-  copilot-accounts autoswitch            Report Copilot's autoswitch support
+  copilot-accounts autoswitch            Switch away from the active profile once its monthly quota is used up
   copilot-accounts login-switch <name>   Fresh Copilot CLI login + save as <name>
   copilot-accounts config                Interactive config menu shared by every ai-accounts CLI
   copilot-accounts config get [key]      Print the shared auto-switch config (or one key)
@@ -752,6 +754,50 @@ def cmd_switch(name: str) -> int:
     return cmd_who()
 
 
+def _autoswitch_probe(name: str) -> UsageWindow | None:
+    """One saved profile's monthly window, read with its OWN token — never the
+    live keyring slot, so probing a spare cannot change the active account."""
+    path = _profile_file(name)
+    payload = _load_profile(path) if path is not None else None
+    usage = copilot_usage.fetch_usage(_token(payload))
+    return None if usage.error else usage.plan_usage
+
+
+def _autoswitch_switch(name: str) -> bool:
+    return cmd_switch(name) == 0
+
+
+def cmd_autoswitch() -> int:
+    active = _active_profile()
+    outcome = autoswitch.run_autoswitch(
+        "copilot",
+        [path.stem for path in _profiles()],
+        active.stem if active is not None else None,
+        _autoswitch_probe,
+        _autoswitch_switch,
+        # No restart hook: Copilot CLI reads the keyring on its next launch, and
+        # there is no resume command to spawn (providers.py leaves it verdictless).
+    )
+    if outcome.reason == "disabled":
+        log_yellow("⚠️  Auto-switch is disabled (see ~/.ai-accounts/config.json: enabled).")
+    elif outcome.reason == "no_active":
+        log_yellow("⚠️  No active Copilot profile — nothing to auto-switch from.")
+    elif outcome.reason == "unknown":
+        log_yellow(f"⚠️  Could not determine usage for {outcome.from_profile}.")
+    elif outcome.reason == "below_threshold":
+        print(f"{outcome.from_profile} is at {outcome.used_pct}% used — below the switch threshold.")
+    elif outcome.reason == "no_candidate":
+        log_yellow(
+            f"⚠️  {outcome.from_profile} is at {outcome.used_pct}% used and no other "
+            "Copilot account is available to switch to."
+        )
+    elif outcome.reason == "switch_failed":
+        log_red(f"❌ {outcome.error}")
+    else:  # "switched"
+        ok("Auto-switched Copilot account", f"{outcome.from_profile} → {outcome.to_profile}")
+    return 1 if outcome.reason == "switch_failed" else 0
+
+
 def _picker_items(profiles: list[Path]) -> list[tuple[str, str | None]]:
     """(name, account) pairs so the picker can tell two profiles apart."""
     items = []
@@ -894,10 +940,7 @@ def main(argv: list[str] | None = None) -> int:
     if command == "sync":
         return cmd_sync()
     if command == "autoswitch":
-        # The quota endpoint copilot_usage reads is undocumented and unverified,
-        # so no auto-switch decision is wired to it yet.
-        print("autoswitch unsupported for copilot: quota API unverified")
-        return 0
+        return cmd_autoswitch()
     if command == "login-switch":
         if not rest:
             log_red("Usage: copilot-accounts login-switch <profile_name>")

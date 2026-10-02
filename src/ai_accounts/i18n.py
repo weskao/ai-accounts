@@ -774,7 +774,7 @@ service 名稱 "ai.mistral.vibe"），若無則改用 $VIBE_HOME/.env；
   copilot-accounts refresh [<name>]      驗證該帳號的 token 是否仍然有效
   copilot-accounts refresh --all         驗證所有已存帳號的 token
   copilot-accounts sync                  把作用中的登入複製回對應的帳號檔案
-  copilot-accounts autoswitch            回報 Copilot 目前的自動切換支援狀況
+  copilot-accounts autoswitch            每月配額用盡時離開作用中帳號
   copilot-accounts login-switch <name>   全新 Copilot CLI 登入並存成 <name>
   copilot-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
   copilot-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
@@ -800,8 +800,8 @@ token 會蓋過這些指令寫入的任何值，因此 `switch` 在偵測到時�
 
 Copilot 的配額端點（premium/chat/completions 用量）尚未對照真實登入
 驗證過；查詢失敗時會像 grok／vibe 一樣退回「沒有配額 API」，`list`／
-`usage` 不會因此失敗。`autoswitch` 目前會回報配額 API 尚未驗證、暫不
-支援自動切換。
+`usage` 不會因此失敗。`autoswitch` 讀取同一個端點；作用中帳號的每月配額
+達到門檻時，會切換到用量較低的帳號（Copilot CLI 下次啟動時生效）。
 """,
     },
 }

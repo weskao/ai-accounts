@@ -489,9 +489,12 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
         with mock.patch.object(at, "_run_provider", return_value=result) as run:
             at._run_autoswitch_everywhere()
 
+        # copilot has no Stop hook to install, so it joins the timer on its own
+        # — the timer is the only thing that ever runs its check.
         self.assertCountEqual(
             [call.args[0] for call in run.call_args_list],
-            [autoswitch_hooks.module(provider) for provider in autoswitch_hooks.providers()],
+            [autoswitch_hooks.module(provider) for provider in autoswitch_hooks.providers()]
+            + ["ai_accounts.copilot_accounts"],
         )
 
     def test_background_check_skips_agy_without_a_credential_store(self) -> None:
@@ -503,7 +506,11 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
 
         self.assertCountEqual(
             [call.args[0] for call in run.call_args_list],
-            ["ai_accounts.codex_accounts", "ai_accounts.claude_accounts"],
+            [
+                "ai_accounts.codex_accounts",
+                "ai_accounts.claude_accounts",
+                "ai_accounts.copilot_accounts",
+            ],
         )
 
 

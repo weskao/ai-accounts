@@ -473,15 +473,73 @@ class CopilotAccountsTests(unittest.TestCase):
             self.assertEqual(ca.main(["login-switch"]), 1)
         self.assertIn("login-switch <profile_name>", _ANSI_RE.sub("", err.getvalue()))
 
-    def test_autoswitch_reports_unsupported_and_exits_zero(self) -> None:
-        out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            self.assertEqual(ca.main(["autoswitch"]), 0)
-        self.assertEqual(
-            _ANSI_RE.sub("", out.getvalue()).splitlines(),
-            ["autoswitch unsupported for copilot: quota API unverified"],
+    # ── autoswitch ──────────────────────────────────────────────────────────
+
+    _SPARE_TOKEN = "ghu_spare1234567890abcdef"
+
+    def _autoswitch_setup(self, used_by_token: dict[str, int | None]) -> None:
+        """Active profile `active` (signed in) plus `spare`, with canned usage.
+
+        *used_by_token* maps a token to its used %, or None for a quota read
+        that fails — the only thing the probe may look at, since probing must
+        never touch the live keyring slot."""
+        from ai_accounts import autoswitch as aw
+
+        config = self.home / "autoswitch-config.json"
+        env = mock.patch.dict(os.environ, {"AI_ACCOUNTS_CONFIG_JSON": str(config)})
+        env.start()
+        self.addCleanup(env.stop)
+        aw.save_config(
+            {"enabled": True, "notify": "none", "switch_when_used_pct": 90, "reset_notify": False}
         )
-        self.assertEqual(err.getvalue(), "")
+        self._sign_in(_TOKEN, login="activeuser")
+        self.assertTrue(ca._write_json(self.account_dir / "active.json", _profile() | {"login": "activeuser"}))
+        self.assertTrue(
+            ca._write_json(
+                self.account_dir / "spare.json",
+                _profile(self._SPARE_TOKEN) | {"login": "spareuser"},
+            )
+        )
+
+        def fake_fetch(token: str | None, **_kw) -> cu.UsageSnapshot:
+            used = used_by_token.get(token)
+            if used is None:
+                return cu.UsageSnapshot(None, None, None, None, None, "network error")
+            window = cu.UsageWindow(percentage=used, reset_time=None, window_minutes=43200)
+            return cu.UsageSnapshot(window, None, None, "individual", 1, None)
+
+        patcher = mock.patch.object(cu, "fetch_usage", side_effect=fake_fetch)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run_autoswitch(self) -> tuple[int, str]:
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            rc = ca.main(["autoswitch"])
+        return rc, _ANSI_RE.sub("", out.getvalue())
+
+    def test_autoswitch_moves_off_an_exhausted_active_profile(self) -> None:
+        # Given: the active account has spent its whole monthly quota
+        self._autoswitch_setup({_TOKEN: 100, self._SPARE_TOKEN: 0})
+        # When: the unattended check runs
+        rc, out = self._run_autoswitch()
+        # Then: the spare account is now the one Copilot CLI will use
+        self.assertEqual(rc, 0)
+        self.assertEqual(ca._read_active(), self._SPARE_TOKEN)
+        self.assertIn("spare", out)
+
+    def test_autoswitch_stays_put_while_the_active_profile_has_quota(self) -> None:
+        self._autoswitch_setup({_TOKEN: 10, self._SPARE_TOKEN: 0})
+        rc, out = self._run_autoswitch()
+        self.assertEqual(rc, 0)
+        self.assertEqual(ca._read_active(), _TOKEN)
+        self.assertIn("below the switch threshold", out)
+
+    def test_autoswitch_skips_a_spare_whose_quota_cannot_be_read(self) -> None:
+        self._autoswitch_setup({_TOKEN: 100, self._SPARE_TOKEN: None})
+        rc, _out = self._run_autoswitch()
+        self.assertEqual(rc, 0)
+        self.assertEqual(ca._read_active(), _TOKEN)
 
     def test_refresh_reports_a_rejected_token(self) -> None:
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))

@@ -15,8 +15,8 @@ not an oversight, so it is preserved rather than collapsed to one color.
 
 ``verdict`` is ``None`` for a provider that must be absent from
 ``PROVIDER_VERDICTS`` entirely (``vibe`` — no quota API, no restart-ladder
-entry at all; ``copilot`` — same shape, its quota endpoint is unverified;
-both fall through to ``effective_rung``'s
+entry at all; ``copilot`` — has a quota API and autoswitches, but no resume
+command to restart into; both fall through to ``effective_rung``'s
 ``verdicts.get(provider, "manual-restart")`` default). ``grok``'s verdict is
 present but aspirational — see ``autoswitch.py``'s ``PROVIDER_VERDICTS``
 docstring for why it's currently unreachable.
@@ -70,8 +70,8 @@ PROVIDERS: list[Provider] = [
     ),
     Provider("grok", "grok-accounts", "ai_accounts.grok_accounts", "grok", YELLOW, YELLOW, "auto-restart"),
     Provider("vibe", "vibe-accounts", "ai_accounts.vibe_accounts", "vibe", GREEN, GREEN, None),
-    # No quota API confirmed (copilot_usage.py's endpoint is unverified) and no
-    # restart-ladder entry at all — same shape as vibe, not a new pattern.
+    # Quota-backed (autoswitch runs from the timer) but no restart-ladder entry:
+    # Copilot CLI reads the keyring on launch and has no resume command.
     Provider(
         "copilot", "copilot-accounts", "ai_accounts.copilot_accounts", "copilot", RED, RED,
         None, reset_windows=("monthly",),
