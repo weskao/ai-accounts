@@ -122,3 +122,18 @@ class TestSchemaDriven:
         expected = tuple(f.key for f in config_schema.FIELDS if f.masked)
         assert autoswitch._secret_keys() == expected
         assert "telegram_bot_token" in expected
+
+
+def test_config_write_does_not_follow_a_preexisting_temp_symlink(tmp_path):
+    victim = tmp_path / "unrelated.json"
+    victim.write_text("untouched", encoding="utf-8")
+    path = autoswitch.config_path()
+    try:
+        path.with_name(f".{path.name}.tmp").symlink_to(victim)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink creation requires Developer Mode or privilege")
+        raise
+    autoswitch.save_config({"telegram_chat_id": "12345"})
+    assert victim.read_text(encoding="utf-8") == "untouched"
+    assert _file_contents()["telegram_chat_id"] == "12345"

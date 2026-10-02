@@ -191,11 +191,7 @@ class EditModeTests(unittest.TestCase):
         row = next(line for line in lines if cs.FIELDS[cursor].label in line)
         self.assertNotIn("0", row.split(cs.FIELDS[cursor].label)[1])
 
-    def test_edit_buffer_on_masked_field_is_not_masked_cleartext_by_design(self) -> None:
-        # Deliberate decision: while typing a new secret, the buffer echoes
-        # cleartext (it's the user's own terminal and their own new value —
-        # not the previously-saved secret, which stays masked everywhere
-        # else). This test locks in that choice.
+    def test_edit_buffer_on_masked_field_never_echoes_the_secret(self) -> None:
         # Located by key, not by index: a field appended to the schema ahead of
         # it must not silently retarget this assertion at another row.
         cursor = [f.key for f in cs.FIELDS].index("telegram_bot_token")
@@ -210,7 +206,8 @@ class EditModeTests(unittest.TestCase):
             )
         )
         row = next(line for line in lines if cs.FIELDS[cursor].label in line)
-        self.assertIn("new-typed-secret", row)
+        self.assertNotIn("new-typed-secret", "\n".join(lines))
+        self.assertIn("*" * len("new-typed-secret"), row)
 
 
 class LiveHelpPreviewTests(unittest.TestCase):

@@ -27,12 +27,9 @@ highlighted cursor row or an edit-buffer/error variant, so this module builds
 its own border logic alongside it rather than forcing those needs through a
 print-only helper.
 
-**Deliberate decision — edit-buffer echo on a masked field:** while a value
-is being typed (``editing=True``), the in-progress buffer is shown in
-cleartext, even for ``telegram_bot_token``. This is the user's own terminal,
-and the buffer holds a *new*, not-yet-saved value, never the previously
-saved secret (which stays masked everywhere else, including mid-edit on
-other rows). Recorded here so it reads as a choice, not an oversight.
+**Secret input:** masked fields display only stars while being edited.
+The numbered fallback uses ``getpass`` and refuses input if echo cannot be
+disabled, so terminal recordings do not capture newly entered secrets.
 
 **Data-loss rule — a masked row never round-trips its own value.** Opening a
 masked field seeds the edit buffer EMPTY, never ``field.format(current)``:
@@ -137,9 +134,11 @@ validation is ``Field.parse``. Appending a 7th field to
 
 from __future__ import annotations
 
+import getpass
 import json
 import sys
 import threading
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -293,8 +292,7 @@ def _empty_buffer_value(field: config_schema.Field) -> object | None:
 
 
 def _shown_buffer(field: config_schema.Field, edit_buffer: str) -> str:
-    """The in-progress edit buffer as displayed — cleartext, see the module
-    docstring's "Deliberate decision".
+    """The in-progress edit buffer, fully hidden for secret fields.
 
     An emptied numeric buffer displays the value it stands for (0) instead of
     an empty cell, so the row agrees with the help line and with what Enter
@@ -302,7 +300,7 @@ def _shown_buffer(field: config_schema.Field, edit_buffer: str) -> str:
     this 0 rather than following it.
     """
     if edit_buffer:
-        return edit_buffer
+        return "*" * len(edit_buffer) if field.masked else edit_buffer
     empty_value = _empty_buffer_value(field)
     return "" if empty_value is None else field.format(empty_value)
 
@@ -990,7 +988,7 @@ def _save(state: MenuState, saver: _Saver) -> MenuState:
 # ── non-TTY numbered fallback ───────────────────────────────────────────────
 
 
-def _ask(prompt: str) -> str | None:
+def _ask(prompt: str, *, secret: bool = False) -> str | None:
     """``input()`` that answers ``None`` instead of exploding on EOF/Ctrl-C.
 
     In narrow mode a long prompt is wrapped to the budget here rather than at
@@ -1009,7 +1007,14 @@ def _ask(prompt: str) -> str | None:
             print(line)
         prompt += tail
     try:
+        if secret:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                return getpass.getpass(prompt).strip()
         return input(prompt).strip()
+    except getpass.GetPassWarning:
+        log_red("Secret input requires a terminal with echo disabled; value was not changed.")
+        return None
     except (EOFError, KeyboardInterrupt):
         print()
         return None
@@ -1064,7 +1069,8 @@ def fallback_menu(title: str, fields: Sequence[config_schema.Field] = config_sch
             default="New value for {label}{hint}: ",
             label=field.display_label(),
             hint=hint,
-        )
+        ),
+        secret=field.masked,
     )
     if raw is None:
         return 0

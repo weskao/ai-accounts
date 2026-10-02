@@ -465,7 +465,7 @@ Saved profiles and shared settings live under `~/.ai-accounts`:
 └── copilot/accounts/
 ```
 
-`config.json` never holds a secret. `telegram_bot_token` goes to the OS
+Newly saved `telegram_bot_token` values go to the OS
 credential store instead — macOS Keychain, the Secret Service (`secret-tool`)
 on Linux, Credential Manager on Windows — under the service name
 `ai-accounts`. On a machine with no credential store, saving a token is
@@ -476,7 +476,30 @@ is environment → credential store → config file.
 
 That last rung exists only for upgrades: a token already sitting in an older
 `config.json` keeps working, and the next save moves it into the credential
-store and drops it from the file.
+store and drops it from the file. If the store is unavailable, the legacy
+plaintext value remains to avoid losing the only copy; existing backups are
+not scrubbed by migration.
+
+| Platform | Bot token location | Chat ID location / protection |
+| --- | --- | --- |
+| macOS | Keychain generic password: service `ai-accounts`, account `telegram_bot_token` | `~/.ai-accounts/config.json`, plaintext, owner-only mode `0600` on writes |
+| Linux | Secret Service default collection via `secret-tool`: `service=ai-accounts`, `username=telegram_bot_token` | `~/.ai-accounts/config.json`, plaintext, owner-only mode `0600` on writes |
+| Windows | Credential Manager generic credential: `ai-accounts:telegram_bot_token` | `%USERPROFILE%\.ai-accounts\config.json`, plaintext; access depends on inherited Windows ACLs, not POSIX mode `0600` |
+
+`AI_ACCOUNTS_CONFIG_JSON` overrides the JSON path on every platform. The
+credential-store slot belongs to the OS user and is shared across config paths.
+Linux needs both `secret-tool` and a running, unlocked Secret Service; a
+headless session may not have one. Credential stores protect storage, but do
+not guarantee protection from malware running as the same user or an administrator.
+
+The bot token authenticates the bot; keep it private. The chat ID only selects
+the recipient, but can identify a user/group: it remains visible in `--config`
+and `config export`, so redact it before sharing exports. Token entry in
+`--config` is hidden, including the numbered fallback (which refuses input if
+echo cannot be disabled). Prefer that over `config set telegram_bot_token …`,
+whose argument can appear in shell history and process listings. Environment
+overrides are also plaintext process data; do not commit them to shell files.
+If a token was exposed, revoke/regenerate it with BotFather and save the replacement.
 
 Saved-profile secrets follow the same pattern. When an OS credential store is
 available, a saved profile's `<name>.json` holds metadata only — expiry

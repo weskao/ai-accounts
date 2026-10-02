@@ -1025,7 +1025,7 @@ class FallbackTest(_ConfigFileMixin, unittest.TestCase):
             except StopIteration:
                 raise EOFError from None
 
-        with mock.patch("builtins.input", fake_input):
+        with mock.patch("builtins.input", fake_input), mock.patch("getpass.getpass", fake_input):
             with redirect_stdout(out), redirect_stderr(err):
                 rc = cm.cmd_config([], prog="ai-accounts")
         return rc, out.getvalue(), err.getvalue()
@@ -1069,6 +1069,27 @@ class FallbackTest(_ConfigFileMixin, unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(autoswitch.load_config()["telegram_bot_token"], TOKEN)
         self.assertNotIn(TOKEN, out)
+
+    def test_secret_prompt_uses_hidden_input(self) -> None:
+        token_number = str(index_of("telegram_bot_token") + 1)
+        out = io.StringIO()
+        with mock.patch("builtins.input", side_effect=[token_number]), mock.patch(
+            "getpass.getpass", return_value=TOKEN
+        ), redirect_stdout(out):
+            self.assertEqual(cm.fallback_menu("t"), 0)
+        self.assertEqual(autoswitch.load_config()["telegram_bot_token"], TOKEN)
+        self.assertNotIn(TOKEN, out.getvalue())
+
+    def test_secret_prompt_refuses_echoing_fallback(self) -> None:
+        import getpass
+        import warnings
+
+        def unsafe_prompt(prompt):
+            warnings.warn("echo unavailable", getpass.GetPassWarning)
+            self.fail("must stop before reading an echoed secret")
+
+        with mock.patch("getpass.getpass", unsafe_prompt):
+            self.assertIsNone(cm._ask("Token: ", secret=True))
 
     def test_a_blank_value_for_a_plain_field_still_clears_it(self) -> None:
         autoswitch.save_config({"telegram_chat_id": "12345"})

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -67,17 +68,21 @@ def _write_private(path: Path, text: str) -> None:
     Raises ``OSError`` if the write fails.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp")
+    tmp = None
     try:
-        with os.fdopen(
-            os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600),
+        with tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
         ) as handle:
+            tmp = Path(handle.name)
             handle.write(text)
         os.replace(tmp, path)
     except BaseException:
-        tmp.unlink(missing_ok=True)
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
         raise
 
 
