@@ -1,3 +1,20 @@
+## [0.23.0] - 2026-10-02
+
+### 🚀 Features
+
+- **agy:** Add api-schema command
+- **copilot:** Support keyring-core and plaintext
+
+### 🐛 Bug Fixes
+
+- Guard against foreign agy keyring tokens
+- **agy:** Ignore status reply sent before login
+- Protect config secrets and temp writes
+- **copilot:** Wire autoswitch into engine and timer
+
+### 🧪 Testing
+
+- **gemini:** Reuse active credentials in switch test
 ## [0.22.0] - 2026-09-30
 
 ### 🚀 Features
@@ -7,6 +24,7 @@
 ### ⚙️ Miscellaneous Tasks
 
 - Ignore .codegraph/ directory
+- **release:** Bump version to 0.22.0
 ## [0.21.2] - 2026-09-29
 
 ### 🐛 Bug Fixes
