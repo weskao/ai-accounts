@@ -726,14 +726,15 @@ class ProfileCommandTests(_HomeMixin):
     def test_switch_folds_rotated_outgoing_token_into_profile(self) -> None:
         self.write_profile("old", _creds("sub-o", "o@x.com", refresh_token="rt-stale"))
         self.write_profile("new", _creds("sub-n", "n@x.com", refresh_token="rt-new"))
-        self.set_active(
-            _creds("sub-o", "o@x.com", refresh_token="rt-stale", access_token="at-rotated")
+        active = _creds(
+            "sub-o", "o@x.com", refresh_token="rt-stale", access_token="at-rotated"
         )
+        self.set_active(active)
         self.mark_current("old")
         self.quiet(ga.cmd_switch, "new")
         old = ga._load_profile(self.home / "accounts" / "old.json")
         self.assertEqual(old["access_token"], "at-rotated")
-        self.assertEqual(old["id_token"], _creds("sub-o", "o@x.com")["id_token"])
+        self.assertEqual(old["id_token"], active["id_token"])
 
     def test_list_never_folds_a_foreign_slot_token_into_the_probed_profile(self) -> None:
         profile = self.write_profile("work", _creds("sub", "a@x.com", refresh_token="rt-work"))
