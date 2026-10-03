@@ -161,6 +161,9 @@ CLI actually uses). Follow the same three-step shape.
 - [ ] Research [codex-resets.com](https://codex-resets.com/) (or its data source) and
       surface Codex quota-reset information: upcoming resets, an initial notification,
       time remaining until reset, and how long ago the last reset occurred.
+- [ ] Codex and Claude: add a new column for 重置券 (reset vouchers) in the `list` /
+      `usage` tables (and `--json`). Research first: where the voucher count comes from
+      (usage API or elsewhere) and whether it differs per provider.
 - [x] 🔴 **High priority:** Add configurable AI quota-reset notifications: detect when a supported
       provider's quota window rolls over and usage returns to 0%, then notify the
       user that the quota is available again. Support provider-specific quota
