@@ -1,3 +1,17 @@
+## [0.23.1] - 2026-10-03
+
+### 🐛 Bug Fixes
+
+- **copilot:** Report revoked tokens in relogin alert
+
+### 📚 Documentation
+
+- **todo:** Add codex/claude reset voucher item
+- **todo:** Split copilot credential store item
+
+### 🧪 Testing
+
+- **copilot:** Skip mode check on non-posix
 ## [0.23.0] - 2026-10-02
 
 ### 🚀 Features
