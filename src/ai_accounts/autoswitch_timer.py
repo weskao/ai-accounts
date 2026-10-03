@@ -285,7 +285,7 @@ def _run_autoswitch_everywhere() -> None:
 # below, so a 5xx/network hiccup can't false-trigger this. Matching full
 # phrases instead of the bare word "revoked" also keeps a profile literally
 # named e.g. "revoked-backup" from false-triggering off the printed table.
-_REVOKED_MARKERS = ("refresh token revoked", "revoked (re-login required)")
+_REVOKED_MARKERS = ("token revoked", "revoked (re-login required)")
 
 # ponytail: fixed per-provider ceiling, not a config knob — the CLI-proxy
 # fallback (agy/grok, when a direct OAuth refresh can't run) spawns a vendor

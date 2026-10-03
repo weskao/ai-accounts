@@ -27,12 +27,13 @@ from .providers import PROVIDERS
 
 # The provider section header `ai_accounts._header` prints, and the two
 # revoked-token wordings every provider's refresh path uses: the per-account
-# line (codex/claude/gemini say "revoked/dead", grok says "revoked") and
-# codex/claude's end-of-run bulk summary for profiles with no refresh_token to
-# even attempt. The hint line that follows a per-account failure carries the
-# ready-to-paste command.
+# line (codex/claude/gemini say "revoked/dead", grok says "revoked", copilot —
+# which has no refresh token — says "Token revoked") and codex/claude's
+# end-of-run bulk summary for profiles with no refresh_token to even attempt.
+# The hint line that follows a per-account failure carries the ready-to-paste
+# command.
 _HEADER_RE = re.compile(r"━━━\s+(\S+?)-accounts\s+━━━")
-_INLINE_RE = re.compile(r"❌\s*Refresh token revoked(?:/dead)? for (.+?): (.+)$")
+_INLINE_RE = re.compile(r"❌\s*(?:Refresh token|Token) revoked(?:/dead)? for (.+?): (.+)$")
 _BULK_RE = re.compile(r"❌\s*Revoked \(re-login required\): (.+)$")
 _HINT_RE = re.compile(r"Re-login with:\s*(.+)$")
 _COMMAND_PROVIDER_RE = re.compile(r"(\S+?)-accounts\b")

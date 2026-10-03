@@ -372,18 +372,34 @@ def _write_active(token: str, host: str, login: str) -> bool:
 
 # ── GitHub identity ─────────────────────────────────────────────────────────
 
-def _identity_request(url: str, token: str, *, timeout: float) -> Any:
-    request = urllib.request.Request(
+def _github_request(url: str, token: str) -> urllib.request.Request:
+    return urllib.request.Request(
         url,
         headers={**_API_HEADERS, "Authorization": f"Bearer {token}"},
         method="GET",
     )
+
+
+def _identity_request(url: str, token: str, *, timeout: float) -> Any:
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(_github_request(url, token), timeout=timeout) as response:
             raw = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     return raw
+
+
+def _token_status(token: str, *, timeout: float = 20) -> str:
+    """"valid", "revoked" or "unreachable". Only GitHub's own 401 proves the
+    token is dead — a timeout or 5xx says nothing about it, and calling that
+    revoked would fire a re-login alert on every network blip."""
+    try:
+        with urllib.request.urlopen(_github_request(_USER_URL, token), timeout=timeout):
+            return "valid"
+    except urllib.error.HTTPError as error:
+        return "revoked" if error.code == 401 else "unreachable"
+    except (urllib.error.URLError, OSError):
+        return "unreachable"
 
 
 def _fetch_identity(token: str, *, timeout: float = 20) -> JsonDict | None:
@@ -927,14 +943,23 @@ def cmd_refresh(name: str | None = None, *, everything: bool = False) -> int:
         log_yellow("⚠️  No Copilot profile to verify.")
         return 1
 
+    # The ❌ line's wording is what refresh_report and autoswitch_timer's
+    # _REVOKED_MARKERS key on — reword it and the scheduled alert goes silent.
     failed = 0
     for path in profiles:
         token = _token(_load_profile(path))
-        if token and _fetch_identity(token) is not None:
+        status = _token_status(token) if token else "missing"
+        if status == "valid":
             ok("Token still valid", path.stem, bold=False)
             continue
         failed += 1
-        log_yellow(f"⚠️  Token for '{path.stem}' is not accepted by GitHub — re-login required.")
+        if status == "revoked":
+            log_red(f"❌ Token revoked for {path.stem}: GitHub rejected it (HTTP 401)")
+        elif status == "missing":
+            log_yellow(f"⚠️  No token readable for '{path.stem}'.")
+        else:
+            log_yellow(f"⚠️  Could not reach GitHub to verify '{path.stem}' — try again later.")
+            continue
         log_yellow(f"   Re-login with: copilot-accounts login-switch {path.stem}")
     return 1 if failed else 0
 

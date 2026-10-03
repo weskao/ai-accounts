@@ -738,7 +738,9 @@ under it. The alert is de-duplicated by the exact set of profiles it names:
 the same set stays quiet for an hour, while a newly revoked profile alerts on
 the next tick instead of waiting out the previous alert's cooldown. Transient
 failures (a 5xx, a timeout, an unreachable token endpoint) are retried on the
-next tick and never reported here. Like every notification, it ends with the
+next tick and never reported here. Copilot has no refresh token: its `refresh`
+checks the saved token against GitHub, and only a `401` lands in this report.
+Like every notification, it ends with the
 source device (see [Auto-switch](#auto-switch)).
 
 ### Quota-reset notifications

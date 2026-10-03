@@ -85,17 +85,12 @@ CLI actually uses). Follow the same three-step shape.
 - [x] `refresh_report.py`: provider color map — this is derived from `providers.PROVIDERS`
       (`PROVIDER_COLORS = {p.key: p.report_color for p in PROVIDERS}`), so adding the
       `Provider` entry alone propagated it.
-- [ ] `refresh_report.py`: revoked-line phrasing the parser expects. **Not done.**
-      `copilot_accounts.py`'s `cmd_refresh` logs `"Token for '<name>' is not accepted by
-      GitHub — re-login required"`, which matches neither `refresh_report.py`'s
-      `_INLINE_RE` (`"Refresh token revoked(/dead)? for ..."`) nor `_BULK_RE`
-      (`"Revoked (re-login required): ..."`). A revoked Copilot token is caught by
-      `copilot-accounts refresh`/`doctor` but will NOT surface in the scheduled
-      re-login report/notification the way codex/claude/agy/grok do (vibe has the same
-      gap, by design, since it has no refresh token to revoke at all — Copilot's OAuth
-      token genuinely can be revoked, so this is a real gap, not an intentional parity
-      with vibe). Needs a decision: extend the parser's phrasing set, or accept the
-      silence.
+- [x] `refresh_report.py`: revoked-line phrasing the parser expects. Done: Copilot's
+      `cmd_refresh` now logs `"❌ Token revoked for <name>: ..."` only on GitHub's 401
+      (`_token_status`); a timeout/5xx stays a quiet yellow line so a network blip never
+      fires a re-login alert. `_INLINE_RE` and `_REVOKED_MARKERS` accept the
+      `Token revoked` wording. Contract tests in `tests/test_copilot_accounts.py`
+      feed real `refresh` output through `refresh_report.parse`.
 - [x] `autoswitch.py` ~L446 restart-strategy map: add `copilot` with the truthful value.
       Uses `verdict=None` (same shape as `vibe` — absent from `PROVIDER_VERDICTS`
       entirely, falls through to `manual-restart`), matching `autoswitch`'s existing

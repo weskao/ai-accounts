@@ -14,13 +14,16 @@ import os
 import stat
 import tempfile
 import unittest
+import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from ai_accounts import autoswitch_timer
 from ai_accounts import copilot_accounts as ca
 from ai_accounts import copilot_usage as cu
 from ai_accounts import profile_secrets as ps
+from ai_accounts import refresh_report as rr
 from ai_accounts._present import _ANSI_RE
 
 _TOKEN = "ghu_fake1234567890abcdef"
@@ -654,13 +657,36 @@ class CopilotAccountsTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(ca._read_active(), _TOKEN)
 
-    def test_refresh_reports_a_rejected_token(self) -> None:
+    def _refresh_against(self, github_error: Exception) -> tuple[int, str]:
+        """Run `refresh --all` on one saved profile while GitHub's /user
+        answers with *github_error*; return the exit code and all output."""
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
-        self._install_fake_identity(None)
-        err = io.StringIO()
-        with redirect_stdout(io.StringIO()), redirect_stderr(err):
-            self.assertEqual(ca.main(["refresh", "--all"]), 1)
-        self.assertIn("re-login required", _ANSI_RE.sub("", err.getvalue()))
+        out = io.StringIO()
+        with mock.patch.object(ca.urllib.request, "urlopen", side_effect=github_error), \
+                redirect_stdout(out), redirect_stderr(out):
+            rc = ca.main(["refresh", "--all"])
+        return rc, _ANSI_RE.sub("", out.getvalue())
+
+    def test_a_revoked_token_reaches_the_scheduled_relogin_report(self) -> None:
+        # Given: GitHub rejects the saved token outright
+        rc, out = self._refresh_against(
+            urllib.error.HTTPError(ca._USER_URL, 401, "Unauthorized", {}, None))
+
+        # Then: the timer's gate fires and the report names the profile + command
+        self.assertEqual(rc, 1)
+        self.assertTrue(any(m in out.lower() for m in autoswitch_timer._REVOKED_MARKERS))
+        records = rr.parse(out)
+        self.assertEqual([(r.provider, r.profile) for r in records], [("copilot", "personal")])
+        self.assertEqual(rr.command_for(records[0]), "copilot-accounts login-switch personal")
+
+    def test_a_network_failure_is_not_reported_as_revoked(self) -> None:
+        # Given: GitHub is unreachable — the token may be perfectly fine
+        rc, out = self._refresh_against(urllib.error.URLError("offline"))
+
+        # Then: a failed check, but no re-login alert
+        self.assertEqual(rc, 1)
+        self.assertFalse(any(m in out.lower() for m in autoswitch_timer._REVOKED_MARKERS))
+        self.assertEqual(rr.parse(out), [])
 
 
 _CREDIT_JSON = {
