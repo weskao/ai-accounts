@@ -46,13 +46,15 @@ CLI actually uses). Follow the same three-step shape.
       is done (`providers.py`'s `report_color` propagates automatically), but the
       *revoked-line phrasing* `refresh_report.py` parses for is NOT done — see the new
       note under "2. Umbrella and shared wiring" below.
-- [ ] Windows/Linux credential store — decide whether `_utils.keychain_*` suffices or
-      a `secret-tool`/Credential Manager branch is needed (agy already has one).
-      Not resolved: `copilot_accounts.py` calls the plain `keychain_read`/`keychain_write`
-      pair, which per `CLAUDE.md` is macOS-only (no-op elsewhere) — unlike `agy`'s
-      cross-platform `go_keyring_*` functions. On Windows/Linux the keychain step
-      silently no-ops and Copilot falls back to the config file or an env var only.
-      Needs a decision + live verification, not just implementation.
+- [x] Windows/Linux credential store — decision + implementation. Done in `4b3ad4d`:
+      plain `keychain_*` was not enough, so `copilot_accounts.py` now goes through
+      `_utils.keyring_core_read`/`keyring_core_write` (macOS Keychain; Linux Secret
+      Service via `secret-tool`; Windows Credential Manager, UTF-16LE), then falls back
+      to config.json's plaintext `authTokens`, then the env vars. The per-OS branches
+      are unit-tested in `tests/test_cross_platform.py`.
+- [ ] Live-verify the Linux/Windows credential layout on a real Copilot login. The
+      service/user naming follows the keyring-core crates the CLI ships but has only
+      been observed on macOS (README Platform notes says the same).
 
 ## 1. Provider module + entry point
 
