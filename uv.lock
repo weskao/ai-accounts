@@ -18,7 +18,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "telegram-kit", specifier = ">=0.2.0,<0.3" }]
+requires-dist = [{ name = "telegram-kit", specifier = ">=0.2.2,<0.3" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -157,11 +157,11 @@ wheels = [
 
 [[package]]
 name = "telegram-kit"
-version = "0.2.1"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1c/a4/a30f1946946d1d9270490b81e6b9b8c586f5a757c71357b548af2abdb1e4/telegram_kit-0.2.1.tar.gz", hash = "sha256:95214e269ad5c3e4ca39b7dad6a0caad1fae6bbe12b911ead0a4d9b00f32f0d9", size = 20780, upload-time = "2026-09-28T04:29:01.812Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/2f/cde074208fc1349be6a20a9bfe1a21a3fc38c5c2075e04156ffa0d8e2c3b/telegram_kit-0.2.2.tar.gz", hash = "sha256:4706da2d145db427ee7a41a382316886e449d52bec6381390186c197a156276d", size = 21395, upload-time = "2026-10-03T20:39:02.228Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/db/0c90963b910c270619570b21e99ceca2190aeb3037bbc6540f568bb5c59f/telegram_kit-0.2.1-py3-none-any.whl", hash = "sha256:0df45c193342fd86261fb23f051edaa0ac00c0b813cfbf3f3fcb83a099ac71e8", size = 10565, upload-time = "2026-09-28T04:29:01.026Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/59/841180442f43848a3bb6dd21ad617bb69f15a78be0c7a10947073acd7513/telegram_kit-0.2.2-py3-none-any.whl", hash = "sha256:a73ab2ae1c81a03be359ff50975a311aef4c803b2eda674b8272102616ce305a", size = 10750, upload-time = "2026-10-03T20:39:01.199Z" },
 ]
 
 [[package]]
