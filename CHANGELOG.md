@@ -1,3 +1,8 @@
+## [0.23.2] - 2026-10-03
+
+### 💼 Other
+
+- **deps:** Require telegram-kit 0.2.2
 ## [0.23.1] - 2026-10-03
 
 ### 🐛 Bug Fixes
