@@ -1067,3 +1067,33 @@ class HelpStripingTests(unittest.TestCase):
             with self.subTest(style=style):
                 colored = present.format_help(self.HELP, style=style)
                 self.assertEqual(present.strip_ansi(colored), self.HELP)
+
+
+class RepaintTests(unittest.TestCase):
+    """In-place repaint must never scroll the terminal or chase a re-wrapped frame."""
+
+    def _paint(self, frames, size):
+        out = io.StringIO()
+        painted = 0
+        with mock.patch("shutil.get_terminal_size", return_value=os.terminal_size(size)):
+            for frame in frames:
+                painted = present.repaint(frame, out, painted)
+        return out.getvalue(), painted
+
+    def test_a_full_height_frame_never_scrolls(self) -> None:
+        text, _ = self._paint([["a", "b", "c"]] * 2, (80, 3))
+        self.assertEqual(text.count("\n"), 4)  # 2 per 3-row frame, none trailing
+        self.assertIn("\r\033[2A", text)
+
+    def test_an_overtall_frame_is_cut_to_the_terminal_rows(self) -> None:
+        text, painted = self._paint([list("abcde")], (80, 3))
+        self.assertEqual(painted, 3)
+        self.assertNotIn("d", text)
+
+    def test_a_resize_clears_instead_of_walking_up(self) -> None:
+        out = io.StringIO()
+        with mock.patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 30))):
+            painted = present.repaint(["a", "b"], out, 0)
+        with mock.patch("shutil.get_terminal_size", return_value=os.terminal_size((60, 30))):
+            present.repaint(["a", "b"], out, painted)
+        self.assertEqual(out.getvalue().count("\033[H\033[2J"), 1)

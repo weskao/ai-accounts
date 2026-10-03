@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import unicodedata
 from typing import Callable, Sequence
@@ -140,6 +141,33 @@ def elide(text: str, width: int) -> str:
 def _pad(text: str, width: int) -> str:
     """``text`` left-aligned in ``width`` visible columns (ANSI-aware ``ljust``)."""
     return text + " " * max(width - visible_len(text), 0)
+
+
+#: Terminal size the last :func:`repaint` frame was drawn at.
+_painted_size: os.terminal_size | None = None
+
+
+def repaint(lines: list[str], out, previous: int) -> int:
+    """Draw *lines* in place over the *previous*-line frame; returns the new count.
+
+    The last line gets no trailing newline: a frame as tall as the terminal
+    would scroll one row per repaint, stacking its top line in scrollback. The
+    cursor stays on that last line, so callers write one ``\\n`` when they stop
+    drawing. A frame taller than the terminal is cut to its rows (the overflow
+    would scroll off, out of the cursor-up walk's reach), and after a resize the
+    old frame may have re-wrapped, so the screen is cleared instead.
+    """
+    global _painted_size
+    size = shutil.get_terminal_size()
+    if previous and size != _painted_size:
+        prefix = "\033[H\033[2J"
+    else:
+        prefix = "\r" + (f"\033[{previous - 1}A" if previous > 1 else "") if previous else ""
+    _painted_size = size
+    lines = lines[: size.lines]
+    out.write(prefix + "\033[K\n".join(lines) + "\033[K\033[J")
+    out.flush()
+    return len(lines)
 
 
 def terminal_width() -> int | None:

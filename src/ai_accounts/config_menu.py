@@ -904,16 +904,6 @@ def step(
 # ── terminal shell (thin: draw, read one key, hand it to `step`) ─────────────
 
 
-def _draw(lines: list[str], out, previous: int) -> int:
-    """Repaint *lines* in place. Moves the cursor up over the previous frame and
-    clears to end of screen, so a frame that lost its error line leaves no
-    orphan text — and never hides the cursor, so nothing needs restoring."""
-    prefix = f"\033[{previous}A" if previous else ""
-    out.write(prefix + "".join(f"{line}\033[K\n" for line in lines) + "\033[J")
-    out.flush()
-    return len(lines)
-
-
 def run_menu(
     title: str,
     fields: Sequence[config_schema.Field] = config_schema.FIELDS,
@@ -937,7 +927,7 @@ def run_menu(
     with kr.raw_mode():
         try:
             while True:
-                painted = _draw(
+                painted = _present.repaint(
                     render(
                         title,
                         fields,
@@ -968,6 +958,8 @@ def run_menu(
             # cbreak leaves ISIG on, so a real Ctrl-C arrives as a signal
             # rather than as a decodable byte — same exit as pressing `q`.
             state = replace(state, quitting=True)
+        finally:
+            out.write("\n")  # step off the frame's last line (see _present.repaint)
     failure = saver.close()
     if failure is not None:
         # The last write did not land and there is no frame left to show it on.

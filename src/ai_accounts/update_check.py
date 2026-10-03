@@ -243,26 +243,25 @@ def update_prompt(current: str, latest: str, *, read=kr.read_key, out=None) -> s
     selected = 1
     painted = 0
     with kr.raw_mode():
-        while True:
-            lines = _update_lines(lang, current, latest, selected)
-            prefix = f"\033[{painted}A" if painted else ""
-            out.write(prefix + "".join(f"{line}\033[K\n" for line in lines) + "\033[J")
-            out.flush()
-            painted = len(lines)
-            try:
-                event = read()
-            except (KeyboardInterrupt, StopIteration):
-                return SKIP
-            if event.key in (kr.Key.CTRL_C, kr.Key.ESCAPE):
-                return SKIP
-            if event.key == kr.Key.UP:
-                selected = selected - 1 if selected > 1 else len(answers)
-            elif event.key == kr.Key.DOWN:
-                selected = selected + 1 if selected < len(answers) else 1
-            elif event.key == kr.Key.ENTER:
-                return answers[selected - 1]
-            elif event.key == kr.Key.CHAR and (event.char or "").lower() == "q":
-                return SKIP
+        try:
+            while True:
+                painted = _present.repaint(_update_lines(lang, current, latest, selected), out, painted)
+                try:
+                    event = read()
+                except (KeyboardInterrupt, StopIteration):
+                    return SKIP
+                if event.key in (kr.Key.CTRL_C, kr.Key.ESCAPE):
+                    return SKIP
+                if event.key == kr.Key.UP:
+                    selected = selected - 1 if selected > 1 else len(answers)
+                elif event.key == kr.Key.DOWN:
+                    selected = selected + 1 if selected < len(answers) else 1
+                elif event.key == kr.Key.ENTER:
+                    return answers[selected - 1]
+                elif event.key == kr.Key.CHAR and (event.char or "").lower() == "q":
+                    return SKIP
+        finally:
+            out.write("\n")  # step off the frame's last line (see _present.repaint)
 
 
 def maybe_hint() -> None:
