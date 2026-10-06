@@ -1,3 +1,8 @@
+## [0.23.4] - 2026-10-06
+
+### 🐛 Bug Fixes
+
+- **ci:** Pin ruff lint rules to pre-0.16 defaults
 ## [0.23.3] - 2026-10-06
 
 ### ⚙️ Miscellaneous Tasks
