@@ -42,7 +42,7 @@ class Provider:
     # key the quota-reset-notification feature keys its i18n lookup off of
     # (`i18n.t(f"window.{key}", default=key)` — see providers.py's module
     # docstring for why no second display-name dict exists). Empty = the
-    # provider has no quota API to watch for a reset at all (agy/grok/vibe).
+    # provider has no quota API to watch for a reset at all (vibe).
     reset_windows: tuple[str, ...] = ()
     # True when those windows can only be read from the provider's local usage
     # cache, because querying it live would perturb the shared CLI credential
@@ -68,7 +68,10 @@ PROVIDERS: list[Provider] = [
         reset_windows=("gemini_session", "gemini_weekly", "other_session", "other_weekly"),
         reset_windows_cached=True,
     ),
-    Provider("grok", "grok-accounts", "ai_accounts.grok_accounts", "grok", YELLOW, YELLOW, "auto-restart"),
+    Provider(
+        "grok", "grok-accounts", "ai_accounts.grok_accounts", "grok", YELLOW, YELLOW,
+        "auto-restart", reset_windows=("weekly", "build"),
+    ),
     Provider("vibe", "vibe-accounts", "ai_accounts.vibe_accounts", "vibe", GREEN, GREEN, None),
     # Quota-backed (autoswitch runs from the timer) but no restart-ladder entry:
     # Copilot CLI reads the keyring on launch and has no resume command.
@@ -96,7 +99,7 @@ if __name__ == "__main__":
         "codex": ("hourly", "weekly"),
         "claude": ("hourly", "weekly"),
         "agy": ("gemini_session", "gemini_weekly", "other_session", "other_weekly"),
-        "grok": (),
+        "grok": ("weekly", "build"),
         "vibe": (),
         "copilot": ("monthly",),
     }

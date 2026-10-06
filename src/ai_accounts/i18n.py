@@ -291,6 +291,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "window.hourly": {"en": "5h", "zh-TW": "5 小時"},
     "window.weekly": {"en": "weekly", "zh-TW": "每週"},
     "window.monthly": {"en": "monthly", "zh-TW": "每月"},
+    "window.build": {"en": "Grok Build", "zh-TW": "Grok Build"},
     # agy's four windows, named as its own list table heads them (GEMINI 5H /
     # GEMINI 1W / CLAUDE-GPT 5H / CLAUDE-GPT 1W).
     "window.gemini_session": {"en": "Gemini 5h", "zh-TW": "Gemini 5 小時"},

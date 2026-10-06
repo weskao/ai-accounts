@@ -819,6 +819,8 @@ Provider coverage:
 
 - `codex` / `claude` — hourly and weekly windows
 - `copilot` — the monthly window
+- `grok` — weekly SuperGrok credits and the Grok Build slice (`1W USED` /
+  `BUILD USED` in `grok-accounts list`)
 - `agy` — all four windows (Gemini 5h/weekly, Claude/GPT 5h/weekly), but read
   from its local usage cache rather than probed live: `agy-accounts list`
   activates each profile through the shared credential slot to query it, which
@@ -829,7 +831,7 @@ Provider coverage:
   time is then computed rather than reported by the provider, agy
   notifications say the reading came from the cache instead of quoting a next
   reset time.
-- `grok` / `vibe` — not supported: neither has a quota API to watch.
+- `vibe` — not supported: no quota API to watch.
 
 Detection only happens on a timer tick, so a notification lands up to one
 tick interval (`install-timer`'s `--interval`, default 1800 seconds) after

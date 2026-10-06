@@ -17,7 +17,7 @@ from unittest import mock
 from ai_accounts import autoswitch as aw
 from ai_accounts import quota_reset as qr
 from ai_accounts import usage_format
-from ai_accounts.providers import Provider
+from ai_accounts.providers import PROVIDERS, Provider
 from ai_accounts.usage_format import UsageWindow
 
 
@@ -723,6 +723,46 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(result["work"]["weekly"].plan, "team · 5x")
         # A provider that reports no plan leaves it None rather than guessing.
         self.assertIsNone(result["no-plan"]["hourly"].plan)
+
+    def test_collect_all_watches_grok(self) -> None:
+        # Grok's list --json already reports weekly/build windows. Leaving
+        # reset_windows empty (the old "no quota API" assumption) is how a
+        # restore never produces a Telegram — collect never asks grok at all.
+        with mock.patch.object(qr, "_collect_one", return_value={}):
+            snapshot = qr._collect_all()
+        self.assertIn("grok", snapshot)
+        self.assertNotIn("vibe", snapshot)
+
+    def test_collect_one_parses_grok_weekly_and_build_windows(self) -> None:
+        grok = next(provider for provider in PROVIDERS if provider.key == "grok")
+        payload = [
+            {
+                "name": "work",
+                "no_quota_api": False,
+                "plan": "SuperGrok",
+                "usage": {
+                    "weekly": {"percent": 95, "reset_time": 1000},
+                    "build": {"percent": 80, "reset_time": 1000},
+                },
+            }
+        ]
+        with mock.patch.object(
+            qr.u,
+            "run",
+            return_value=subprocess.CompletedProcess(
+                [], returncode=0, stdout=json.dumps(payload)
+            ),
+        ):
+            result = qr._collect_one(grok)
+
+        self.assertEqual(
+            result["work"]["weekly"],
+            qr.WindowSnapshot(used_pct=95, reset_time=1000, plan="SuperGrok"),
+        )
+        self.assertEqual(
+            result["work"]["build"],
+            qr.WindowSnapshot(used_pct=80, reset_time=1000, plan="SuperGrok"),
+        )
 
 
 class StateFileTests(unittest.TestCase):

@@ -87,6 +87,7 @@ still fires later.
 |---|---|---|
 | codex | Zeroes 5h and weekly, **and restarts the weekly count from the reset moment** | Deadline jumps — a weekly window with 3 days left suddenly ends 7 days out |
 | claude | Zeroes 5h and weekly, **weekly deadline left where it was** | Deadline held, so the fall itself is the proof |
+| grok | Zeroes weekly SuperGrok credits and the Grok Build slice, **and starts a new weekly period** | Deadline jumps — the period end moves a week out |
 
 | Case | Notifications |
 |---|---|
@@ -159,7 +160,7 @@ reading came from the cache instead of quoting a next-reset time.
 
 | Provider | Why |
 |---|---|
-| grok, vibe | No quota API to watch — `reset_windows` is empty, so nothing is collected |
+| vibe | No quota API to watch — `reset_windows` is empty, so nothing is collected |
 | copilot | The monthly window is watched, but its endpoint is unverified; a parse or HTTP failure degrades to `no_quota_api` and that profile is skipped |
 
 A provider whose collection failed keeps its previous state untouched, so a transient

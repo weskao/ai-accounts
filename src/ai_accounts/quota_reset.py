@@ -5,7 +5,7 @@ item).
 Three layers, kept separate so the detection rule can be unit-tested with no
 subprocess and no clock: :func:`collect` gathers a fresh usage snapshot per
 watched provider (every entry in ``providers.PROVIDERS`` with a non-empty
-``reset_windows`` — codex/claude/copilot through their `list --json`, agy from
+``reset_windows`` — codex/claude/copilot/grok through their `list --json`, agy from
 its local cache instead, see :func:`_collect_agy_cached`); :func:`detect` is a
 pure function comparing that snapshot against the previous tick's stored
 state; :func:`run_tick` wires them together and sends the notification.

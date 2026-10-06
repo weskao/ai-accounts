@@ -309,8 +309,8 @@ FIELDS: tuple[Field, ...] = (
         help="Bot API chat id that receives the notification.",
         group="Notifications",
     ),
-    # Quota-reset notifications: grok/vibe have zero reset windows to watch
-    # (providers.PROVIDERS' `reset_windows`), so this has no effect for them.
+    # Quota-reset notifications: vibe has zero reset windows to watch
+    # (providers.PROVIDERS' `reset_windows`), so this has no effect for it.
     # agy is included — its readings come from its local usage cache rather
     # than a live probe, but the setting does govern them.
     Field(
@@ -321,6 +321,7 @@ FIELDS: tuple[Field, ...] = (
             "claude-accounts",
             "codex-accounts",
             "copilot-accounts",
+            "grok-accounts",
         ),
         type=bool,
         default=True,
@@ -336,6 +337,7 @@ FIELDS: tuple[Field, ...] = (
             "claude-accounts",
             "codex-accounts",
             "copilot-accounts",
+            "grok-accounts",
         ),
         type=int,
         default=90,
