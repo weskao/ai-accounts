@@ -86,7 +86,13 @@ def _window(bucket: JsonDict) -> UsageWindow | None:
     used = round((1 - max(0.0, min(1.0, float(remaining)))) * 100)
     bucket_id = str(bucket.get("bucketId", "")).lower()
     display_name = str(bucket.get("displayName", "")).lower()
-    window_minutes = 7 * 24 * 60 if "week" in bucket_id + display_name else 5 * 60
+    period = bucket.get("window")
+    if isinstance(period, str) and period.strip():
+        window_minutes = {"weekly": 7 * 24 * 60, "five-hour": 5 * 60}.get(period.strip().lower())
+        if window_minutes is None:
+            return None
+    else:
+        window_minutes = 7 * 24 * 60 if "week" in bucket_id + display_name else 5 * 60
     return UsageWindow(
         percentage=used,
         reset_time=_reset_time(bucket.get("resetTime")),
@@ -264,6 +270,7 @@ WATCHED_FIELDS: dict[str, tuple[str, ...]] = {
         "response.groups[].displayName",
         "response.groups[].buckets[].bucketId",
         "response.groups[].buckets[].displayName",
+        "response.groups[].buckets[].window",
         "response.groups[].buckets[].remainingFraction",
         "response.groups[].buckets[].resetTime",
     ),

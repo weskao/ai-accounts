@@ -410,6 +410,12 @@ The object holds:
 It reads only the live session, so no saved profile is ever made live for it.
 agy omits fields that hold a default value, so a spent bucket's
 `remainingFraction` can be missing without any API change.
+Quota periods use the bucket's `window` field, falling back to its ID/name
+when that field is missing or blank; unknown explicit periods remain unavailable.
+If agy returns only weekly buckets,
+the 5-hour readings remain unavailable; they are not inferred from weekly
+quota. Optional tier UI fields such as `upgradeButtonText` do not affect
+email or PLAN parsing.
 
 agy can answer `GetUserStatus` before its keyring session has loaded. That
 early reply carries only an error message and no email or tier. Quota reading

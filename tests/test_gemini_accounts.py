@@ -428,6 +428,47 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(other_week.percentage, 0)
         self.assertIsNone(other_session)
 
+    def test_explicit_weekly_window_does_not_require_weekly_bucket_labels(self) -> None:
+        summary: gu.JsonDict = {"response": {"groups": [
+            {"displayName": family, "buckets": [{
+                "bucketId": "quota", "displayName": "Limit Remaining",
+                "window": "weekly", "remainingFraction": 0.75,
+            }]}
+            for family in ("Gemini Models", "Claude and GPT models")
+        ]}}
+        status: gu.JsonDict = {"userStatus": {
+            "email": "user@example.com",
+            "userTier": {"id": "free-tier", "upgradeButtonText": "Upgrade"},
+        }}
+        snapshot = gu._snapshot(summary, status)
+        for window in (snapshot.gemini_weekly, snapshot.other_weekly):
+            self.assertIsNotNone(window)
+            if window is None:
+                self.fail("explicit weekly quota was misclassified")
+            self.assertEqual(window.percentage, 25)
+            self.assertEqual(window.window_minutes, 10080)
+        self.assertIsNone(snapshot.gemini_session)
+        self.assertIsNone(snapshot.other_session)
+        self.assertEqual((snapshot.email, snapshot.plan), ("user@example.com", "Free"))
+
+    def test_explicit_quota_period_overrides_legacy_labels(self) -> None:
+        for period, expected_minutes in (("five-hour", 300), ("daily", None), ("unknown", None)):
+            with self.subTest(period=period):
+                snapshot = gu._snapshot({"groups": [{
+                    "displayName": "Gemini Models", "buckets": [{
+                        "bucketId": "weekly", "window": period,
+                        "remainingFraction": 0.5,
+                    }],
+                }]}, {})
+                self.assertIsNone(snapshot.gemini_weekly)
+                if expected_minutes is None:
+                    self.assertIsNone(snapshot.gemini_session)
+                else:
+                    self.assertIsNotNone(snapshot.gemini_session)
+                    if snapshot.gemini_session is None:
+                        self.fail("expected explicit five-hour quota")
+                    self.assertEqual(snapshot.gemini_session.window_minutes, expected_minutes)
+
     def test_spent_bucket_omits_its_fraction_and_reads_full(self) -> None:
         """agy answers in proto3 JSON, which drops default values: a fully
         spent bucket carries no ``remainingFraction`` at all (0.0 is the
@@ -598,6 +639,10 @@ class UsageTests(unittest.TestCase):
         self.assertTrue(result["parsed"]["gemini_weekly"])
         self.assertFalse(result["parsed"]["other_weekly"])
         self.assertIn("userStatus.email", result["watched"]["GetUserStatus"])
+        self.assertIn(
+            "response.groups[].buckets[].window",
+            result["watched"]["RetrieveUserQuotaSummary"],
+        )
         self.assertEqual(result["buckets"], ["Gemini · weekly · ?"])
         self.assertNotIn("user@example.com", out.getvalue())
         self.assertNotIn("0.5", out.getvalue())
