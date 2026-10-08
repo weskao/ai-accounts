@@ -1,3 +1,8 @@
+## [0.23.6] - 2026-10-08
+
+### 🐛 Bug Fixes
+
+- **update:** Show ctrl+c skip shortcut
 ## [0.23.5] - 2026-10-08
 
 ### 🐛 Bug Fixes
