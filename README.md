@@ -76,6 +76,8 @@ When a newer GitHub release exists, any command run in a real terminal (both
 stdin and stdout are a TTY) ends by asking — `❯ Update now` / `Skip` / `Skip
 until next version` — instead of just hinting. Choosing *Update now* runs the
 `uv tool install --force --from git+…@vX.Y.Z ai-accounts` install for you;
+pressing `q` or `Ctrl+C` skips the prompt. Its labels follow the configured
+language (English or Traditional Chinese).
 *Skip until next version* is remembered (in the same cache file) so the
 prompt stays quiet until a release past that one shows up. A command whose
 output is piped, or run from the scheduled timer or a vendor-CLI hook, falls
@@ -860,11 +862,11 @@ period.
 
 ## Language
 
-Notifications, the interactive config menu, `agy-accounts list`'s
-usage-freshness footer notes, and every tool's `help`/`-h`/`--help` output are
-localized. English (`en`) and Traditional Chinese (`zh-TW`) are available; the
-default follows the OS locale and falls back to English for a locale with no
-translation:
+Notifications, the interactive config menu, the version update prompt,
+`agy-accounts list`'s usage-freshness footer notes, and every tool's
+`help`/`-h`/`--help` output are localized. English (`en`) and Traditional
+Chinese (`zh-TW`) are available; the default follows the OS locale and falls
+back to English for a locale with no translation:
 
 ```sh
 ai-accounts config set language zh-TW

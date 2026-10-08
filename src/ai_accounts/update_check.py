@@ -225,7 +225,7 @@ def _update_lines(lang: str, current: str, latest: str, selected: int) -> list[s
     hint = " · ".join([
         f"{u.CYAN}↑↓{u.RESET} {i18n.t('update.select', lang)}",
         f"{u.CYAN}⏎{u.RESET} {i18n.t('update.confirm', lang)}",
-        f"{u.CYAN}q{u.RESET} {i18n.t('update.skip_key', lang)}",
+        f"{u.CYAN}q/Ctrl+C{u.RESET} {i18n.t('update.skip_key', lang)}",
     ])
     lines.append(f"{u.CYAN}│{u.RESET}  {hint}")
     lines.append(f"{u.CYAN}╰{'─' * (box_w - 1)}╯{u.RESET}")
