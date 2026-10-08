@@ -1,3 +1,9 @@
+## [0.23.5] - 2026-10-08
+
+### 🐛 Bug Fixes
+
+- **quota-reset:** Watch grok weekly/build windows
+- **gemini:** Respect explicit quota windows
 ## [0.23.4] - 2026-10-06
 
 ### 🐛 Bug Fixes
