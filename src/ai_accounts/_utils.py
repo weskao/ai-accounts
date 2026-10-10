@@ -12,7 +12,6 @@ import os
 import re
 import time
 from functools import lru_cache, wraps
-from importlib import metadata
 from pathlib import Path
 import shutil
 import subprocess
@@ -254,8 +253,10 @@ def have(cmd: str) -> bool:
 
 
 def package_version() -> str:
-    """Installed ai-accounts version, from package metadata (not source checkout)."""
-    return metadata.version("ai-accounts")
+    """Running ai-accounts version (the package constant; no metadata lookup)."""
+    from . import __version__
+
+    return __version__
 
 
 def plan_tier_color(label: str, tiers: Sequence[str] = ()) -> str:

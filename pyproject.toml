@@ -1,6 +1,6 @@
 [project]
 name = "ai-accounts"
-version = "0.23.6"
+dynamic = ["version"]
 description = "Manage and switch profiles across AI coding CLIs"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,9 @@ Issues = "https://github.com/weskao/ai-accounts/issues"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/ai_accounts/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai_accounts"]
