@@ -19,11 +19,11 @@ CLI actually uses). Follow the same three-step shape.
       The first best-effort guess (token inside config.json, keyring service
       `com.github.copilot`) was wrong on both counts and made `save` report "no login";
       fixed in `copilot_accounts.py`. Still open: Linux/Windows store layout.
-- [ ] Env-var precedence the CLI honors (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`,
-      `GITHUB_TOKEN`). `switch` must not be shadowed by an exported token; warn like the
-      other tools do. Implemented best-effort (the order above, with a `switch`/`who`
-      shadow warning), see `# ASSUMPTION:` comment above `_ENV_VARS` in
-      `copilot_accounts.py` — exact precedence needs live verification.
+- [x] Env-var precedence the CLI honors (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`,
+      `GITHUB_TOKEN`). **Verified (2026-10-11, Copilot CLI 1.0.91 bundle `app.js`):**
+      that order, first non-empty wins, and an exported token takes precedence over the
+      stored login (Codespaces' auto-injected `GITHUB_TOKEN` excepted). `_ENV_VARS` order
+      was already right; the `switch`/`who` shadow warning wording now says so.
 - [x] Identity: `GET https://api.github.com/user` (login, email) for the default profile
       name. Decide login-vs-email when email is private. Implemented in
       `_fetch_identity`/`_derived_name` (`copilot_accounts.py`) against GitHub's

@@ -9,9 +9,10 @@ then JSON — and names the signed-in account under ``lastLoggedInUser``
 (``{"host", "login"}``) with no token in it; the OAuth token itself is a
 Keychain generic-password item, service ``copilot-cli``, account
 ``<host>:<login>``. ``switch`` therefore writes that keyring item and points
-``lastLoggedInUser`` at the profile. The remaining unverified pieces (env-var
-precedence, the quota endpoint, non-macOS stores) still carry an
-``# ASSUMPTION:`` comment and fall through quietly rather than raise.
+``lastLoggedInUser`` at the profile. Env-var precedence is verified
+(see ``_ENV_VARS``); the remaining unverified pieces (the quota endpoint,
+non-macOS stores) still carry an ``# ASSUMPTION:`` comment and fall through
+quietly rather than raise.
 """
 
 from __future__ import annotations
@@ -147,10 +148,12 @@ def _copilot_home() -> Path:
 _CONFIG_FILENAME = "config.json"
 _DEFAULT_HOST = "https://github.com"
 _KEYCHAIN_SERVICE = "copilot-cli"
-# ASSUMPTION: env-var precedence. The Copilot CLI is documented to read
-# $GITHUB_TOKEN / $GH_TOKEN; $COPILOT_GITHUB_TOKEN is the Copilot-specific
-# override reported to outrank both. Exact order unconfirmed — the warning in
-# `switch`/`who` exists precisely because any of them can shadow a switch.
+# Verified against Copilot CLI 1.0.91 (cached bundle `app.js`: the login flow's
+# `["COPILOT_GITHUB_TOKEN","GH_TOKEN","GITHUB_TOKEN"]` list, first non-empty
+# wins; the CLI's own help text says "in order of precedence ... takes
+# precedence over previously stored credentials"). So an exported token beats
+# the keyring login `switch` writes — hence the warning. Exception (Codespaces
+# only): the auto-injected GITHUB_TOKEN does not outrank a `/login` account.
 _ENV_VARS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
 
 _USER_URL = "https://api.github.com/user"
@@ -294,9 +297,10 @@ def _env_token() -> tuple[str, str] | None:
 
 
 def _read_active() -> str | None:
-    """The token the Copilot CLI would use: the keyring item for config.json's
-    signed-in login, then its plaintext `authTokens` entry, then an exported
-    env var as the last resort."""
+    """The stored login: the keyring item for config.json's signed-in login,
+    then its plaintext `authTokens` entry, then an exported env var as the last
+    resort. Deliberately store-first (so `save` captures the login, not a PAT)
+    even though the CLI itself prefers an exported env var over the store."""
     from_store = _read_keychain_token() or _read_plaintext_token()
     if from_store:
         return from_store
@@ -319,7 +323,7 @@ def _warn_env_shadow() -> None:
     env = _env_token()
     if env is None:
         return
-    log_yellow(f"⚠️  ${env[0]} is exported — it can shadow the account you switch to.")
+    log_yellow(f"⚠️  ${env[0]} is exported — the Copilot CLI prefers it over the stored login, so it shadows the account you switch to.")
     print(f"{DIM}   Unset it for these commands to take effect: unset {env[0]}{RESET}", file=sys.stderr)
 
 

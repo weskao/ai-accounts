@@ -148,6 +148,15 @@ class CopilotAccountsTests(unittest.TestCase):
         self.keychain[(ca._KEYCHAIN_SERVICE, f"{_HOST}:testuser")] = _TOKEN
         self.assertIsNone(ca._read_active())
 
+    def test_env_var_order_matches_the_cli(self) -> None:
+        # Verified against Copilot CLI 1.0.91: first non-empty of these wins.
+        self.assertEqual(ca._ENV_VARS, ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"))
+        env = {"GITHUB_TOKEN": "ghp_c", "GH_TOKEN": "ghp_b", "COPILOT_GITHUB_TOKEN": "  "}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(ca._env_token(), ("GH_TOKEN", "ghp_b"))
+            os.environ["COPILOT_GITHUB_TOKEN"] = "ghp_a"
+            self.assertEqual(ca._env_token(), ("COPILOT_GITHUB_TOKEN", "ghp_a"))
+
     def test_env_token_is_the_last_resort_and_warns(self) -> None:
         with mock.patch.dict(os.environ, {"GH_TOKEN": "ghp_env_token"}, clear=False):
             self.assertEqual(ca._read_active(), "ghp_env_token")
