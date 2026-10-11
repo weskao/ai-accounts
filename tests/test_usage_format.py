@@ -79,13 +79,13 @@ class TestResetVoucherRendering(unittest.TestCase):
     def test_expiry_lists_every_voucher_soonest_first(self) -> None:
         soon, late = _NOW + 11 * _DAY + 4 * 3600 + 120, _NOW + 30 * _DAY
         self.assertEqual(
-            uf.format_reset_expiry(uf.ResetVouchers(2, (late, soon)), now=_NOW), "11d 4h, 30d 0h"
+            uf.format_reset_expiry(uf.ResetVouchers(2, (late, soon)), now=_NOW), "11d 4h\n30d 0h"
         )
 
     def test_vouchers_expiring_at_the_same_time_are_grouped_with_a_count(self) -> None:
         soon, late = _NOW + 2 * _DAY, _NOW + 9 * _DAY + 3600
         vouchers = uf.ResetVouchers(3, (late, soon, soon + 60))
-        self.assertEqual(uf.format_reset_expiry(vouchers, now=_NOW), "2d 0h ×2, 9d 1h")
+        self.assertEqual(uf.format_reset_expiry(vouchers, now=_NOW), "2d 0h ×2\n9d 1h")
 
     def test_expiry_is_dash_when_unknown_or_none(self) -> None:
         self.assertEqual(uf.format_reset_expiry(None, now=_NOW), "—")

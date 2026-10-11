@@ -442,6 +442,23 @@ class ResetVoucherColumnTests(unittest.TestCase):
         self.assertIn("VOUCHERS", text)
         self.assertIn("VOUCHER EXPIRY", text)
 
+    def test_wide_table_stacks_each_expiry_on_its_own_line(self) -> None:
+        day = 86_400
+        rows = self._rows(usage_format.ResetVouchers(3, (1_000 + 11 * day, 1_000 + 18 * day, 1_000 + 26 * day)))
+        lines = _capture(present.accounts_table, rows, self._COLUMNS, style="classic").splitlines()
+        self.assertTrue(any("│ 11d 0h         │" in line for line in lines), lines)
+        self.assertTrue(any("│ 18d 0h         │" in line for line in lines), lines)
+        self.assertEqual(len({present.visible_len(line) for line in lines}), 1, lines)
+
+    def test_narrow_cards_indent_every_expiry_line(self) -> None:
+        day = 86_400
+        rows = self._rows(usage_format.ResetVouchers(2, (1_000 + 11 * day, 1_000 + 18 * day)))
+        text = _capture(present.accounts_table, rows, self._COLUMNS, mode="narrow")
+        plain = present._ANSI_RE.sub("", text).splitlines()
+        first = next(line for line in plain if "11d 0h" in line)
+        second = next(line for line in plain if "18d 0h" in line)
+        self.assertEqual(first.index("11d"), second.index("18d"), plain)
+
 
 if __name__ == "__main__":
     unittest.main()

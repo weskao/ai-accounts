@@ -535,7 +535,7 @@ def table_lines(
         return []
     headers, keys = zip(*columns, strict=True)
     widths = [
-        max(visible_len(h), max((visible_len(r[k]) for r in rows), default=0))
+        max(visible_len(h), max((visible_len(part) for r in rows for part in r[k].split("\n")), default=0))
         for h, k in zip(headers, keys)
     ]
 
@@ -547,6 +547,14 @@ def table_lines(
         return f"{FRAME}{line}{RESET}" if modern else line
 
     def row(cells: list[str], band: str = "") -> str:
+        # A multi-line cell (``"\n"``-separated) grows the row; shorter cells pad blank.
+        if any("\n" in cell for cell in cells):
+            stacked = [cell.split("\n") for cell in cells]
+            height = max(len(parts) for parts in stacked)
+            return "\n".join(
+                row([parts[i] if i < len(parts) else "" for parts in stacked], band)
+                for i in range(height)
+            )
         parts = [
             f" {_reband(cell, band)}{' ' * (w - visible_len(cell))} "
             for cell, w in zip(cells, widths)
@@ -612,7 +620,7 @@ def _accounts_cards(rows: list[dict[str, str]], columns: Sequence[tuple[str, str
             for part in wrap(state, width - 2) if state else ():
                 print(f"  {part}")
         for header, key in fields:
-            chunks = wrap(row[key], width - indent)
+            chunks = [c for line in row[key].split("\n") for c in wrap(line, width - indent)]
             label = _pad(elide(header, label_width), label_width)
             print(f"  {DIM}{label}{RESET}  {chunks[0]}")
             for extra in chunks[1:]:

@@ -202,7 +202,7 @@ relay them) add two columns after `1W USED`:
 | Column | Meaning |
 | --- | --- |
 | `VOUCHERS` | Vouchers left on the account, right-aligned |
-| `VOUCHER EXPIRY` | Time until each unexpired voucher runs out, soonest first, e.g. `11d 4h ×2, 18d 2h` (`×2` = two vouchers expire then) |
+| `VOUCHER EXPIRY` | Time until each unexpired voucher runs out, soonest first, one per line, e.g. `11d 4h ×2` then `18d 2h` below it (`×2` = two vouchers expire then) |
 
 Both columns disappear when no row knows its count, and appear as labelled
 fields on the narrow card layout. A dim `—` means **unknown** (the provider did

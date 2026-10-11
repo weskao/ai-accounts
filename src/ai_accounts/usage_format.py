@@ -348,12 +348,12 @@ def format_reset_count(vouchers: ResetVouchers | None) -> str:
 
 
 def format_reset_expiry(vouchers: ResetVouchers | None, now: float | None = None) -> str:
-    """Time until each voucher expires, soonest first, e.g. ``11d 4h ×2, 18d 2h`` —
-    vouchers that read the same are grouped with a count. ``—`` when unknown or there
+    """Time until each voucher expires, soonest first, one per line, e.g.
+    ``11d 4h ×2\n18d 2h`` — vouchers that read the same are grouped with a count. ``—`` when unknown or there
     is none. Days-scale, so it reuses :func:`format_elapsed`."""
     now = time.time() if now is None else now
     groups = Counter(format_elapsed(int(ts - now)) for ts in _upcoming(vouchers, now))
-    return ", ".join(f"{text} ×{n}" if n > 1 else text for text, n in groups.items()) or "—"
+    return "\n".join(f"{text} ×{n}" if n > 1 else text for text, n in groups.items()) or "—"
 
 
 def reset_vouchers_json(vouchers: ResetVouchers | None, now: float | None = None) -> dict[str, object] | None:
