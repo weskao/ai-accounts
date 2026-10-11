@@ -391,7 +391,7 @@ class TableGrammarTests(unittest.TestCase):
 
 
 class ResetVoucherColumnTests(unittest.TestCase):
-    """The shared VOUCHERS / VOUCHER EXPIRY pair: cell rendering, right-aligned counts,
+    """The shared RESETS LEFT / RESETS EXPIRE pair: cell rendering, right-aligned counts,
     hidden when unknown everywhere, and present on the narrow card layout."""
 
     _COLUMNS = [("PROFILE", "profile"), *present.RESET_COLUMNS]
@@ -415,8 +415,8 @@ class ResetVoucherColumnTests(unittest.TestCase):
             self._COLUMNS,
             optional_columns=present.RESET_OPTIONAL_COLUMNS,
         )
-        self.assertNotIn("VOUCHERS", text)
-        self.assertNotIn("VOUCHER EXPIRY", text)
+        self.assertNotIn("RESETS LEFT", text)
+        self.assertNotIn("RESETS EXPIRE", text)
 
     def test_wide_table_right_aligns_counts_and_keeps_zero(self) -> None:
         rows = self._rows(usage_format.ResetVouchers(12), usage_format.ResetVouchers(0))
@@ -428,8 +428,8 @@ class ResetVoucherColumnTests(unittest.TestCase):
             numeric_keys=("resets",),
             style="classic",
         )
-        self.assertIn("│ 12       │", text)
-        self.assertIn("│  0       │", text)
+        self.assertIn("│ 12          │", text)
+        self.assertIn("│  0          │", text)
 
     def test_narrow_cards_show_the_columns_even_when_unknown(self) -> None:
         text = _capture(
@@ -439,15 +439,15 @@ class ResetVoucherColumnTests(unittest.TestCase):
             optional_columns=present.RESET_OPTIONAL_COLUMNS,
             mode="narrow",
         )
-        self.assertIn("VOUCHERS", text)
-        self.assertIn("VOUCHER EXPIRY", text)
+        self.assertIn("RESETS LEFT", text)
+        self.assertIn("RESETS EXPIRE", text)
 
     def test_wide_table_stacks_each_expiry_on_its_own_line(self) -> None:
         day = 86_400
         rows = self._rows(usage_format.ResetVouchers(3, (1_000 + 11 * day, 1_000 + 18 * day, 1_000 + 26 * day)))
         lines = _capture(present.accounts_table, rows, self._COLUMNS, style="classic").splitlines()
-        self.assertTrue(any("│ 11d 0h         │" in line for line in lines), lines)
-        self.assertTrue(any("│ 18d 0h         │" in line for line in lines), lines)
+        self.assertTrue(any("│ 11d 0h        │" in line for line in lines), lines)
+        self.assertTrue(any("│ 18d 0h        │" in line for line in lines), lines)
         self.assertEqual(len({present.visible_len(line) for line in lines}), 1, lines)
 
     def test_narrow_cards_indent_every_expiry_line(self) -> None:

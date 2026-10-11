@@ -454,7 +454,7 @@ def usage_color(percentage: int) -> str:
 
 # Reset-voucher (重置券) columns, shared by the Codex and Claude listings so neither
 # re-declares them. Optional: hidden when no row knows its voucher count.
-RESET_COLUMNS: Final = (("VOUCHERS", "resets"), ("VOUCHER EXPIRY", "reset_expiry"))
+RESET_COLUMNS: Final = (("RESETS LEFT", "resets"), ("RESETS EXPIRE", "reset_expiry"))
 RESET_OPTIONAL_COLUMNS: Final = frozenset(key for _, key in RESET_COLUMNS)
 
 

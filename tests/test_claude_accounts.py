@@ -482,9 +482,9 @@ class ProfileCommandTests(_HomeMixin):
         with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
             _, output, _ = self.capture(ca.cmd_list)
         text = ca._ANSI_RE.sub("", output)
-        self.assertIn("VOUCHERS", text)
-        self.assertIn("VOUCHER EXPIRY", text)
-        self.assertIn("│ 1        │ 11d 4h         │", text)
+        self.assertIn("RESETS LEFT", text)
+        self.assertIn("RESETS EXPIRE", text)
+        self.assertIn("│ 1           │ 11d 4h        │", text)
 
     def test_reset_counts_are_right_aligned_in_the_resets_column(self) -> None:
         self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
@@ -497,8 +497,8 @@ class ProfileCommandTests(_HomeMixin):
         ):
             _, output, _ = self.capture(ca.cmd_list)
         text = ca._ANSI_RE.sub("", output)
-        self.assertIn("│  3       │", text)
-        self.assertIn("│ 12       │", text)
+        self.assertIn("│  3          │", text)
+        self.assertIn("│ 12          │", text)
 
     def test_list_hides_reset_columns_when_count_unknown(self) -> None:
         self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
@@ -506,8 +506,8 @@ class ProfileCommandTests(_HomeMixin):
         with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
             _, output, _ = self.capture(ca.cmd_list)
         text = ca._ANSI_RE.sub("", output)
-        self.assertNotIn("VOUCHERS", text)
-        self.assertNotIn("VOUCHER EXPIRY", text)
+        self.assertNotIn("RESETS LEFT", text)
+        self.assertNotIn("RESETS EXPIRE", text)
 
     def test_zero_vouchers_render_zero_not_dash(self) -> None:
         self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))

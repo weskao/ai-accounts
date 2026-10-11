@@ -1299,9 +1299,9 @@ class UsageRequestTests(_CodexHomeMixin):
             rc = ca.cmd_list()
         text = ca._ANSI_RE.sub("", out.getvalue())
         self.assertEqual(rc, 0)
-        self.assertIn("VOUCHERS", text)
-        self.assertIn("VOUCHER EXPIRY", text)
-        self.assertIn("│ 3        │ 11d 4h         │", text)
+        self.assertIn("RESETS LEFT", text)
+        self.assertIn("RESETS EXPIRE", text)
+        self.assertIn("│ 3           │ 11d 4h        │", text)
         expiries.assert_called_once()
 
     def test_list_hides_reset_columns_when_count_unknown_and_skips_the_expiry_fetch(self):
@@ -1312,8 +1312,8 @@ class UsageRequestTests(_CodexHomeMixin):
                 redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
             ca.cmd_list()
         text = ca._ANSI_RE.sub("", out.getvalue())
-        self.assertNotIn("VOUCHERS", text)
-        self.assertNotIn("VOUCHER EXPIRY", text)
+        self.assertNotIn("RESETS LEFT", text)
+        self.assertNotIn("RESETS EXPIRE", text)
         expiries.assert_not_called()
 
     def test_zero_vouchers_show_zero_and_expiry_dash(self):

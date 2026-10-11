@@ -157,7 +157,7 @@ def _money(minor: int, credits: ExtraUsage) -> str:
 
 def format_credits(credits: ExtraUsage | None, *, now: float | None = None) -> str:
     """Two-line table cell ``66% · $66.26 / $100.00`` + ``resets 20d 7h`` (time left,
-    like VOUCHER EXPIRY); ``—`` when unknown."""
+    like RESETS EXPIRE); ``—`` when unknown."""
     if credits is None:
         return "—"
     now = time.time() if now is None else now

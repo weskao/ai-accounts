@@ -207,14 +207,14 @@ class AiAccountsTest(unittest.TestCase):
     def test_reset_voucher_data_passes_through_the_umbrella_untouched(self) -> None:
         # The umbrella only relays each provider's output: the voucher columns
         # ride the table text, and `reset_vouchers` rides the --json document.
-        table = "│ PROFILE │ VOUCHERS │ VOUCHER EXPIRY │\n│ work    │ 3        │ 11d 4h         │"
+        table = "│ PROFILE │ RESETS LEFT │ RESETS EXPIRE │\n│ work    │ 3        │ 11d 4h         │"
         vouchers = {"count": 3, "expires_soonest": "2099-01-01T00:00:00Z", "vouchers": []}
 
         with mock.patch.object(aa, "_run_list", side_effect=lambda m: _fake(m, table)):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 aa.cmd_list()
-        self.assertIn("VOUCHER EXPIRY", buf.getvalue())
+        self.assertIn("RESETS EXPIRE", buf.getvalue())
         self.assertIn("11d 4h", buf.getvalue())
 
         def run(module: str, command: str) -> subprocess.CompletedProcess[str]:

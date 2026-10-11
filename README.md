@@ -206,13 +206,13 @@ relay them) add two columns after `1W USED`:
 
 | Column | Meaning |
 | --- | --- |
-| `VOUCHERS` | Vouchers left on the account, right-aligned |
-| `VOUCHER EXPIRY` | Time until each unexpired voucher runs out, soonest first, one per line, e.g. `11d 4h ×2` then `18d 2h` below it (`×2` = two vouchers expire then) |
+| `RESETS LEFT` | Vouchers left on the account, right-aligned |
+| `RESETS EXPIRE` | Time until each unexpired voucher runs out, soonest first, one per line, e.g. `11d 4h ×2` then `18d 2h` below it (`×2` = two vouchers expire then) |
 
 Both columns disappear when no row knows its count, and appear as labelled
 fields on the narrow card layout. A dim `—` means **unknown** (the provider did
 not say, the lookup failed, or this client is not eligible to be told) and is
-different from `0`, which means the account really has none. `VOUCHER EXPIRY` is `—`
+different from `0`, which means the account really has none. `RESETS EXPIRE` is `—`
 whenever there is no future expiry to show.
 
 `--json` adds a `reset_vouchers` object to each Codex and Claude profile:
@@ -271,7 +271,7 @@ resets 20d 7h
 ```
 
 That is the share of the monthly limit used, spent / limit, and the time left
-until the month rolls over (counted like `VOUCHER EXPIRY`). `--json` keeps the
+until the month rolls over (counted like `RESETS EXPIRE`). `--json` keeps the
 date as `resets_on`. The percent is colored like the usage columns (green, yellow
 from 50%, red from 80%). The column disappears when no account has extra usage
 turned on. `save`, `switch` and `login-switch` end with the same table, so they
