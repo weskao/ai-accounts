@@ -248,7 +248,7 @@ def notify(title: str, message: str) -> bool:
 # the raw notify() would repeat it every minute. State is a {state_key: sent_at}
 # map beside the config: a key inside its cooldown stays silent, an unseen key
 # (other provider, candidate reappeared) speaks up immediately. Keyed rather
-# than a single slot because ai-accounts drives five providers together — two
+# than a single slot because ai-accounts drives eight providers together — two
 # can be out of candidates at once, and one must not evict the other.
 
 def state_path() -> Path:
@@ -490,12 +490,12 @@ def run_autoswitch(
 # "Seamless switch, else auto-restart, else prompt the user" (the requirement
 # this implements). See docs/autoswitch-hot-reload-spike.md — its probes found
 # NO provider hot-reloads credentials today, so "seamless" is unreachable for
-# all five; it stays in the vocabulary for the day one gains it.
+# every provider; it stays in the vocabulary for the day one gains it.
 
 RUNGS = ("seamless", "auto-restart", "manual-restart")
 
 # Plain data, not a config key — see docs/autoswitch-hot-reload-spike.md
-# "Summary" table. The three quota-backed providers ship auto-restart today (none reached seamless);
+# "Summary" table. The quota-backed providers ship auto-restart today (none reached seamless);
 # claude's exclusion of its own session and agy's IDE-running downgrade are
 # the two conditions from that table's footnotes ¹ ² — the exclusion is the
 # caller's job (it owns the injected ``resume`` callable), the IDE downgrade

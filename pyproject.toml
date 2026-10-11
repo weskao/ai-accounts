@@ -17,6 +17,8 @@ agy-accounts = "ai_accounts.gemini_accounts:main"
 grok-accounts = "ai_accounts.grok_accounts:main"
 vibe-accounts = "ai_accounts.vibe_accounts:main"
 copilot-accounts = "ai_accounts.copilot_accounts:main"
+devin-accounts = "ai_accounts.devin_accounts:main"
+opencode-accounts = "ai_accounts.opencode_accounts:main"
 ai-accounts = "ai_accounts.ai_accounts:main"
 
 [project.urls]

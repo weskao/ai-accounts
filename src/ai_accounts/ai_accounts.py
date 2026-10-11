@@ -1,8 +1,8 @@
 """ai-accounts — drive every AI account tool at once.
 
-Fans a subcommand out to all six per-provider tools (codex-accounts,
-claude-accounts, agy-accounts, grok-accounts, vibe-accounts, copilot-accounts)
-so one command covers every provider. ``list``
+Fans a subcommand out to all eight per-provider tools (codex-accounts,
+claude-accounts, agy-accounts, grok-accounts, vibe-accounts, copilot-accounts,
+devin-accounts, opencode-accounts) so one command covers every provider. ``list``
 runs the providers in parallel and prints each provider's table as soon as
 it finishes fetching (its output embeds ANSI unconditionally, so color
 survives the pipe); every other command runs the providers one at a time
@@ -96,7 +96,7 @@ USAGE
   ai-accounts -h | --help | help     Show this help
   ai-accounts --version | version    Show the current ai-accounts version
 
-Each command is forwarded to codex-accounts, claude-accounts, agy-accounts, grok-accounts, vibe-accounts, and copilot-accounts.
+Each command is forwarded to codex-accounts, claude-accounts, agy-accounts, grok-accounts, vibe-accounts, copilot-accounts, devin-accounts, and opencode-accounts.
 `list` runs them concurrently and prints each table as soon as it finishes
 (fastest provider first), with a spinner tracking how many are still
 fetching in between; every other command runs them one provider at a time
@@ -110,8 +110,8 @@ provider's own `--json` document into one object printed once.
 """
 
 
-# One accent color per provider, so six stacked `list`/`switch`/etc. blocks
-# stay visually distinct instead of six identical cyan rules.
+# One accent color per provider, so eight stacked `list`/`switch`/etc. blocks
+# stay visually distinct instead of eight identical cyan rules.
 _PROVIDER_COLOR = {p.label: p.cli_color for p in PROVIDERS}
 
 
@@ -283,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
 
     command = argv[0]
     # 🔴 Intercepted BEFORE the _COMMANDS gate below, and deliberately absent
-    # from _COMMANDS: falling through to cmd_forward would make all six
+    # from _COMMANDS: falling through to cmd_forward would make all eight
     # provider subprocesses each print their own "Unknown command".
     if command == "config":
         return cm.cmd_config(argv[1:], prog="ai-accounts")
@@ -300,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # `autoswitch` accepts one local setup action; providers ignore every other
     # trailing arg, so `autoswitch install-timer` would run
-    # six quota checks and install nothing — silently, while the user believes
+    # eight quota checks and install nothing — silently, while the user believes
     # a scheduler was registered. Reject it and name the working spelling.
     if command == "autoswitch" and argv[1:] == ["setup"]:
         return cmd_autoswitch_setup()

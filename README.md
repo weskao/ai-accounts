@@ -4,8 +4,8 @@ Manage, inspect, refresh, and switch saved profiles across AI coding CLIs from
 one dependency-free Python package.
 
 `ai-accounts` is the all-provider command. The package also installs focused
-commands for Codex, Claude Code, Antigravity, Grok Build, Mistral Vibe, and
-GitHub Copilot.
+commands for Codex, Claude Code, Antigravity, Grok Build, Mistral Vibe,
+GitHub Copilot, Devin, and opencode.
 
 [Install](#install) · [Commands](#commands) · [Auto-switch](#auto-switch) ·
 [Platform notes](#platform-notes)
@@ -101,6 +101,8 @@ the exit code never changes. Turn it off with
 | `grok-accounts` | Manage Grok Build OAuth profiles |
 | `vibe-accounts` | Manage Mistral Vibe API-key profiles |
 | `copilot-accounts` | Manage GitHub Copilot CLI profiles, identity and monthly credit balance |
+| `devin-accounts` | Manage Devin CLI login profiles and daily/weekly quota |
+| `opencode-accounts` | Switch between opencode's own stored logins, with quota for OpenAI, Anthropic and Copilot |
 
 Every command also accepts a `--` prefix: `ai-accounts --config` is the same
 as `ai-accounts config`, `codex-accounts --list` is the same as
@@ -129,7 +131,8 @@ a time so their prompts remain usable.
 concurrently with its output captured (not printed live), and each
 provider's own `--json` document is merged into one object printed once,
 keyed by provider (`codex-accounts`, `claude-accounts`, `agy-accounts`,
-`grok-accounts`, `vibe-accounts`, `copilot-accounts`). A provider that exits
+`grok-accounts`, `vibe-accounts`, `copilot-accounts`, `devin-accounts`,
+`opencode-accounts`). A provider that exits
 non-zero or prints unparseable output gets `{"error": "..."}` in its place
 instead of crashing the merge:
 
@@ -159,6 +162,8 @@ tool you need. For example:
 claude-accounts login-switch work             # Log in to Claude Code and save it as "work"
 agy-accounts switch                           # Pick a saved Antigravity profile from a menu
 copilot-accounts usage                        # Show the active Copilot account's credit balance
+devin-accounts login-switch personal         # Log in to Devin and save it as "personal"
+opencode-accounts switch openai:work          # Make opencode's "work" OpenAI login the active one
 ```
 
 `switch` and `remove` without a name open an interactive picker, and `save`
@@ -172,15 +177,20 @@ differs per tool:
 | `grok-accounts` | `list` shows SuperGrok plan and weekly usage; auto-switches on the weekly window |
 | `vibe-accounts` | API-key profiles with no quota data; `refresh` is not needed for static keys; no auto-switch |
 | `copilot-accounts` | `list` shows the monthly AI-credit balance; `refresh` only checks the token is still valid; no auto-switch yet |
+| `devin-accounts` | `list` shows daily and weekly quota; `refresh` only checks the API key is still accepted; auto-switches on the weekly window |
+| `opencode-accounts` | Lists and switches opencode's own logins (it never copies tokens); `save`, `sync` and `refresh` are explanatory no-ops; auto-switches per integration — see [opencode logins](#opencode-logins) |
 
 Run `<tool> help` for the full command list of any tool.
 
 Every per-provider tool's `list`/`usage` also accepts `--json`, printing one
 JSON array of `{"name", "active", "usage", "no_quota_api"}` objects instead of
 the table (`usage` is `null` and `no_quota_api` is `true` for Vibe, which has
-no quota API). Grok and Copilot attempt a real quota lookup and only degrade
-to the same `no_quota_api: true` shape when that lookup fails — see Platform
-notes below.
+no quota API). Grok, Copilot and Devin attempt a real quota lookup and only
+degrade to the same `no_quota_api: true` shape when that lookup fails. opencode
+is different: `no_quota_api` is `true` only for logins with no quota API (Go,
+Zen and API-key logins, always switch-only); a failed OpenAI/Anthropic/Copilot
+lookup keeps `no_quota_api: false` and shows a `null` window — see
+[opencode logins](#opencode-logins).
 
 ### Antigravity profile names
 
@@ -238,16 +248,64 @@ The `usage` object includes `monthly`, `unit` (`AIC` or `requests`), `used`,
 `premium`, `chat`, `completions`, `plan`, `refreshed_at`, and `error` fields.
 Unavailable values are null; existing no-quota behavior is retained.
 
+### Devin plan and usage
+
+`devin-accounts` keeps several Devin CLI logins. The live login is
+`credentials.toml` in the Devin data directory (`${XDG_DATA_HOME:-~/.local/share}/devin`;
+`%APPDATA%\devin` on Windows; override with `DEVIN_DATA_DIR`). Profiles are
+saved under `~/.ai-accounts/devin/accounts` (override with `DEVIN_ACCOUNT_DIR`);
+each profile's API key is kept in the OS credential store when one is
+available. `login-switch` backs up the live login before running
+`devin auth login`, keeping the previous live login as a one-deep backup
+(the next switch overwrites it).
+
+`list` and `usage` show the plan plus daily and weekly quota, read from the
+Windsurf `GetUserStatus` call the Devin CLI itself makes. That endpoint is
+undocumented, so if it changes a failed lookup degrades to the no-quota JSON
+shape (`usage: null`, `no_quota_api: true`) rather than failing `list`. Devin
+API keys do not expire by default, so `refresh` only verifies each key is
+still accepted and never modifies a login.
+
+### opencode logins
+
+`opencode-accounts` is a view and switcher over opencode's **own** login
+store — opencode v2 already keeps several logins per integration. It lists
+them from opencode's database read-only, switches with `opencode auth switch`,
+and never writes opencode's files. Logins are named `<integration>:<label>`
+(for example `openai:work`). It never refreshes tokens: opencode does that
+itself, and refreshing elsewhere would log out `codex-accounts` /
+`claude-accounts`, which share the same single-use OpenAI refresh token.
+
+- **OpenAI, Anthropic, GitHub Copilot** logins show usage (reusing the Codex,
+  Claude and Copilot quota lookups) and take part in auto-switch.
+- **opencode Go/Zen and API-key** logins are switch-only: no usage,
+  `no_quota_api: true` in `--json`.
+- `save`, `sync` and `refresh` are explanatory no-ops (opencode stores and
+  refreshes its own logins); `login-switch` runs `opencode auth login`; `remove`
+  runs `opencode auth logout`.
+- **Expired spare logins:** opencode only refreshes a token when it uses that
+  login, so an idle spare's token may have expired. Auto-switch skips it
+  without a network call and prints which spares are expired; open opencode
+  with one once (`opencode-accounts switch <name>`) and it can be considered again.
+  An expired *active* login is not probed either: its usage reads as unknown,
+  nothing is switched, and the output says to open opencode with it once.
+  A `0` `expires` (Copilot device-flow logins) means "never expires".
+
+opencode's data directory is `${XDG_DATA_HOME:-~/.local/share}/opencode` on
+every OS (override with `OPENCODE_DATA_DIR`). The Windows location is an
+assumption — not verified on Windows.
+
 ### Doctor
 
 `ai-accounts doctor` runs one offline health check per provider — no live
 quota/HTTP calls — and never fails the process just because a provider isn't
 set up; it reports the gap instead:
 
-- the provider's CLI binary (`codex`, `claude`, `agy`, `grok`, `vibe`, `copilot`) is on `PATH`
+- the provider's CLI binary (`codex`, `claude`, `agy`, `grok`, `vibe`, `copilot`,
+  `devin`, `opencode`) is on `PATH`
 - the provider's own account-tool console script (`codex-accounts`,
   `claude-accounts`, `agy-accounts`, `grok-accounts`, `vibe-accounts`,
-  `copilot-accounts`) is on `PATH` — distinct from the binary check above: a
+  `copilot-accounts`, `devin-accounts`, `opencode-accounts`) is on `PATH` — distinct from the binary check above: a
   newly declared `[project.scripts]` entry point stays invisible until the
   next `uv tool install`/`uv sync`, so a stale install can have the vendor
   CLI present while its own account tool is a bare shell "command not found"
@@ -285,24 +343,27 @@ so the table reflects a true empty store rather than hand-edited numbers:
 CODEX_ACCOUNT_DIR=<empty-dir> CLAUDE_ACCOUNT_DIR=<empty-dir> \
 ANTIGRAVITY_ACCOUNT_DIR=<empty-dir> GROK_ACCOUNT_DIR=<empty-dir> \
 VIBE_ACCOUNT_DIR=<empty-dir> COPILOT_ACCOUNT_DIR=<empty-dir> \
+DEVIN_ACCOUNT_DIR=<empty-dir> OPENCODE_ACCOUNT_DIR=<empty-dir> \
 PATH=/usr/bin:/bin ai-accounts doctor
 ```
 
 ```
-┌──────────────────┬──────────────────────────────────┬───────────────────────────────────────────┬──────────────────┬────────────────────────┬───────────────────┐
-│ Provider         │ Binary                           │ Account tool                              │ Credential store │ Profiles               │ STATE             │
-├──────────────────┼──────────────────────────────────┼───────────────────────────────────────────┼──────────────────┼────────────────────────┼───────────────────┤
-│ codex-accounts   │ FAIL `codex` not found on PATH   │ FAIL `codex-accounts` not found on PATH   │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
-│ claude-accounts  │ FAIL `claude` not found on PATH  │ FAIL `claude-accounts` not found on PATH  │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
-│ agy-accounts     │ FAIL `agy` not found on PATH     │ FAIL `agy-accounts` not found on PATH     │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
-│ grok-accounts    │ FAIL `grok` not found on PATH    │ FAIL `grok-accounts` not found on PATH    │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
-│ vibe-accounts    │ FAIL `vibe` not found on PATH    │ FAIL `vibe-accounts` not found on PATH    │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
-│ copilot-accounts │ FAIL `copilot` not found on PATH │ FAIL `copilot-accounts` not found on PATH │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
-└──────────────────┴──────────────────────────────────┴───────────────────────────────────────────┴──────────────────┴────────────────────────┴───────────────────┘
+╭───────────────────┬───────────────────────────────────┬────────────────────────────────────────────┬──────────────────┬────────────────────────┬───────────────────╮
+│ Provider          │ Binary                            │ Account tool                               │ Credential store │ Profiles               │ STATE             │
+├───────────────────┼───────────────────────────────────┼────────────────────────────────────────────┼──────────────────┼────────────────────────┼───────────────────┤
+│ codex-accounts    │ FAIL `codex` not found on PATH    │ FAIL `codex-accounts` not found on PATH    │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ claude-accounts   │ FAIL `claude` not found on PATH   │ FAIL `claude-accounts` not found on PATH   │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ agy-accounts      │ FAIL `agy` not found on PATH      │ FAIL `agy-accounts` not found on PATH      │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ grok-accounts     │ FAIL `grok` not found on PATH     │ FAIL `grok-accounts` not found on PATH     │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ vibe-accounts     │ FAIL `vibe` not found on PATH     │ FAIL `vibe-accounts` not found on PATH     │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ copilot-accounts  │ FAIL `copilot` not found on PATH  │ FAIL `copilot-accounts` not found on PATH  │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ devin-accounts    │ FAIL `devin` not found on PATH    │ FAIL `devin-accounts` not found on PATH    │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+│ opencode-accounts │ FAIL `opencode` not found on PATH │ FAIL `opencode-accounts` not found on PATH │ PASS reachable   │ PASS no saved profiles │ FAIL issues found │
+╰───────────────────┴───────────────────────────────────┴────────────────────────────────────────────┴──────────────────┴────────────────────────┴───────────────────╯
 
 Autoswitch timer: PASS installed
 Token storage: PASS macOS Keychain
-Account tool not on PATH for: codex-accounts, claude-accounts, agy-accounts, grok-accounts, vibe-accounts, copilot-accounts
+Account tool not on PATH for: codex-accounts, claude-accounts, agy-accounts, grok-accounts, vibe-accounts, copilot-accounts, devin-accounts, opencode-accounts
 This can mean the tool was never installed, a newly declared entry point needs a reinstall, or its install directory isn't on PATH.
 Run uv tool install --editable <repo> --force
 ```
@@ -334,8 +395,8 @@ ai-accounts doctor --json | python3 -m json.tool
 ### List performance
 
 `ai-accounts list` runs providers concurrently and displays each provider's
-table as it finishes. Codex, Claude, Grok, and Copilot also fetch usage
-concurrently across profiles. Vibe lists local profile data without quota
+table as it finishes. Codex, Claude, Grok, Copilot, Devin, and opencode also
+fetch usage concurrently across profiles. Vibe lists local profile data without quota
 network requests. Copilot additionally fetches GitHub identity per profile
 (plus the primary email when permitted). Failed quota requests retain the
 same no-quota result shape as Vibe.
@@ -470,7 +531,9 @@ Saved profiles and shared settings live under `~/.ai-accounts`:
 ├── antigravity/usage-cache.json
 ├── grok/accounts/
 ├── vibe/accounts/
-└── copilot/accounts/
+├── copilot/accounts/
+├── devin/accounts/
+└── opencode/accounts/        # unused: opencode keeps its own logins
 ```
 
 Newly saved `telegram_bot_token` values go to the OS
@@ -543,8 +606,8 @@ inherits whatever that directory allows.
 Provider-native legacy stores such as `~/.codex/accounts` and
 `~/.claude/accounts` are moved into the central directory on first use. Override
 paths with `CODEX_ACCOUNT_DIR`, `CLAUDE_ACCOUNT_DIR`,
-`ANTIGRAVITY_ACCOUNT_DIR`, `GROK_ACCOUNT_DIR`, `VIBE_ACCOUNT_DIR`, or
-`COPILOT_ACCOUNT_DIR`. Override the shared config with
+`ANTIGRAVITY_ACCOUNT_DIR`, `GROK_ACCOUNT_DIR`, `VIBE_ACCOUNT_DIR`,
+`COPILOT_ACCOUNT_DIR`, or `DEVIN_ACCOUNT_DIR`. Override the shared config with
 `AI_ACCOUNTS_CONFIG_JSON`.
 
 ## Where your secrets live
@@ -663,6 +726,18 @@ quota reaches `switch_when_used_pct`; Copilot has no Stop hook, so the timer is
 its only trigger, and the new account applies on Copilot CLI's next launch.
 `grok-accounts autoswitch` does the same on the weekly SuperGrok window, also
 from the timer only; run from a terminal, it then resumes with `grok --continue`.
+`devin-accounts autoswitch` reads the weekly window by default (the
+`switch_window` setting), also runs from the timer only, and from a terminal
+resumes with `devin --continue`. `opencode-accounts autoswitch` runs once per
+integration (OpenAI, Anthropic, GitHub Copilot; Go/Zen and API-key logins are
+never auto-switched); from a terminal it resumes once with `opencode --continue`
+after every integration has switched, so the switch notifications say a restart
+is needed. A spare login whose access token has expired is not
+probed (it is never refreshed): autoswitch names it so you can open opencode
+with it once; an expired active login is likewise not probed, so nothing is
+switched. When the same OpenAI, Anthropic or Copilot account is also managed
+by `codex-accounts`, `claude-accounts` or `copilot-accounts`, each tool switches
+its own store and sends its own notification, so you may get two.
 
 Status checks are read-only: `enabled` reads the shared config,
 `autoswitch_setup.is_installed()` checks both timer registration and relevant
@@ -761,7 +836,8 @@ window resets and full usage is available again. `reset_notify_min_used_pct`
 just before it reset triggers a notification, so a window that reset while
 barely touched stays quiet. Both are `ai-accounts config` keys (group
 "Notifications"), also available from `codex-accounts config`,
-`claude-accounts config`, and `copilot-accounts config`.
+`claude-accounts config`, `copilot-accounts config`, and
+`devin-accounts config`.
 
 A reset is recognised two ways, so one that happens **off schedule** still
 notifies. Normally the window's recorded reset time arrives and the provider
@@ -841,6 +917,10 @@ Provider coverage:
   time is then computed rather than reported by the provider, agy
   notifications say the reading came from the cache instead of quoting a next
   reset time.
+- `devin` — the daily and weekly windows
+- `opencode` — not supported: its OpenAI, Anthropic and Copilot logins are
+  already covered by `codex`, `claude` and `copilot`, so it would only
+  duplicate those notifications
 - `vibe` — not supported: no quota API to watch.
 
 Detection only happens on a timer tick, so a notification lands up to one
@@ -991,6 +1071,8 @@ plain, same as it leaves tables unbanded.
 | Claude Code | `~/.claude/.credentials.json` and macOS Keychain when used | `claude` is required for login flows |
 | Antigravity | macOS Keychain, Windows Credential Manager, or Linux Secret Service | Linux needs `secret-tool` from libsecret |
 | Grok Build | `$GROK_HOME/auth.json` | SuperGrok plan and weekly/Grok Build usage come from the CLI billing proxy. Autoswitch reads the weekly window |
+| Devin | `credentials.toml` in `${XDG_DATA_HOME:-~/.local/share}/devin` (`%APPDATA%\devin` on Windows; `$DEVIN_DATA_DIR` overrides); saved API keys in the OS credential store | `devin` is required for login flows. Daily/weekly usage comes from the undocumented Windsurf `GetUserStatus` call and degrades to "no quota API" if it changes. Autoswitch reads the weekly window. `switch` writes the saved profile's top-level string keys (non-string values and `[tables]` are not carried over); `switch` and `login-switch` first keep a one-deep backup of the raw live file |
+| opencode | `opencode.db` (SQLite, read-only) in `${XDG_DATA_HOME:-~/.local/share}/opencode` (`$OPENCODE_DATA_DIR` overrides); legacy `auth.json` as fallback (one login per integration, so no switching) | `opencode` is required; changes go through `opencode auth switch\|logout\|login`. The Windows data-dir path is an assumption — not verified on Windows |
 | Mistral Vibe | macOS Keychain or `$VIBE_HOME/.env` | On Windows and Linux, `$VIBE_HOME/.env` is used; `vibe` is required for login flows |
 | GitHub Copilot | OS credential store item `copilot-cli` / `<host>:<login>` (macOS Keychain; Linux Secret Service via `secret-tool`; Windows Credential Manager target `<host>:<login>.copilot-cli`, UTF-16), with the signed-in login read from `~/.copilot/config.json` (JSONC); that file's plaintext `authTokens` when the CLI has no store (or `storeTokenPlaintext` is set); `$COPILOT_GITHUB_TOKEN`/`$GH_TOKEN`/`$GITHUB_TOKEN` as fallback | `copilot` is required for login flows. Store layout and monthly AI-credit quota verified on macOS; plaintext layout verified with `copilot login --with-token`. Linux/Windows naming follows the keyring-core store crates the CLI ships but is not yet observed on a live login; Linux needs `secret-tool` (libsecret). `switch` writes the plaintext entry only when the CLI already uses it. |
 

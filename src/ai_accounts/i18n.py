@@ -516,7 +516,7 @@ MESSAGES: dict[str, dict[str, str]] = {
   ai-accounts --version | version    顯示目前的 ai-accounts 版本
 
 每個指令都會轉發給 codex-accounts、claude-accounts、agy-accounts、grok-accounts、
-vibe-accounts 與 copilot-accounts。
+vibe-accounts、copilot-accounts、devin-accounts 與 opencode-accounts。
 `list` 會同時執行並在每個表格完成時立即印出（最快的提供者最先顯示），
 中間以進度指示器顯示還有幾個提供者在抓取；其他每個指令都會一次對一個
 提供者執行、保留即時輸出，讓互動式選擇器與登入流程正常運作、顏色也會保留。
@@ -805,6 +805,86 @@ Copilot 的配額端點（premium/chat/completions 用量）尚未對照真實�
 驗證過；查詢失敗時會像 grok／vibe 一樣退回「沒有配額 API」，`list`／
 `usage` 不會因此失敗。`autoswitch` 讀取同一個端點；作用中帳號的每月配額
 達到門檻時，會切換到用量較低的帳號（Copilot CLI 下次啟動時生效）。
+""",
+    },
+    "help.devin": {
+        "zh-TW": """devin-accounts — 管理多組 Devin CLI 登入帳號
+
+用法
+  devin-accounts who                   顯示目前登入的 Devin 帳號
+  devin-accounts current               `who` 的別名
+  devin-accounts save [<name>]         儲存目前的登入；不給名稱 = 依 email 決定
+  devin-accounts list [--json]         列出已存帳號與方案、每日／每週用量；
+                                        --json 改印一份 JSON 陣列，取代表格
+                                        （配額端點失敗時退回 usage: null、
+                                        no_quota_api: true）
+  devin-accounts usage [--json]        只顯示作用中帳號（方案與用量）；
+                                        --json 改印一份 JSON 陣列，取代表格
+  devin-accounts switch [<name>]       依名稱切換；不給名稱 = 互動式選擇器
+  devin-accounts remove [<name>]       刪除已存帳號；不給名稱 = 互動式選擇器
+  devin-accounts refresh [<name>]      驗證作用中／指定帳號的 API key 是否仍然有效
+  devin-accounts refresh --all         驗證所有已存帳號的 API key
+  devin-accounts sync                  把作用中的登入複製回對應的帳號檔案
+  devin-accounts autoswitch            配額超過門檻時離開作用中帳號
+  devin-accounts login-switch <name>   全新 `devin auth login` 並存成 <name>
+  devin-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
+  devin-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
+  devin-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  devin-accounts -h | --help | help    顯示這份說明
+
+範例
+  devin-accounts login-switch personal
+  devin-accounts login-switch work
+  devin-accounts list
+  devin-accounts switch work
+  devin-accounts refresh --all
+
+即時登入是 Devin 資料目錄中的 credentials.toml：
+macOS／Linux 為 $XDG_DATA_HOME/devin（預設 ~/.local/share/devin），
+Windows 為 %APPDATA%\\devin；可用 $DEVIN_DATA_DIR 覆寫該目錄。
+
+帳號存放於 ~/.ai-accounts/devin/accounts/<name>.json（可用
+$DEVIN_ACCOUNT_DIR 覆寫）。請把這個目錄當成敏感資料 — 帳號的 API key
+在有 OS 憑證儲存區可用時會存放在裡面，否則以純文字方式留在檔案內作為備援。
+Devin API key 不會自行過期，因此 `refresh` 只會驗證每把 key 是否仍被接受，
+絕不修改任何登入。
+""",
+    },
+    "help.opencode": {
+        "zh-TW": """opencode-accounts — 在 opencode 已儲存的登入之間切換
+
+用法
+  opencode-accounts who                   顯示每個整合目前作用中的登入
+  opencode-accounts current               `who` 的別名
+  opencode-accounts list [--json]         依整合分組列出所有已儲存的登入，附 OpenAI／
+                                           Claude／Copilot 配額用量；--json 改印一份
+                                           JSON 陣列（Zen／Go／API key 登入：
+                                           usage: null、no_quota_api: true）
+  opencode-accounts usage [--json]        同上，但只列作用中的登入
+  opencode-accounts switch [<name>]       把 <integration>:<label> 設為作用中的登入
+                                           （執行 `opencode auth switch`）；不給名稱 = 選擇器
+  opencode-accounts remove [<name>]       登出一個已儲存的登入（`opencode auth logout`）
+  opencode-accounts save [<name>]         opencode 自己儲存所有登入 — 印出新增方式
+  opencode-accounts login-switch <name>   執行 `opencode auth login` 新增登入
+  opencode-accounts refresh [--all]       不做事：opencode 會自行更新 token
+  opencode-accounts sync                  不做事：opencode 會自行更新 token
+  opencode-accounts autoswitch            每個整合在作用中登入的配額超過門檻時
+                                           切換離開
+  opencode-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
+  opencode-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
+  opencode-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  opencode-accounts -h | --help | help    顯示這份說明
+
+範例
+  opencode-accounts list
+  opencode-accounts switch openai:work
+  opencode-accounts autoswitch
+
+登入以 <integration>:<label> 命名（label 為空時用憑證 id）。它們從
+opencode 自己的儲存區唯讀讀取：
+$XDG_DATA_HOME/opencode/opencode.db（預設 ~/.local/share/opencode；
+可用 $OPENCODE_DATA_DIR 覆寫）— 並退回舊版 auth.json，該檔每個整合只存
+一組登入，因此無法切換。
 """,
     },
 }

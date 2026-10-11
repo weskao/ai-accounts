@@ -26,9 +26,11 @@ from ai_accounts import (
     claude_accounts,
     codex_accounts,
     copilot_accounts,
+    devin_accounts,
     gemini_accounts,
     grok_accounts,
     i18n,
+    opencode_accounts,
     vibe_accounts,
 )
 
@@ -40,6 +42,8 @@ _MODULES = (
     grok_accounts,
     vibe_accounts,
     copilot_accounts,
+    devin_accounts,
+    opencode_accounts,
 )
 
 
