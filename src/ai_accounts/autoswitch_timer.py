@@ -265,10 +265,10 @@ def _run_autoswitch_everywhere() -> None:
 
     The provider registry lives with the hook installer, keeping timed and
     event-triggered checks on the same cross-platform support matrix. copilot
-    has no Stop hook to install, so the timer is its only trigger.
+    and grok have no Stop hook to install, so the timer is their only trigger.
     """
     modules = [autoswitch_hooks.module(provider) for provider in autoswitch_hooks.providers()]
-    modules.append("ai_accounts.copilot_accounts")
+    modules += ["ai_accounts.copilot_accounts", "ai_accounts.grok_accounts"]
     with ThreadPoolExecutor(max_workers=len(modules)) as pool:
         _ = list(pool.map(_run_provider, modules))
 

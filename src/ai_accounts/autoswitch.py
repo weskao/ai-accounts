@@ -501,12 +501,8 @@ RUNGS = ("seamless", "auto-restart", "manual-restart")
 # caller's job (it owns the injected ``resume`` callable), the IDE downgrade
 # is applied here by effective_rung().
 #
-# grok's entry is ASPIRATIONAL and currently UNREACHABLE: xAI ships no quota
-# API, so `grok-accounts autoswitch` prints "autoswitch unsupported for grok:
-# no quota API" and returns before the engine — nothing ever asks for grok's
-# rung. It stays as the answer for the day a quota API lands (the spike found
-# grok the cleanest of the three to restart); it is not shipped behavior today.
-# Kept in sync with the doc's grok section, which names the same blocker.
+# grok reaches its rung through the CLI billing proxy's weekly window
+# (grok_usage.py) and resumes with `grok --continue`.
 PROVIDER_VERDICTS: dict[str, str] = {p.key: p.verdict for p in PROVIDERS if p.verdict is not None}
 
 

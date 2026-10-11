@@ -1423,13 +1423,10 @@ class RestartLadderVerdictTableTests(unittest.TestCase):
         self.assertEqual(aw.PROVIDER_VERDICTS["agy"], "auto-restart")
         self.assertEqual(aw.PROVIDER_VERDICTS["grok"], "auto-restart")
 
-    def test_groks_verdict_is_documented_as_unreachable_for_want_of_a_quota_api(
-        self,
-    ) -> None:
-        # Given: grok's row is aspirational — `grok-accounts autoswitch` reports
-        # "no quota API" and exits before the engine, so this rung can never
-        # fire. The doc the table is sourced from must say so, or the two drift
-        # apart and the table reads as shipped behavior.
+    def test_groks_verdict_is_documented_as_shipped(self) -> None:
+        # Given: `grok-accounts autoswitch` now runs the engine on the weekly
+        # billing-proxy window. The doc the table is sourced from must say so,
+        # or the two drift apart and the table reads as still blocked.
         doc = (
             Path(__file__).resolve().parents[1]
             / "docs"
@@ -1440,9 +1437,9 @@ class RestartLadderVerdictTableTests(unittest.TestCase):
             line for line in doc.splitlines() if line.startswith("| grok |")
         )
         grok_section = doc.split("\n## grok\n", 1)[1].split("\n## ", 1)[0]
-        # Then: both name the blocker rather than promising a live behavior
-        self.assertIn("unreachable", summary_row)
-        self.assertIn("no quota API", grok_section)
+        # Then: neither still calls the rung blocked
+        self.assertNotIn("unreachable", summary_row)
+        self.assertIn("**Shipped:**", grok_section)
 
     def test_the_rung_vocabulary_is_exactly_the_three_named_in_the_requirement(self) -> None:
         # Given/When/Then: seamless -> auto-restart -> manual-restart, no more

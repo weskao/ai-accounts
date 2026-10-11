@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from . import autoswitch
 from . import config_menu as cm
 from . import grok_usage
 from . import i18n
@@ -50,6 +51,7 @@ from .usage_format import (
     credential_status_prefix,
     format_usage_window,
     json_empty_list,
+    UsageWindow,
     print_no_active_account,
     usage_window_to_json,
 )
@@ -75,7 +77,8 @@ USAGE
   grok-accounts refresh [<name>]      Renew the active/named session's token
   grok-accounts refresh --all         Renew every saved profile's token
   grok-accounts sync                  Copy the active auth back to its matching profile
-  grok-accounts autoswitch            Report that grok has no quota API to switch on
+  grok-accounts autoswitch            Switch away from the active profile if its weekly
+                                       quota is past the threshold
   grok-accounts login-switch <name>   Fresh Grok OAuth login + save as <name>
   grok-accounts config                Interactive config menu shared by every ai-accounts CLI
   grok-accounts config get [key]      Print the shared auto-switch config (or one key)
@@ -1042,16 +1045,66 @@ def cmd_login_switch(name: str) -> int:
     return cmd_save(name) if result.returncode == 0 else result.returncode
 
 
-def cmd_autoswitch() -> int:
-    """Say plainly that grok cannot participate in auto-switching.
+def _autoswitch_probe(name: str) -> UsageWindow | None:
+    """One saved profile's weekly SuperGrok window, read with its OWN token —
+    never the live auth.json, so probing a spare cannot change the active account."""
+    path = _profile_file(name)
+    payload = _load_profile(path) if path is not None else None
+    usage = grok_usage.fetch_usage(_access_token(payload))
+    return None if usage.error else usage.weekly
 
-    xAI ships no quota endpoint and the Grok Build CLI exposes none, so there
-    is no usage figure to compare against a threshold — nothing to guess at,
-    and nothing worth faking. Exits 0 so the `ai-accounts autoswitch` fan-out
-    over all five providers is not reported as a failure over this one.
-    """
-    print("autoswitch unsupported for grok: no quota API")
-    return 0
+
+def _autoswitch_switch(name: str) -> bool:
+    return cmd_switch(name) == 0
+
+
+def _autoswitch_resume() -> bool:
+    """Start a NEW grok session continuing the last conversation (`grok
+    --continue`, docs/autoswitch-hot-reload-spike.md grok section). Nothing
+    running is touched; build_restart only grants this to an interactive run."""
+    executable = shutil.which("grok")
+    if executable is None:
+        log_yellow("⚠️  grok is not on PATH — cannot resume the session automatically.")
+        return False
+    return subprocess.run([executable, "--continue"]).returncode == 0
+
+
+def cmd_autoswitch() -> int:
+    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
+    active = _active_profile()
+    outcome = autoswitch.run_autoswitch(
+        "grok",
+        [path.stem for path in profiles],
+        active.stem if active is not None else None,
+        _autoswitch_probe,
+        _autoswitch_switch,
+        # SAFETY: no terminal, no restart — an unattended timer poll spawns nothing.
+        autoswitch.build_restart("grok", _autoswitch_resume, interactive=sys.stdout.isatty()),
+    )
+    if outcome.reason == "disabled":
+        log_yellow("⚠️  Auto-switch is disabled (see ~/.ai-accounts/config.json: enabled).")
+    elif outcome.reason == "no_active":
+        log_yellow("⚠️  No active Grok profile — nothing to auto-switch from.")
+    elif outcome.reason == "unknown":
+        log_yellow(f"⚠️  Could not determine usage for {outcome.from_profile}.")
+    elif outcome.reason == "below_threshold":
+        print(f"{outcome.from_profile} is at {outcome.used_pct}% used — below the switch threshold.")
+    elif outcome.reason == "no_candidate":
+        log_yellow(
+            f"⚠️  {outcome.from_profile} is at {outcome.used_pct}% used and no other "
+            "Grok account is available to switch to."
+        )
+    elif outcome.reason == "switch_failed":
+        log_red(f"❌ {outcome.error}")
+    else:  # "switched"
+        ok("Auto-switched Grok account", f"{outcome.from_profile} → {outcome.to_profile}")
+        if outcome.restarted is not True:
+            log_yellow(
+                autoswitch.manual_restart_message(
+                    "grok", outcome.from_profile or "?", outcome.to_profile or "?"
+                )
+            )
+    return 1 if outcome.reason == "switch_failed" else 0
 
 
 @quiet_keyboard_interrupt

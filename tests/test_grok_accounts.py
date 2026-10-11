@@ -438,29 +438,103 @@ class GrokAccountsTests(unittest.TestCase):
 
 
 class GrokAutoswitchTests(unittest.TestCase):
-    """grok exposes no quota API at all, so autoswitch can only say so."""
+    """The weekly SuperGrok window drives the shared autoswitch engine."""
 
-    def test_autoswitch_reports_unsupported_and_exits_zero(self) -> None:
-        # Given: grok-accounts, which has no quota endpoint to consult
-        out, err = io.StringIO(), io.StringIO()
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        self.account_dir = home / "accounts"
+        env = mock.patch.dict(
+            os.environ,
+            {
+                "GROK_HOME": str(home / ".grok"),
+                "GROK_ACCOUNT_DIR": str(self.account_dir),
+                "AI_ACCOUNTS_CONFIG_JSON": str(home / "config.json"),
+            },
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        aw.save_config(
+            {"enabled": True, "notify": "none", "switch_when_used_pct": 90, "reset_notify": False}
+        )
 
-        # When: the autoswitch subcommand runs
+    def _setup(self, used_by_token: dict[str, int | None]) -> None:
+        """Active `personal` (token-a) plus spare `work` (token-b), canned usage.
+
+        The probe may only see each saved profile's OWN token — a None entry is
+        a quota read that fails."""
+        for name, email, principal, token in (
+            ("personal", "person@example.test", "principal-1", "token-a"),
+            ("work", "work@example.test", "principal-2", "token-b"),
+        ):
+            payload = _auth(email, principal)
+            payload["https://auth.x.ai::client"]["key"] = token
+            self.assertTrue(ga._write_json(self.account_dir / f"{name}.json", payload))
+            if name == "personal":
+                self.assertTrue(ga._write_json(ga._auth_file(), payload))
+        (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
+
+        def fake_fetch(token: str | None, **_kw) -> gu.UsageSnapshot:
+            used = used_by_token.get(token or "")
+            if used is None:
+                return gu.UsageSnapshot(None, None, None, None, None, "network error")
+            window = UsageWindow(percentage=used, reset_time=None, window_minutes=10080)
+            return gu.UsageSnapshot(window, None, "SuperGrok", "GrokPro", 1, None)
+
+        patcher = mock.patch.object(gu, "fetch_usage", side_effect=fake_fetch)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run(self) -> tuple[int, str]:
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            rc = ga.main(["autoswitch"])
+        return rc, _ANSI_RE.sub("", out.getvalue())
+
+    def _live_email(self) -> str:
+        return ga._claims(ga._read_json(ga._auth_file()))["email"]
+
+    def test_autoswitch_moves_off_an_exhausted_active_profile(self) -> None:
+        # Given: the active account has spent its weekly quota
+        self._setup({"token-a": 95, "token-b": 10})
+        # When: the unattended check runs (stdout is not a TTY)
+        with mock.patch.object(ga.subprocess, "run") as spawn:
+            rc, out = self._run()
+        # Then: the spare is now live, and nothing was spawned unattended
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._live_email(), "work@example.test")
+        self.assertIn("personal → work", out)
+        spawn.assert_not_called()
+
+    def test_autoswitch_stays_put_while_the_active_profile_has_quota(self) -> None:
+        self._setup({"token-a": 10, "token-b": 0})
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._live_email(), "person@example.test")
+        self.assertIn("below the switch threshold", out)
+
+    def test_autoswitch_skips_a_spare_whose_quota_cannot_be_read(self) -> None:
+        self._setup({"token-a": 100, "token-b": None})
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._live_email(), "person@example.test")
+        self.assertIn("no other", out)
+
+    def test_interactive_autoswitch_resumes_with_grok_continue(self) -> None:
+        # Given: an exhausted account, run from a real terminal with grok installed
+        self._setup({"token-a": 95, "token-b": 10})
+        done = mock.Mock(returncode=0)
         with (
-            mock.patch.object(aw, "run_autoswitch") as engine,
-            redirect_stdout(out),
-            redirect_stderr(err),
+            mock.patch.object(ga.sys.stdout, "isatty", return_value=True, create=True),
+            mock.patch.object(ga.shutil, "which", return_value="/usr/bin/grok"),
+            mock.patch.object(ga.subprocess, "run", return_value=done) as spawn,
+            redirect_stderr(io.StringIO()),
         ):
             rc = ga.main(["autoswitch"])
-
-        # Then: exit 0 (the ai-accounts fan-out must not fail over grok),
-        # exactly one explicit line, and the engine is never consulted.
+        # Then: a NEW grok session continues the last conversation
         self.assertEqual(rc, 0)
-        self.assertEqual(
-            _ANSI_RE.sub("", out.getvalue()).splitlines(),
-            ["autoswitch unsupported for grok: no quota API"],
-        )
-        self.assertEqual(err.getvalue(), "")
-        engine.assert_not_called()
+        spawn.assert_called_once_with(["/usr/bin/grok", "--continue"])
 
 
 def _oidc_auth(expires_at: str = "2030-01-02T03:04:05Z") -> ga.JsonDict:

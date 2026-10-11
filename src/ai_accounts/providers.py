@@ -17,9 +17,7 @@ not an oversight, so it is preserved rather than collapsed to one color.
 ``PROVIDER_VERDICTS`` entirely (``vibe`` — no quota API, no restart-ladder
 entry at all; ``copilot`` — has a quota API and autoswitches, but no resume
 command to restart into; both fall through to ``effective_rung``'s
-``verdicts.get(provider, "manual-restart")`` default). ``grok``'s verdict is
-present but aspirational — see ``autoswitch.py``'s ``PROVIDER_VERDICTS``
-docstring for why it's currently unreachable.
+``verdicts.get(provider, "manual-restart")`` default).
 """
 
 from __future__ import annotations

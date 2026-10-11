@@ -25,7 +25,7 @@ did not run, and why). All probes ran in a throwaway sandbox; see
 | codex | `auto-restart` | inferred |
 | claude | `auto-restart` — **conditional** ¹ | inferred |
 | agy (antigravity) | `auto-restart` (CLI) / `manual-restart` (IDE running) ² | inferred |
-| grok | `auto-restart` — **unreachable** ³ | inferred |
+| grok | `auto-restart` ³ | inferred |
 
 ¹ **claude:** auto-restart MUST exclude the restarting process's own session. See
 [the claude section](#claude).
@@ -34,13 +34,11 @@ did not run, and why). All probes ran in a throwaway sandbox; see
 running, it re-writes the keyring instantly and has no programmatic resume — detect it and downgrade
 to `manual-restart`. See [the agy section](#agy-antigravity).
 
-³ **grok:** the rung is real but nothing can reach it — xAI ships **no quota API** for Grok Build, so
-`grok-accounts autoswitch` prints `autoswitch unsupported for grok: no quota API` and returns before
-the switch engine is ever consulted. grok's verdict is what it *would* ship the day a quota API
-exists, not shipped behavior. See [the grok section](#grok).
+³ **grok:** shipped. The trigger reads the weekly window from the Grok Build CLI billing proxy
+(`grok_usage.py`, an undocumented route). See [the grok section](#grok).
 
 **Do not consume the verdict column without these three footnotes** — an unconditional `auto-restart`
-for agy ships the exact behaviour this spike found unsafe, and grok's cannot fire at all.
+for agy ships the exact behaviour this spike found unsafe.
 
 No provider reached `seamless`. Every provider's *restartability* is `observed:` (each CLI has a
 session-resume flag); what stays `inferred:` is the negative — that a live session does **not**
@@ -269,14 +267,10 @@ the least fragile restart target.
 
 `auto-restart` — restart the grok process and resume with `grok --continue`.
 
-**Blocked, and therefore not shipped:** auto-switching never runs for grok at all, so this rung is
-currently unreachable. xAI exposes **no quota API** for Grok Build, and the whole feature triggers on
-a used-percent quota reading — so `grok-accounts autoswitch` prints `autoswitch unsupported for grok:
-no quota API` and exits `0` before the engine is consulted
-(`src/ai-accounts/grok_accounts.py:cmd_autoswitch`). `autoswitch.PROVIDER_VERDICTS["grok"]` records this
-verdict for the day that API appears and carries the same caveat in a comment; until then no code
-path reads it. The blocker is a missing **quota** API — restartability itself is settled and is the
-cleanest of the four (above).
+**Shipped:** the original blocker was a missing quota API. The CLI billing proxy now returns a
+weekly used-percent (`grok_usage.py`), so `grok-accounts autoswitch` runs the shared engine on
+that window and, from a terminal, resumes with `grok --continue`. The timer is its only trigger
+(grok has no Stop hook).
 
 ---
 

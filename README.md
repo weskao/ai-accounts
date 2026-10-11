@@ -169,7 +169,7 @@ differs per tool:
 | --- | --- |
 | `claude-accounts` | Same workflow as Codex; `login-switch` runs `claude auth login` |
 | `agy-accounts` | `list` is slow (one account at a time) — see [Fast Antigravity lists](#fast-antigravity-lists); `usage` checks only the active account; `api-schema` prints agy's reply fields for [change watching](#watching-agys-api-for-changes) |
-| `grok-accounts` | `list` shows SuperGrok plan and weekly usage; no auto-switch |
+| `grok-accounts` | `list` shows SuperGrok plan and weekly usage; auto-switches on the weekly window |
 | `vibe-accounts` | API-key profiles with no quota data; `refresh` is not needed for static keys; no auto-switch |
 | `copilot-accounts` | `list` shows the monthly AI-credit balance; `refresh` only checks the token is still valid; no auto-switch yet |
 
@@ -661,6 +661,8 @@ The timer has no dedicated log file.
 `copilot-accounts autoswitch` switches off the active profile once its monthly
 quota reaches `switch_when_used_pct`; Copilot has no Stop hook, so the timer is
 its only trigger, and the new account applies on Copilot CLI's next launch.
+`grok-accounts autoswitch` does the same on the weekly SuperGrok window, also
+from the timer only; run from a terminal, it then resumes with `grok --continue`.
 
 Status checks are read-only: `enabled` reads the shared config,
 `autoswitch_setup.is_installed()` checks both timer registration and relevant
@@ -988,7 +990,7 @@ plain, same as it leaves tables unbanded.
 | Codex | `~/.codex/auth.json` and the native credential store | `codex` is required for login flows |
 | Claude Code | `~/.claude/.credentials.json` and macOS Keychain when used | `claude` is required for login flows |
 | Antigravity | macOS Keychain, Windows Credential Manager, or Linux Secret Service | Linux needs `secret-tool` from libsecret |
-| Grok Build | `$GROK_HOME/auth.json` | SuperGrok plan and weekly/Grok Build usage come from the CLI billing proxy. Autoswitch is still skipped (no ranking/switch path yet) |
+| Grok Build | `$GROK_HOME/auth.json` | SuperGrok plan and weekly/Grok Build usage come from the CLI billing proxy. Autoswitch reads the weekly window |
 | Mistral Vibe | macOS Keychain or `$VIBE_HOME/.env` | On Windows and Linux, `$VIBE_HOME/.env` is used; `vibe` is required for login flows |
 | GitHub Copilot | OS credential store item `copilot-cli` / `<host>:<login>` (macOS Keychain; Linux Secret Service via `secret-tool`; Windows Credential Manager target `<host>:<login>.copilot-cli`, UTF-16), with the signed-in login read from `~/.copilot/config.json` (JSONC); that file's plaintext `authTokens` when the CLI has no store (or `storeTokenPlaintext` is set); `$COPILOT_GITHUB_TOKEN`/`$GH_TOKEN`/`$GITHUB_TOKEN` as fallback | `copilot` is required for login flows. Store layout and monthly AI-credit quota verified on macOS; plaintext layout verified with `copilot login --with-token`. Linux/Windows naming follows the keyring-core store crates the CLI ships but is not yet observed on a live login; Linux needs `secret-tool` (libsecret). `switch` writes the plaintext entry only when the CLI already uses it. |
 

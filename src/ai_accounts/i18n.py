@@ -683,7 +683,7 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
   grok-accounts refresh [<name>]      更新作用中／指定帳號的 session token
   grok-accounts refresh --all         更新所有已存帳號的 token
   grok-accounts sync                  把作用中的登入複製回對應的帳號檔案
-  grok-accounts autoswitch            回報 grok 沒有配額 API 可供切換
+  grok-accounts autoswitch            每週配額超過門檻時離開作用中帳號
   grok-accounts login-switch <name>   全新 Grok OAuth 登入並存成 <name>
   grok-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
   grok-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
