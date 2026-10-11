@@ -26,6 +26,7 @@ from ._present import (
     ok,
     panel,
     success_panel,
+    expiry_status,
     usage_color,
 )
 from ._utils import (
@@ -58,7 +59,6 @@ from .usage_format import (
     UsageWindow,
     capitalize_first,
     credential_status_prefix,
-    format_unix_time_compact,
     format_usage_window,
     json_empty_list,
     print_no_active_account,
@@ -783,18 +783,7 @@ def _list_expiry_status(claims: Claims | None) -> tuple[str, str]:
     prefix = credential_status_prefix(claims)
     if prefix is not None:
         return prefix
-    if not claims:
-        return "—", DIM
-    expires_epoch = claims.get("expires_epoch")
-    if not isinstance(expires_epoch, int):
-        return "—", DIM
-    text = format_unix_time_compact(expires_epoch)
-    now = datetime.now().timestamp()
-    if expires_epoch <= now:
-        return f"{text} expired", RED
-    if expires_epoch - now < 24 * 3600:
-        return f"{text} soon", YELLOW
-    return text, GREEN
+    return expiry_status((claims or {}).get("expires_epoch"))
 
 
 def _claims_lines(claims: Claims | None) -> list[str]:

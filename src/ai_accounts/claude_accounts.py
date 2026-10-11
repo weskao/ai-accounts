@@ -33,7 +33,6 @@ from . import config_menu as cm
 from . import profile_secrets as ps
 from .usage_format import (
     capitalize_first,
-    format_unix_time_compact,
     format_usage_window,
     json_empty_list,
     print_no_active_account,
@@ -46,6 +45,7 @@ from ._present import (
     RESET_OPTIONAL_COLUMNS,
     accounts_table,
     choose_and_run,
+    expiry_status,
     choose_profile,
     format_help,
     ok,
@@ -651,21 +651,10 @@ def _expiry_status(claims: dict | None) -> tuple[str, str]:
 
 
 def _list_expiry_status(claims: dict | None) -> tuple[str, str]:
-    if not claims or not claims.get("expires_epoch"):
-        return "—", DIM
     # A refresh token means Claude Code auto-renews the short-lived access token,
-    # so its imminent expiry is not a session problem — mirror the `who` panel
-    # (and agy-accounts) and report the session as refreshable instead of "soon".
-    if claims.get("refreshable"):
-        return "refreshable", GREEN
-    now = datetime.now().timestamp()
-    exp = claims["expires_epoch"]
-    text = format_unix_time_compact(int(exp))
-    if exp <= now:
-        return f"{text} expired", RED
-    if exp - now < 24 * 3600:
-        return f"{text} soon", YELLOW
-    return text, GREEN
+    # so its imminent expiry is not a session problem — no "soon"/"expired" alarm.
+    claims = claims or {}
+    return expiry_status(claims.get("expires_epoch"), refreshable=bool(claims.get("refreshable")))
 
 
 def _claims_lines(claims: dict | None) -> list[str]:
@@ -710,7 +699,7 @@ _TABLE_COLUMNS = [
     *RESET_COLUMNS,
     ("CREDITS", "credits"),
     ("UPDATED", "usage_updated"),
-    ("EXPIRES", "expires"),
+    ("AUTH", "expires"),
     ("STATE", "status"),
 ]
 

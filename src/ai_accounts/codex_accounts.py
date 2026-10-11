@@ -35,6 +35,7 @@ from ._present import (
     panel,
     reset_voucher_cells,
     success_panel,
+    expiry_status,
     usage_color,
 )
 from ._utils import (
@@ -579,16 +580,7 @@ def _expiry_status(claims: dict | None) -> tuple[str, str]:
 
 
 def _list_expiry_status(claims: dict | None) -> tuple[str, str]:
-    if not claims or not claims.get("expires_epoch"):
-        return "—", DIM
-    now = datetime.now().timestamp()
-    exp = claims["expires_epoch"]
-    text = usage_format.format_unix_time_compact(int(exp))
-    if exp <= now:
-        return f"{text} expired", RED
-    if exp - now < 24 * 3600:
-        return f"{text} soon", YELLOW
-    return text, GREEN
+    return expiry_status((claims or {}).get("expires_epoch"))
 
 
 def _token_expired_or_soon(claims: dict | None) -> bool:

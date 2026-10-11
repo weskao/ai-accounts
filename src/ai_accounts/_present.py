@@ -26,6 +26,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import unicodedata
 from typing import Callable, Final, Sequence
 
@@ -467,6 +468,23 @@ def reset_voucher_cells(
         "reset_expiry": usage_format.format_reset_expiry(vouchers, now),
     }
     return {key: f"{DIM}—{RESET}" if text == "—" else text for key, text in cells.items()}
+
+
+def expiry_status(expires_epoch: object, *, refreshable: bool = False) -> tuple[str, str]:
+    """(text, color) for an ``AUTH`` cell: the token's expiry date, suffixed
+    ``soon`` within 24h or ``expired`` once past; ``—`` when unknown. A
+    *refreshable* token renews itself, so its date stays green with no suffix."""
+    if not isinstance(expires_epoch, (int, float)) or not expires_epoch:
+        return "—", DIM
+    text = usage_format.format_unix_time_compact(int(expires_epoch))
+    left = expires_epoch - time.time()
+    if refreshable:
+        return text, GREEN
+    if left <= 0:
+        return f"{text} expired", RED
+    if left < 24 * 3600:
+        return f"{text} soon", YELLOW
+    return text, GREEN
 
 
 def accounts_table(

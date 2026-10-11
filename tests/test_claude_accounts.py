@@ -123,10 +123,11 @@ class ClaimsTests(unittest.TestCase):
 
     def test_list_expiry_reports_refreshable_over_soon(self) -> None:
         # A near-expiry access token that is refreshable must not read as "soon":
-        # Claude Code auto-renews it, so the list column mirrors the who-panel
-        # (and agy-accounts) and reports the session as refreshable.
+        # Claude Code auto-renews it, so the AUTH column shows the date in green, no suffix.
         soon = ca._claims_from_oauth(_oauth(expires_in_ms=60 * 1000))
-        self.assertEqual(ca._list_expiry_status(soon), ("refreshable", ca.GREEN))
+        text, color = ca._list_expiry_status(soon)
+        self.assertEqual(color, ca.GREEN)
+        self.assertNotIn("soon", text)
         # Without a refresh token the imminent access-token expiry still shows.
         text, color = ca._list_expiry_status({**soon, "refreshable": False})
         self.assertIn("soon", text)
