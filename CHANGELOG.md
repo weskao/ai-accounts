@@ -1,3 +1,45 @@
+## [0.24.0] - 2026-10-11
+
+### 🚀 Features
+
+- **grok:** Auto-switch on the weekly quota window
+- **config:** Offer timer install for reset notifications
+- **usage:** Show reset vouchers and expiry for Codex and Claude
+- **devin:** Add devin-accounts with quota autoswitch
+- **opencode:** Add opencode-accounts with autoswitch
+- Register devin and opencode providers
+- **list:** Stack voucher expiries one per line
+- **list:** Fall back to cards when table is too wide
+- **claude:** Show extra-usage credits column
+- **list:** Share auth expiry cell across tools
+- **list:** Stack cell parts before card fallback
+- **claude:** Show credits reset as time left
+- **cli:** Suggest closest command on typos
+- **list:** Show same acct in every tool's list
+
+### 🐛 Bug Fixes
+
+- **copilot:** Verify env-var token precedence
+- **devin:** Keep session token prefix in api key
+- **list:** Keep narrow cards free of column padding
+- **opencode:** Hide MCP server credentials from logins
+- **devin:** Read remaining quota percent
+- **devin:** Restore login when login-switch fails
+
+### 💼 Other
+
+- Derive version from __version__
+
+### 🚜 Refactor
+
+- **utils:** Share usage-parse and atomic-write helpers
+- **list:** Share state column via state_cells
+
+### 📚 Documentation
+
+- Clarify cross-platform guidance
+- **readme:** Add Copilot list performance row
+- **readme:** Fix copilot autoswitch and config notes
 ## [0.23.6] - 2026-10-08
 
 ### 🐛 Bug Fixes
