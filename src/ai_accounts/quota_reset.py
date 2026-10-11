@@ -224,6 +224,8 @@ def _collect_one(provider: Provider) -> ProviderSnapshot | None:
             [sys.executable, "-m", provider.module, "list", "--json"],
             capture_output=True,
             timeout=_LIST_TIMEOUT_SEC,
+            # Timer ticks need windows only; skip the Codex voucher-expiry GET.
+            env={**os.environ, usage_format.SKIP_RESET_EXPIRY_ENV: "1"},
         )
         if result.returncode != 0:
             return None

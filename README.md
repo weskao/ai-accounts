@@ -180,7 +180,69 @@ JSON array of `{"name", "active", "usage", "no_quota_api"}` objects instead of
 the table (`usage` is `null` and `no_quota_api` is `true` for Vibe, which has
 no quota API). Grok and Copilot attempt a real quota lookup and only degrade
 to the same `no_quota_api: true` shape when that lookup fails — see Platform
-notes below.
+notes below. Codex and Claude profiles also carry a `reset_vouchers` object
+(see [Reset vouchers](#reset-vouchers-codex-and-claude)).
+
+### Reset vouchers (Codex and Claude)
+
+A reset voucher (重置券) refills a used-up quota window early. `codex-accounts`
+and `claude-accounts` `list` / `usage` (and `ai-accounts list` / `usage`, which
+relay them) add two columns after `1W USED`:
+
+| Column | Meaning |
+| --- | --- |
+| `VOUCHERS` | Vouchers left on the account, right-aligned |
+| `VOUCHER EXPIRY` | Time until each unexpired voucher runs out, soonest first, e.g. `11d 4h ×2, 18d 2h` (`×2` = two vouchers expire then) |
+
+Both columns disappear when no row knows its count, and appear as labelled
+fields on the narrow card layout. A dim `—` means **unknown** (the provider did
+not say, the lookup failed, or this client is not eligible to be told) and is
+different from `0`, which means the account really has none. `VOUCHER EXPIRY` is `—`
+whenever there is no future expiry to show.
+
+`--json` adds a `reset_vouchers` object to each Codex and Claude profile:
+
+```json
+"reset_vouchers": {
+  "count": 3,
+  "expires_soonest": "2026-10-22T19:43:18Z",
+  "vouchers": [
+    {"expires_at": "2026-10-22T19:43:18Z", "expires_at_unix": 1792698198, "expires_in_sec": 950000}
+  ]
+}
+```
+
+`count` is `null` when unknown; `vouchers` lists the unexpired ones soonest
+first, one entry per voucher (Claude vouchers from the same grant share its end
+time), and can be empty even when `count` is positive.
+
+Where the numbers come from (both read-only `GET`s — a voucher is **never**
+consumed, and nothing here calls the redeem endpoint):
+
+- **Codex:** `rate_limit_reset_credits.available_count` in the usage response
+  gives the count. Only when that is above 0, `list`/`usage` makes one more
+  `GET` (5 s timeout) to `…/wham/rate-limit-reset-credits` for the per-voucher
+  expiries, in parallel with the other profiles but after that profile's usage
+  request. The auto-switch probe never makes it. Quota-reset detection runs
+  `list --json` on every timer tick but sets an internal opt-out
+  (`AI_ACCOUNTS_SKIP_RESET_EXPIRY`), so it skips the request and keeps only the
+  count.
+- **Claude:** the usage request carries `?cedar_ember=1`, which adds a
+  `cedar_ember` block to the same response — no extra request. Its grants'
+  `resets_left` are summed and each grant's `ends_at` is the expiry; grants
+  that are not `usable_now` or already ended are skipped. `eligible: false`
+  counts as `0` only for account-level reasons (`tier`, `tenure`,
+  `no_weekly_limit`, `weekly_limit`, `not_at_wall`, `extra_usage`,
+  `other_experiment`, `mobile`); a client-level (`surface`, `cli_version`) or
+  unrecognised reason stays unknown. If the server rejects the parameter
+  (HTTP 400/404), the usage request is retried once without it, so the 5h/7d
+  windows and auto-switch never depend on voucher support (vouchers then show
+  `—`).
+
+The server only reports Claude vouchers to a client that looks like Claude
+Code, so the request sends `User-Agent: claude-cli/2.1.296 (external, cli)`. If
+vouchers turn `—` after a Claude Code upgrade, set `CLAUDE_USAGE_USER_AGENT` to
+a current value (for example `claude-cli/<your claude --version> (external, cli)`).
 
 ### Antigravity profile names
 
@@ -372,6 +434,16 @@ five providers running concurrently in separate processes and output captured.
 They include list rendering and, for Antigravity, `agy` startup and cleanup,
 but exclude Python interpreter startup and module imports. Counts refer to
 saved profiles, which are not necessarily distinct accounts.
+
+Reset-voucher columns: Claude's vouchers ride the usage request it already
+makes, so they cost nothing. Codex adds one 5 s-capped `GET` per profile that
+has vouchers. It runs after that profile's usage `GET` (it needs the count
+first), so it is sequential within the profile; profiles still run in parallel,
+so the cost is roughly one extra request round-trip, not one per profile. An A/B
+of in-process `cmd_list()` with one voucher-bearing profile measured a median of
+0.72 s without the lookup and 1.10 s with it (about +0.4 s). End-to-end `uv run
+codex-accounts list` with that profile measured 1.12, 1.17 and 1.37 s in three
+runs (median 1.17 s, including `uv` startup and imports).
 
 The Copilot row was added later (measured on **2026-10-11**): the median of five
 sequential in-process `cmd_list()` runs (1.152–1.553 s), with output captured.
@@ -857,8 +929,10 @@ feature does nothing:** with no timer running, `reset_notify` makes no extra
 `list --json` calls and sends no notifications. Two in-product signals cover
 this. Turning `reset_notify` (or `enabled` / `token_refresh`, the other
 timer-only settings) on in the interactive `ai-accounts config` menu offers
-"Install it now?" when the timer is missing — only for a key you switched on
-in that session, so leaving the menu with the defaults untouched never prompts.
+"Install it now?" when auto-switch setup (the timer and the hooks) isn't installed — for a key
+you switched on in that session, or one that is on although it defaults to off (`enabled`, an
+explicit opt-in). Default-on keys (`reset_notify`, `token_refresh`) already
+being on never prompt, so leaving the menu with the defaults untouched is quiet.
 (`config set` and the non-interactive menu never prompt.) And `ai-accounts
 doctor` prints a note under the timer line whenever one of those settings is on
 but the timer is not installed, naming the settings and the install command.

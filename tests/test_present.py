@@ -35,6 +35,7 @@ from ai_accounts import codex_accounts as coa
 from ai_accounts import gemini_accounts as gea
 from ai_accounts import grok_accounts as gra
 from ai_accounts import grok_usage as gru
+from ai_accounts import usage_format
 from ai_accounts._utils import GREEN
 
 SENTINEL_ACCESS = "SENTINEL_LEAK_ACCESS_xyz"
@@ -387,6 +388,59 @@ class TableGrammarTests(unittest.TestCase):
             present.accounts_table, rows, [("A", "a"), ("B", "b")], optional_columns={"a", "b"}
         )
         self.assertEqual(text, "")
+
+
+class ResetVoucherColumnTests(unittest.TestCase):
+    """The shared VOUCHERS / VOUCHER EXPIRY pair: cell rendering, right-aligned counts,
+    hidden when unknown everywhere, and present on the narrow card layout."""
+
+    _COLUMNS = [("PROFILE", "profile"), *present.RESET_COLUMNS]
+
+    def _rows(self, *vouchers: usage_format.ResetVouchers | None) -> list[dict[str, str]]:
+        return [
+            {"profile": f"p{i}", **present.reset_voucher_cells(v, now=1_000)}
+            for i, v in enumerate(vouchers)
+        ]
+
+    def test_cells_show_count_and_expiry_or_dim_dash_when_unknown(self) -> None:
+        known, unknown = self._rows(usage_format.ResetVouchers(3, (1_000 + 86_400 + 3_700,)), None)
+        self.assertEqual((known["resets"], known["reset_expiry"]), ("3", "1d 1h"))
+        self.assertEqual(present._ANSI_RE.sub("", unknown["resets"]), "—")
+        self.assertEqual(present._ANSI_RE.sub("", unknown["reset_expiry"]), "—")
+
+    def test_wide_table_hides_both_columns_when_every_row_is_unknown(self) -> None:
+        text = _capture(
+            present.accounts_table,
+            self._rows(None, usage_format.ResetVouchers()),
+            self._COLUMNS,
+            optional_columns=present.RESET_OPTIONAL_COLUMNS,
+        )
+        self.assertNotIn("VOUCHERS", text)
+        self.assertNotIn("VOUCHER EXPIRY", text)
+
+    def test_wide_table_right_aligns_counts_and_keeps_zero(self) -> None:
+        rows = self._rows(usage_format.ResetVouchers(12), usage_format.ResetVouchers(0))
+        text = _capture(
+            present.accounts_table,
+            rows,
+            self._COLUMNS,
+            optional_columns=present.RESET_OPTIONAL_COLUMNS,
+            numeric_keys=("resets",),
+            style="classic",
+        )
+        self.assertIn("│ 12       │", text)
+        self.assertIn("│  0       │", text)
+
+    def test_narrow_cards_show_the_columns_even_when_unknown(self) -> None:
+        text = _capture(
+            present.accounts_table,
+            self._rows(None),
+            self._COLUMNS,
+            optional_columns=present.RESET_OPTIONAL_COLUMNS,
+            mode="narrow",
+        )
+        self.assertIn("VOUCHERS", text)
+        self.assertIn("VOUCHER EXPIRY", text)
 
 
 if __name__ == "__main__":

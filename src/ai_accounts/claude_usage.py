@@ -14,18 +14,29 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Final, TypeAlias
 
-from .usage_format import UsageWindow, format_unix_time_compact
+from .usage_format import ResetVouchers, UsageWindow, format_unix_time_compact
+from .usage_format import parse_iso8601 as _parse_iso8601
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonDict: TypeAlias = dict[str, JsonValue]
 
-USAGE_URL: Final = "https://api.anthropic.com/api/oauth/usage"
+_PLAIN_USAGE_URL: Final = "https://api.anthropic.com/api/oauth/usage"
+# `?cedar_ember=1` is what makes the response carry the reset-voucher block (else it is null).
+USAGE_URL: Final = f"{_PLAIN_USAGE_URL}?cedar_ember=1"
+# If the server ever rejects the `cedar_ember` param, fall back to the plain URL so the
+# 5h/7d windows (and autoswitch) never depend on voucher support.
+_PARAM_REJECTED: Final = ("HTTP 400", "HTTP 404")
 # The OAuth usage endpoint rejects the request without this beta opt-in header.
 _BETA_HEADER: Final = "oauth-2025-04-20"
-_USER_AGENT: Final = os.environ.get("CLAUDE_USAGE_USER_AGENT", "claude-code/2.1.0")
+# The server reports the vouchers as ineligible ("surface") unless the User-Agent looks like
+# the CLI. A pinned version (not `claude --version`, which would cost a subprocess per call);
+# bump it if `ineligible_reason` ever turns "cli_version". CLAUDE_USAGE_USER_AGENT overrides.
+_CLI_VERSION: Final = "2.1.296"
+_USER_AGENT: Final = os.environ.get(
+    "CLAUDE_USAGE_USER_AGENT", f"claude-cli/{_CLI_VERSION} (external, cli)"
+)
 
 _FIVE_HOUR_MINUTES: Final = 5 * 60
 _SEVEN_DAY_MINUTES: Final = 7 * 24 * 60
@@ -38,16 +49,7 @@ class UsageSnapshot:
     plan: str | None
     refreshed_at: int | None
     error: str | None
-
-
-def _parse_iso8601(value: object) -> int | None:
-    """Epoch seconds for an ISO-8601 reset stamp (e.g. ``2025-07-20T10:30:00.000Z``)."""
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
-    except ValueError:
-        return None
+    reset_vouchers: ResetVouchers = ResetVouchers()
 
 
 def _window(data: JsonValue, window_minutes: int) -> UsageWindow | None:
@@ -64,9 +66,51 @@ def _window(data: JsonValue, window_minutes: int) -> UsageWindow | None:
     )
 
 
-def _request_usage(access_token: str, *, timeout: float) -> JsonDict | str:
+# `ineligible_reason` values that describe the ACCOUNT (so "0 vouchers" is true). Any other
+# reason — "surface" / "cli_version" (our client looks wrong) or one we have never seen — says
+# nothing about the account, so it stays unknown rather than a misleading 0.
+_ACCOUNT_LEVEL_REASONS: Final = frozenset(
+    {"tier", "tenure", "no_weekly_limit", "weekly_limit", "not_at_wall", "extra_usage",
+     "other_experiment", "mobile"}
+)
+
+
+def _vouchers(cedar_ember: JsonValue, now: float | None = None) -> ResetVouchers:
+    """Reset vouchers from the ``cedar_ember`` block: the SUM of ``resets_left`` over all
+    still-usable grants, and one ``ends_at`` per voucher (a grant's vouchers share it). ``eligible: false`` with an
+    account-level reason means none (count 0); with a client-level or unknown reason it is
+    unknown. A missing/odd block is unknown (``count=None``) so a schema change can never break
+    the usage windows parsed alongside it. Grants with ``usable_now: false`` or already ended
+    are skipped."""
+    if not isinstance(cedar_ember, dict):
+        return ResetVouchers()
+    if cedar_ember.get("eligible") is False:
+        known = cedar_ember.get("ineligible_reason") in _ACCOUNT_LEVEL_REASONS
+        return ResetVouchers(count=0 if known else None)
+    grants = cedar_ember.get("grants")
+    if not isinstance(grants, list):
+        return ResetVouchers()
+    now = time.time() if now is None else now
+    count = 0
+    expiries: list[int] = []
+    for grant in grants:
+        if not isinstance(grant, dict) or grant.get("usable_now") is False:
+            continue
+        left = grant.get("resets_left")
+        if isinstance(left, bool) or not isinstance(left, int) or left <= 0:
+            continue
+        ends_at = _parse_iso8601(grant.get("ends_at"))
+        if ends_at is not None and ends_at <= now:
+            continue
+        count += left
+        if ends_at is not None:
+            expiries.extend([ends_at] * left)
+    return ResetVouchers(count=count, expires_at=tuple(sorted(expiries)))
+
+
+def _request_usage(access_token: str, *, timeout: float, url: str = USAGE_URL) -> JsonDict | str:
     request = urllib.request.Request(
-        USAGE_URL,
+        url,
         headers={
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
@@ -97,6 +141,8 @@ def fetch_usage(
     if not access_token:
         return UsageSnapshot(None, None, plan, None, "missing access token")
     result = _request_usage(access_token, timeout=timeout)
+    if isinstance(result, str) and result.startswith(_PARAM_REJECTED):
+        result = _request_usage(access_token, timeout=timeout, url=_PLAIN_USAGE_URL)
     if isinstance(result, str):
         return UsageSnapshot(None, None, plan, None, result)
     return UsageSnapshot(
@@ -105,6 +151,7 @@ def fetch_usage(
         plan=plan,
         refreshed_at=int(time.time()),
         error=None,
+        reset_vouchers=_vouchers(result.get("cedar_ember")),
     )
 
 

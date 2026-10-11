@@ -25,7 +25,8 @@ from unittest import mock
 import pytest
 
 from ai_accounts import codex_accounts as ca
-from ai_accounts import profile_secrets, usage_format
+from ai_accounts import profile_secrets, quota_reset, usage_format
+from ai_accounts.providers import PROVIDERS
 
 
 def _jwt(payload: dict) -> str:
@@ -1227,7 +1228,7 @@ class UsageRequestTests(_CodexHomeMixin):
         self.assertIn(ca.RED, ca._usage_cell(high, "5h"))
 
     def test_usage_table_aligns_weekly_units_to_widest_value(self):
-        keys = ("profile", "account", "plan", "account_id", "usage_5h", "usage_updated", "expires", "status")
+        keys = ("profile", "account", "plan", "account_id", "usage_5h", "resets", "reset_expiry", "usage_updated", "expires", "status")
         rows = [
             dict.fromkeys(keys, "x") | {"usage_1week": f"{ca.YELLOW}58%{ca.RESET} · 2d 13h 8m"},
             dict.fromkeys(keys, "x") | {"usage_1week": f"{ca.GREEN}9%{ca.RESET} · 6d 14h 40m"},
@@ -1278,6 +1279,128 @@ class UsageRequestTests(_CodexHomeMixin):
         self.assertIn("34%", text)
         fetch_usage.assert_called_once()
         oauth_refresh.assert_not_called()
+
+    def _voucher_usage(self, count):
+        return usage_format.UsageSnapshot(
+            hourly=usage_format.UsageWindow(percentage=12, reset_time=1_800_000_000, window_minutes=300),
+            weekly=None,
+            refreshed_at=1_700_000_000,
+            error=None,
+            reset_vouchers=usage_format.ResetVouchers(count),
+        )
+
+    def test_list_shows_reset_voucher_count_and_expiry_columns(self):
+        self.write_auth(_auth_payload("acct-w", "<<hs:3519e7049274afbbf00c290e777aa039>>"))
+        self.write_profile("work", _auth_payload("acct-w", "<<hs:3519e7049274afbbf00c290e777aa039>>"))
+        soon = int(time.time()) + 11 * 86_400 + 4 * 3600 + 600
+        with mock.patch.object(usage_format, "fetch_usage", return_value=self._voucher_usage(3)), \
+                mock.patch.object(usage_format, "fetch_reset_credit_expiries", return_value=(soon,)) as expiries, \
+                redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
+            rc = ca.cmd_list()
+        text = ca._ANSI_RE.sub("", out.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertIn("VOUCHERS", text)
+        self.assertIn("VOUCHER EXPIRY", text)
+        self.assertIn("│ 3        │ 11d 4h         │", text)
+        expiries.assert_called_once()
+
+    def test_list_hides_reset_columns_when_count_unknown_and_skips_the_expiry_fetch(self):
+        self.write_auth(_auth_payload("acct-w", "<<hs:3519e7049274afbbf00c290e777aa039>>"))
+        self.write_profile("work", _auth_payload("acct-w", "<<hs:3519e7049274afbbf00c290e777aa039>>"))
+        with mock.patch.object(usage_format, "fetch_usage", return_value=self._voucher_usage(None)), \
+                mock.patch.object(usage_format, "fetch_reset_credit_expiries") as expiries, \
+                redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
+            ca.cmd_list()
+        text = ca._ANSI_RE.sub("", out.getvalue())
+        self.assertNotIn("VOUCHERS", text)
+        self.assertNotIn("VOUCHER EXPIRY", text)
+        expiries.assert_not_called()
+
+    def test_zero_vouchers_show_zero_and_expiry_dash(self):
+        self.write_profile("work", _auth_payload("acct-w", "<<hs:3519e7049274afbbf00c290e777aa039>>"))
+        with mock.patch.object(usage_format, "fetch_usage", return_value=self._voucher_usage(0)), \
+                mock.patch.object(usage_format, "fetch_reset_credit_expiries") as expiries, \
+                mock.patch.object(ca, "_print_accounts_table") as table:
+            self.run_capture(ca.cmd_list)
+        row = table.call_args.args[0][0]
+        self.assertEqual(ca._ANSI_RE.sub("", row["resets"]), "0")
+        self.assertEqual(ca._ANSI_RE.sub("", row["reset_expiry"]), "—")
+        expiries.assert_not_called()
+
+    def test_expiry_lookup_failure_keeps_the_count_and_the_list_succeeds(self):
+        self.write_profile("work", _auth_payload("acct-w", "<<hs:3519e7049274afbbf00c290e777aa039>>"))
+        with mock.patch.object(usage_format, "fetch_usage", return_value=self._voucher_usage(2)), \
+                mock.patch.object(usage_format, "_request_json", return_value="network error"), \
+                mock.patch.object(ca, "_print_accounts_table") as table:
+            rc, _, _ = self.run_capture(ca.cmd_list)
+        row = table.call_args.args[0][0]
+        self.assertEqual(rc, 0)
+        self.assertEqual(ca._ANSI_RE.sub("", row["resets"]), "2")
+        self.assertEqual(ca._ANSI_RE.sub("", row["reset_expiry"]), "—")
+
+    def test_json_carries_reset_vouchers_per_profile(self):
+        self.write_profile("work", _auth_payload("acct-w", "<<hs:3519e7049274afbbf00c290e777aa039>>"))
+        soon = int(time.time()) + 3 * 86_400
+        with mock.patch.object(usage_format, "fetch_usage", return_value=self._voucher_usage(2)), \
+                mock.patch.object(usage_format, "fetch_reset_credit_expiries", return_value=(soon,)):
+            _rc, out, _err = self.run_capture(lambda: ca.main(["list", "--json"]))
+        vouchers = json.loads(out)[0]["reset_vouchers"]
+        self.assertEqual(vouchers["count"], 2)
+        self.assertEqual([v["expires_at_unix"] for v in vouchers["vouchers"]], [soon])
+
+    def test_autoswitch_probe_never_fetches_voucher_expiries(self):
+        self.write_profile("alpha", _auth_payload("acct-a", "<<hs:2708f517277c0d800bc5c8b873c25c08>>"))
+        with mock.patch.object(usage_format, "fetch_usage", return_value=self._voucher_usage(3)), \
+                mock.patch.object(usage_format, "fetch_reset_credit_expiries") as expiries:
+            ca._autoswitch_probe("alpha")
+        expiries.assert_not_called()
+
+    def _credit_urls_requested_by(self, run_list):
+        """URLs requested while *run_list* drives `codex-accounts list --json` in-process."""
+        self.write_profile("work", _auth_payload("acct-w", "<<hs:6e87e4e5a3a34e088ba534725dd199c1>>"))
+        urls = []
+
+        def fake_request_json(url, *args, **kwargs):
+            urls.append(url)
+            return {"credits": []}
+
+        with mock.patch.object(usage_format, "fetch_usage", return_value=self._voucher_usage(2)), \
+                mock.patch.object(usage_format, "_request_json", side_effect=fake_request_json):
+            run_list()
+        return urls
+
+    def test_plain_list_json_fetches_the_credit_listing(self):
+        urls = self._credit_urls_requested_by(lambda: self.run_capture(lambda: ca.main(["list", "--json"])))
+        self.assertEqual(urls, [usage_format.RESET_CREDITS_URL])
+
+    def test_quota_reset_collection_skips_the_credit_listing(self):
+        calls: list[dict] = []
+
+        def run_in_process(argv, **kwargs):
+            # quota_reset shells `python -m ai_accounts.codex_accounts list --json`; mirror its env in-process.
+            calls.append(kwargs)
+            self.assertEqual(argv[1:3], ["-m", "ai_accounts.codex_accounts"])
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, kwargs["env"]), redirect_stdout(out), redirect_stderr(io.StringIO()):
+                rc = ca.main(argv[3:])
+            return subprocess.CompletedProcess(argv, rc, out.getvalue(), "")
+
+        codex = next(p for p in PROVIDERS if p.key == "codex")
+        snap = None
+
+        def collect():
+            nonlocal snap
+            snap = quota_reset._collect_one(codex)
+
+        with mock.patch.object(quota_reset.u, "run", side_effect=run_in_process):
+            urls = self._credit_urls_requested_by(collect)
+        # _collect_one swallows every exception, so assert on what the mock received and on the result.
+        self.assertIsNotNone(snap)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("env", calls[0])
+        self.assertEqual(calls[0]["env"][usage_format.SKIP_RESET_EXPIRY_ENV], "1")
+        self.assertEqual(urls, [])
+        self.assertNotIn(usage_format.SKIP_RESET_EXPIRY_ENV, os.environ)
 
     def test_list_fetches_concurrently_without_swapping_rows(self):
         self.write_profile("a", _auth_payload("acct-a", "a@x.com"))
@@ -1497,6 +1620,7 @@ class UsageRequestTests(_CodexHomeMixin):
                         "error": None,
                     },
                     "no_quota_api": False,
+                    "reset_vouchers": {"count": None, "expires_soonest": None, "vouchers": []},
                     "plan": "pro",
                 }
             ],

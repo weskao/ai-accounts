@@ -25,12 +25,15 @@ from . import autoswitch, i18n, profile_secrets, usage_format
 from . import config_menu as cm
 from ._present import (
     _ANSI_RE as _ANSI_RE,
+    RESET_COLUMNS,
+    RESET_OPTIONAL_COLUMNS,
     accounts_table,
     choose_and_run,
     choose_profile,
     format_help,
     ok,
     panel,
+    reset_voucher_cells,
     success_panel,
     usage_color,
 )
@@ -811,9 +814,9 @@ def _usage_cell(window: usage_format.UsageWindow | None, window_kind: str) -> st
     return usage_format.format_usage_window(window, window_kind, percent)
 
 
-# Codex shows every column unconditionally (empty optional set); the usage
-# columns are right-aligned before measuring. The shared renderer owns the
-# borders/widths/padding.
+# Codex shows every column unconditionally except the reset-voucher pair (hidden
+# while no row knows its count); the usage columns are right-aligned before
+# measuring. The shared renderer owns the borders/widths/padding.
 _TABLE_COLUMNS = [
     ("PROFILE", "profile"),
     ("ACCOUNT", "account"),
@@ -821,6 +824,7 @@ _TABLE_COLUMNS = [
     ("ID", "account_id"),
     ("5H USED", "usage_5h"),
     ("1W USED", "usage_1week"),
+    *RESET_COLUMNS,
     ("UPDATED", "usage_updated"),
     ("AUTH", "expires"),
     ("STATE", "status"),
@@ -828,7 +832,13 @@ _TABLE_COLUMNS = [
 
 
 def _print_accounts_table(rows: list[dict]) -> None:
-    accounts_table(rows, _TABLE_COLUMNS, align_keys=("usage_5h", "usage_1week"))
+    accounts_table(
+        rows,
+        _TABLE_COLUMNS,
+        optional_columns=RESET_OPTIONAL_COLUMNS,
+        align_keys=("usage_5h", "usage_1week"),
+        numeric_keys=("resets",),
+    )
 
 
 # ── commands ─────────────────────────────────────────────────────────────
@@ -945,12 +955,15 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
             and active_text is not None
             and _token_key_from_path(_auth_file()) == _token_key_from_text(active_text)
         ):
-            usage = usage_format.fetch_usage(_auth_file())
+            auth = _auth_file()
         else:
-            usage = usage_format.fetch_usage(_load_profile(profile_path))
+            auth = _load_profile(profile_path)
+        usage = usage_format.fetch_usage(auth)
         if usage.error and usage.error.startswith(("HTTP 401", "HTTP 403")):
             return empty_usage
-        return usage
+        # One extra GET when vouchers exist. The autoswitch probe never reaches this;
+        # quota_reset does (via `list --json`) but sets SKIP_RESET_EXPIRY_ENV to opt out.
+        return usage_format.with_reset_expiries(usage, auth)
 
     if fetch_usage:
         spinner = Spinner("Fetching Codex usage…")
@@ -977,6 +990,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                     "error": usage.error,
                 },
                 "no_quota_api": False,
+                "reset_vouchers": usage_format.reset_vouchers_json(usage.reset_vouchers),
                 # Raw claim, no ANSI (_plan_cell's colored form is for the
                 # table). Quota-reset detection compares it across ticks to
                 # tell a plan upgrade's rescaled percentage from a reset.
@@ -1007,6 +1021,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                 "account_id": _short_id((claims or {}).get("account_id")),
                 "usage_5h": _usage_cell(usage.hourly, "5h"),
                 "usage_1week": _usage_cell(usage.weekly, "1week"),
+                **reset_voucher_cells(usage.reset_vouchers),
                 "usage_updated": usage_format.format_refreshed_at(usage),
                 "expires": f"{color}{expires_text}{RESET}",
                 "status": status,

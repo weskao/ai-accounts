@@ -190,6 +190,29 @@ class AiAccountsTest(unittest.TestCase):
         self.assertEqual(merged["codex-accounts"], entries["ai_accounts.codex_accounts"])
         self.assertEqual(merged["grok-accounts"], entries["ai_accounts.grok_accounts"])
 
+    def test_reset_voucher_data_passes_through_the_umbrella_untouched(self) -> None:
+        # The umbrella only relays each provider's output: the voucher columns
+        # ride the table text, and `reset_vouchers` rides the --json document.
+        table = "│ PROFILE │ VOUCHERS │ VOUCHER EXPIRY │\n│ work    │ 3        │ 11d 4h         │"
+        vouchers = {"count": 3, "expires_soonest": "2099-01-01T00:00:00Z", "vouchers": []}
+
+        with mock.patch.object(aa, "_run_list", side_effect=lambda m: _fake(m, table)):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                aa.cmd_list()
+        self.assertIn("VOUCHER EXPIRY", buf.getvalue())
+        self.assertIn("11d 4h", buf.getvalue())
+
+        def run(module: str, command: str) -> subprocess.CompletedProcess[str]:
+            body = [{"name": "work", "reset_vouchers": vouchers}] if "codex" in module else []
+            return subprocess.CompletedProcess([], 0, json.dumps(body), "")
+
+        for command in ("list", "usage"):
+            buf = io.StringIO()
+            with mock.patch.object(aa, "_run_json", side_effect=run), redirect_stdout(buf):
+                aa.main([command, "--json"])
+            self.assertEqual(json.loads(buf.getvalue())["codex-accounts"][0]["reset_vouchers"], vouchers)
+
     def test_json_usage_child_failure_becomes_error_field_not_a_crash(self) -> None:
         # A child that exits non-zero (or prints unparseable output) must not
         # crash the umbrella merge — it surfaces as {"error": "..."} for that

@@ -451,6 +451,66 @@ class ProfileCommandTests(_HomeMixin):
         self.assertNotIn("5H USED", text)
         self.assertNotIn("1W USED", text)
 
+    def _voucher_snapshot(self, vouchers: cu.ResetVouchers) -> cu.UsageSnapshot:
+        return cu.UsageSnapshot(
+            cu.UsageWindow(45, 2_000_000_000, 300), None, "Max", 2_000_000_000, None, vouchers
+        )
+
+    def test_list_shows_reset_voucher_count_and_expiry_columns(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        soon = int(time.time()) + 11 * 86_400 + 4 * 3600 + 600
+        snap = self._voucher_snapshot(cu.ResetVouchers(1, (soon,)))
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
+            _, output, _ = self.capture(ca.cmd_list)
+        text = ca._ANSI_RE.sub("", output)
+        self.assertIn("VOUCHERS", text)
+        self.assertIn("VOUCHER EXPIRY", text)
+        self.assertIn("│ 1        │ 11d 4h         │", text)
+
+    def test_reset_counts_are_right_aligned_in_the_resets_column(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        self.write_profile("b", _oauth(access="at-b", refresh="rt-b"))
+        counts = {"at-a": 3, "at-b": 12}
+        with mock.patch.object(
+            ca.claude_usage,
+            "fetch_usage",
+            side_effect=lambda token, **_: self._voucher_snapshot(cu.ResetVouchers(counts[token])),
+        ):
+            _, output, _ = self.capture(ca.cmd_list)
+        text = ca._ANSI_RE.sub("", output)
+        self.assertIn("│  3       │", text)
+        self.assertIn("│ 12       │", text)
+
+    def test_list_hides_reset_columns_when_count_unknown(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        snap = self._voucher_snapshot(cu.ResetVouchers())
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
+            _, output, _ = self.capture(ca.cmd_list)
+        text = ca._ANSI_RE.sub("", output)
+        self.assertNotIn("VOUCHERS", text)
+        self.assertNotIn("VOUCHER EXPIRY", text)
+
+    def test_zero_vouchers_render_zero_not_dash(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        snap = self._voucher_snapshot(cu.ResetVouchers(0))
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap), mock.patch.object(
+            ca, "_print_accounts_table"
+        ) as table:
+            self.quiet(ca.cmd_list)
+        row = table.call_args.args[0][0]
+        self.assertEqual(ca._ANSI_RE.sub("", row["resets"]), "0")
+        self.assertEqual(ca._ANSI_RE.sub("", row["reset_expiry"]), "—")
+
+    def test_json_carries_reset_vouchers_per_profile(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        soon = int(time.time()) + 3 * 86_400
+        snap = self._voucher_snapshot(cu.ResetVouchers(1, (soon,)))
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
+            _, output, _ = self.capture(lambda: ca.cmd_list(json_output=True))
+        vouchers = json.loads(output)[0]["reset_vouchers"]
+        self.assertEqual(vouchers["count"], 1)
+        self.assertEqual(vouchers["vouchers"][0]["expires_at_unix"], soon)
+
     def test_list_shows_account_from_stored_identity(self) -> None:
         path = self.home / "accounts" / "work.json"
         path.write_text(
@@ -539,6 +599,7 @@ class ProfileCommandTests(_HomeMixin):
                         "error": None,
                     },
                     "no_quota_api": False,
+                    "reset_vouchers": {"count": None, "expires_soonest": None, "vouchers": []},
                     # Tier included, so a 5x-to-20x change on the same plan is
                     # still visible to quota-reset detection.
                     "plan": "Max · 20x",

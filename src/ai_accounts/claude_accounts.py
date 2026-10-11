@@ -37,16 +37,20 @@ from .usage_format import (
     format_usage_window,
     json_empty_list,
     print_no_active_account,
+    reset_vouchers_json,
     usage_window_to_json,
 )
 from ._present import (
     _ANSI_RE as _ANSI_RE,
+    RESET_COLUMNS,
+    RESET_OPTIONAL_COLUMNS,
     accounts_table,
     choose_and_run,
     choose_profile,
     format_help,
     ok,
     panel,
+    reset_voucher_cells,
     success_panel,
     usage_color,
 )
@@ -703,6 +707,7 @@ _TABLE_COLUMNS = [
     ("PLAN", "plan"),
     ("5H USED", "usage_5h"),
     ("1W USED", "usage_1week"),
+    *RESET_COLUMNS,
     ("UPDATED", "usage_updated"),
     ("EXPIRES", "expires"),
     ("STATE", "status"),
@@ -713,8 +718,9 @@ def _print_accounts_table(rows: list[dict]) -> None:
     accounts_table(
         rows,
         _TABLE_COLUMNS,
-        optional_columns={"usage_5h", "usage_1week", "account"},
+        optional_columns={"usage_5h", "usage_1week", "account"} | RESET_OPTIONAL_COLUMNS,
         align_keys=("usage_5h", "usage_1week"),
+        numeric_keys=("resets",),
     )
 
 
@@ -841,6 +847,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                     "error": usage.error,
                 },
                 "no_quota_api": False,
+                "reset_vouchers": reset_vouchers_json(usage.reset_vouchers),
                 # Plain text, no ANSI (_plan_row_cell's colored form is for
                 # the table), and with the rate multiplier so a 5x-to-20x
                 # change on one plan is visible. Quota-reset detection
@@ -878,6 +885,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                 "plan": _plan_row_cell(claims),
                 "usage_5h": _usage_cell(usage.five_hour, "5h"),
                 "usage_1week": _usage_cell(usage.seven_day, "1week"),
+                **reset_voucher_cells(usage.reset_vouchers),
                 "usage_updated": claude_usage.format_refreshed_at(usage),
                 "expires": f"{color}{expires_text}{RESET}",
                 "status": status,

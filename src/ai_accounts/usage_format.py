@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
-from datetime import datetime
+from collections import Counter
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Final, TypeAlias
 
@@ -18,6 +20,12 @@ JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dic
 JsonDict: TypeAlias = dict[str, JsonValue]
 
 USAGE_URL: Final = "https://chatgpt.com/backend-api/wham/usage"
+# Read-only listing of reset vouchers (per-voucher expiry). Never the sibling `.../consume` POST.
+RESET_CREDITS_URL: Final = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+_RESET_CREDITS_TIMEOUT: Final = 5
+# Internal opt-out for callers that only need windows/percentages (quota_reset shells
+# `list --json` on every timer tick); the voucher count still comes free with the usage GET.
+SKIP_RESET_EXPIRY_ENV: Final = "AI_ACCOUNTS_SKIP_RESET_EXPIRY"
 _USAGE_CELL_RE: Final = re.compile(
     r"^(?P<color>(?:\033\[[0-9;]*m)*)(?P<percent>\d+)%(?P<reset>\033\[0m)? · "
     r"(?:(?P<days>\d+)d )?(?P<hours>\d+)h (?P<minutes>\d+)m"
@@ -38,11 +46,23 @@ class UsageWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class ResetVouchers:
+    """Quota-reset vouchers (重置券) left on an account. ``count`` is ``None`` when
+    the provider didn't say (unknown, which is not the same as 0); ``expires_at`` is
+    the unix expiry of each voucher still usable, soonest first (may be empty even
+    when ``count`` > 0 — the count and the expiries come from separate lookups)."""
+
+    count: int | None = None
+    expires_at: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class UsageSnapshot:
     hourly: UsageWindow | None
     weekly: UsageWindow | None
     refreshed_at: int | None
     error: str | None
+    reset_vouchers: ResetVouchers = ResetVouchers()
 
 
 def align_usage_cells(rows: list[dict[str, str]], key: str) -> None:
@@ -208,7 +228,9 @@ def _account_id(auth: JsonDict, access_token: str) -> str | None:
     )
 
 
-def _request_usage(access_token: str, account_id: str | None) -> JsonDict | str:
+def _request_json(
+    url: str, access_token: str, account_id: str | None, timeout: float, label: str = "usage endpoint"
+) -> JsonDict | str:
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Accept": "application/json",
@@ -216,13 +238,13 @@ def _request_usage(access_token: str, account_id: str | None) -> JsonDict | str:
     if account_id:
         headers["ChatGPT-Account-Id"] = account_id
 
-    request = urllib.request.Request(USAGE_URL, headers=headers, method="GET")
+    request = urllib.request.Request(url, headers=headers, method="GET")
     opener = urllib.request.build_opener(_NoRedirectHandler)
     try:
-        with opener.open(request, timeout=20) as response:
+        with opener.open(request, timeout=timeout) as response:
             raw = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        return f"HTTP {exc.code} from usage endpoint"
+        return f"HTTP {exc.code} from {label}"
     except (urllib.error.URLError, OSError):
         return "network error"
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -230,7 +252,11 @@ def _request_usage(access_token: str, account_id: str | None) -> JsonDict | str:
 
     if isinstance(raw, dict):
         return raw
-    return "usage endpoint returned non-object JSON"
+    return f"{label} returned non-object JSON"
+
+
+def _request_usage(access_token: str, account_id: str | None) -> JsonDict | str:
+    return _request_json(USAGE_URL, access_token, account_id, timeout=20)
 
 
 def _clamp_percent(value: int) -> int:
@@ -295,6 +321,59 @@ def format_elapsed(
     if hours:
         return f"{unit(hours, 'h')} {unit(minutes, 'm')}"
     return unit(minutes, "m")
+
+
+def parse_iso8601(value: object) -> int | None:
+    """Epoch seconds for an ISO-8601 stamp (e.g. ``2025-07-20T10:30:00.000Z``), else ``None``.
+    A stamp without a UTC offset is read as UTC, not local time."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return int((parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)).timestamp())
+
+
+def _upcoming(vouchers: ResetVouchers | None, now: float) -> list[int]:
+    """Expiries still in the future, soonest first — a stale or past stamp is not "soonest"."""
+    return sorted(ts for ts in (vouchers.expires_at if vouchers else ()) if ts > now)
+
+
+def format_reset_count(vouchers: ResetVouchers | None) -> str:
+    """Vouchers left as a table cell: the number, or ``—`` when unknown."""
+    if vouchers is None or vouchers.count is None:
+        return "—"
+    return str(vouchers.count)
+
+
+def format_reset_expiry(vouchers: ResetVouchers | None, now: float | None = None) -> str:
+    """Time until each voucher expires, soonest first, e.g. ``11d 4h ×2, 18d 2h`` —
+    vouchers that read the same are grouped with a count. ``—`` when unknown or there
+    is none. Days-scale, so it reuses :func:`format_elapsed`."""
+    now = time.time() if now is None else now
+    groups = Counter(format_elapsed(int(ts - now)) for ts in _upcoming(vouchers, now))
+    return ", ".join(f"{text} ×{n}" if n > 1 else text for text, n in groups.items()) or "—"
+
+
+def reset_vouchers_json(vouchers: ResetVouchers | None, now: float | None = None) -> dict[str, object] | None:
+    """``--json`` form of :class:`ResetVouchers` (``None`` in, ``None`` out)."""
+    if vouchers is None:
+        return None
+    now = time.time() if now is None else now
+    entries = [
+        {
+            "expires_at": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at_unix": ts,
+            "expires_in_sec": max(0, int(ts - now)),
+        }
+        for ts in _upcoming(vouchers, now)
+    ]
+    return {
+        "count": vouchers.count,
+        "expires_soonest": entries[0]["expires_at"] if entries else None,
+        "vouchers": entries,
+    }
 
 
 def format_usage_window(window: UsageWindow | None, window_kind: str, percentage_text: str | None = None) -> str:
@@ -407,11 +486,14 @@ def _snapshot(payload: JsonDict) -> UsageSnapshot:
         elif slot == "weekly":
             weekly = window
 
+    credits = _dict_field(payload, "rate_limit_reset_credits")
+    count = _number_field(credits, "available_count") if credits else None
     return UsageSnapshot(
         hourly=hourly,
         weekly=weekly,
         refreshed_at=int(time.time()),
         error=None,
+        reset_vouchers=ResetVouchers(count=None if count is None else max(0, count)),
     )
 
 
@@ -431,3 +513,47 @@ def fetch_usage(auth: Path | JsonDict | None) -> UsageSnapshot:
     if isinstance(result, str):
         return UsageSnapshot(hourly=None, weekly=None, refreshed_at=None, error=result)
     return _snapshot(result)
+
+
+def fetch_reset_credit_expiries(auth: Path | JsonDict | None) -> tuple[int, ...] | None:
+    """Unix expiries (soonest first) of the Codex reset vouchers still ``available``.
+
+    Opt-in and separate from :func:`fetch_usage` on purpose: it is one extra GET, so only
+    the list/usage display asks for it (via :func:`with_reset_expiries`) — never the
+    autoswitch probe, timer or quota_reset that share ``fetch_usage``. Read-only GET of
+    :data:`RESET_CREDITS_URL`; short timeout; any failure returns ``None`` (unknown)."""
+    if not isinstance(auth, dict):
+        auth = _load_json(auth) if auth is not None else None
+    access_token = _access_token(auth) if auth else None
+    if access_token is None:
+        return None
+    result = _request_json(
+        RESET_CREDITS_URL,
+        access_token,
+        _account_id(auth, access_token),
+        timeout=_RESET_CREDITS_TIMEOUT,
+        label="reset-credits endpoint",
+    )
+    credits = result.get("credits") if isinstance(result, dict) else None
+    if not isinstance(credits, list):
+        return None
+    stamps = (
+        parse_iso8601(item.get("expires_at"))
+        for item in credits
+        if isinstance(item, dict) and item.get("status") == "available"
+    )
+    now = time.time()
+    return tuple(sorted(ts for ts in stamps if ts is not None and ts > now))
+
+
+def with_reset_expiries(snapshot: UsageSnapshot, auth: Path | JsonDict | None) -> UsageSnapshot:
+    """*snapshot* with voucher expiries filled in — fetched only when it reports
+    vouchers left (``count`` > 0), so accounts with none cost no extra request. Skipped
+    (count kept, no expiries) when :data:`SKIP_RESET_EXPIRY_ENV` is set."""
+    count = snapshot.reset_vouchers.count
+    if not count or os.environ.get(SKIP_RESET_EXPIRY_ENV):
+        return snapshot
+    expiries = fetch_reset_credit_expiries(auth)
+    if expiries is None:
+        return snapshot
+    return replace(snapshot, reset_vouchers=ResetVouchers(count=count, expires_at=expiries))

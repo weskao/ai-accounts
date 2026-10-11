@@ -27,7 +27,7 @@ import re
 import shutil
 import sys
 import unicodedata
-from typing import Callable, Sequence
+from typing import Callable, Final, Sequence
 
 from . import usage_format
 from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RESET, RED, YELLOW, log_red, log_yellow
@@ -450,12 +450,31 @@ def usage_color(percentage: int) -> str:
     return GREEN
 
 
+# Reset-voucher (重置券) columns, shared by the Codex and Claude listings so neither
+# re-declares them. Optional: hidden when no row knows its voucher count.
+RESET_COLUMNS: Final = (("VOUCHERS", "resets"), ("VOUCHER EXPIRY", "reset_expiry"))
+RESET_OPTIONAL_COLUMNS: Final = frozenset(key for _, key in RESET_COLUMNS)
+
+
+def reset_voucher_cells(
+    vouchers: usage_format.ResetVouchers | None, now: float | None = None
+) -> dict[str, str]:
+    """Table cells for :data:`RESET_COLUMNS` — count and time to each voucher's expiry,
+    a dimmed ``—`` where unknown (distinct from a real ``0``)."""
+    cells = {
+        "resets": usage_format.format_reset_count(vouchers),
+        "reset_expiry": usage_format.format_reset_expiry(vouchers, now),
+    }
+    return {key: f"{DIM}—{RESET}" if text == "—" else text for key, text in cells.items()}
+
+
 def accounts_table(
     rows: list[dict[str, str]],
     columns: Sequence[tuple[str, str]],
     *,
     optional_columns: frozenset[str] | set[str] = frozenset(),
     align_keys: Sequence[str] = (),
+    numeric_keys: Sequence[str] = (),
     mode: str | None = None,
     style: str | None = None,
 ) -> None:
@@ -466,7 +485,8 @@ def accounts_table(
     "—" (after stripping ANSI) — used to hide usage/identity columns that carry
     no data yet. ``align_keys`` names usage-cell columns to right-align via
     ``usage_format.align_usage_cells`` before measuring widths (so the percent
-    and time units line up). Widths and padding are ANSI-aware.
+    and time units line up); ``numeric_keys`` likewise right-align a quantity
+    column via ``usage_format.align_numeric_cells``. Widths and padding are ANSI-aware.
 
     In narrow mode (``mode`` defaults to :func:`layout_mode`) the same rows are
     stacked as one labelled card per record instead — no columns are dropped
@@ -479,6 +499,8 @@ def accounts_table(
     """
     for key in align_keys:
         usage_format.align_usage_cells(rows, key)
+    for key in numeric_keys:
+        usage_format.align_numeric_cells(rows, key)
 
     if (mode or layout_mode()) == "narrow":
         _accounts_cards(rows, columns)
