@@ -191,7 +191,8 @@ is different: `no_quota_api` is `true` only for logins with no quota API (Go,
 Zen and API-key logins, always switch-only); a failed OpenAI/Anthropic/Copilot
 lookup keeps `no_quota_api: false` and shows a `null` window — see
 [opencode logins](#opencode-logins). Codex and Claude profiles also carry a
-`reset_vouchers` object (see [Reset vouchers](#reset-vouchers-codex-and-claude)).
+`reset_vouchers` object (see [Reset vouchers](#reset-vouchers-codex-and-claude)),
+and Claude profiles a `credits` object (see [Claude credits](#claude-credits)).
 
 ### Reset vouchers (Codex and Claude)
 
@@ -253,6 +254,37 @@ The server only reports Claude vouchers to a client that looks like Claude
 Code, so the request sends `User-Agent: claude-cli/2.1.296 (external, cli)`. If
 vouchers turn `—` after a Claude Code upgrade, set `CLAUDE_USAGE_USER_AGENT` to
 a current value (for example `claude-cli/<your claude --version> (external, cli)`).
+
+### Claude credits
+
+Claude's paid extra usage ("credits", spent once the plan limits run out) shows
+in `claude-accounts` `list` / `usage` (and `ai-accounts list` / `usage`) as a
+`CREDITS` column, written the way Claude Code writes it:
+
+```text
+66% · $66.26 / $100.00 · resets Nov 1
+```
+
+That is the share of the monthly limit used, spent / limit, and the date the
+month rolls over. The percent is colored like the usage columns (green, yellow
+from 50%, red from 80%). The column disappears when no account has extra usage
+turned on. `save`, `switch` and `login-switch` end with the same table, so they
+show it too.
+
+`--json` adds a `credits` object to each Claude profile, in major units:
+
+```json
+"credits": {"used": 66.26, "limit": 100.0, "currency": "USD", "percent": 66, "resets_on": "2026-11-01"}
+```
+
+It is `null` when extra usage is off or the server did not report it. `limit`
+and `percent` are `null` when there is no monthly cap.
+
+It comes from the `extra_usage` block of the same read-only usage response — no
+extra request. Amounts arrive in minor units (`used_credits: 6626` with
+`decimal_places: 2` is $66.26). The response has no reset date, so `resets`
+is the first of next month (calendar-month billing, as Claude Code shows it).
+Other currencies print as `EUR 12.34`.
 
 ### Antigravity profile names
 

@@ -708,17 +708,25 @@ _TABLE_COLUMNS = [
     ("5H USED", "usage_5h"),
     ("1W USED", "usage_1week"),
     *RESET_COLUMNS,
+    ("CREDITS", "credits"),
     ("UPDATED", "usage_updated"),
     ("EXPIRES", "expires"),
     ("STATE", "status"),
 ]
 
 
+def _credits_cell(credits: claude_usage.ExtraUsage | None) -> str:
+    text = claude_usage.format_credits(credits)
+    if credits is None:
+        return f"{DIM}{text}{RESET}"
+    return f"{usage_color(credits.percent)}{text}{RESET}" if credits.percent is not None else text
+
+
 def _print_accounts_table(rows: list[dict]) -> None:
     accounts_table(
         rows,
         _TABLE_COLUMNS,
-        optional_columns={"usage_5h", "usage_1week", "account"} | RESET_OPTIONAL_COLUMNS,
+        optional_columns={"usage_5h", "usage_1week", "account", "credits"} | RESET_OPTIONAL_COLUMNS,
         align_keys=("usage_5h", "usage_1week"),
         numeric_keys=("resets",),
     )
@@ -848,6 +856,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                 },
                 "no_quota_api": False,
                 "reset_vouchers": reset_vouchers_json(usage.reset_vouchers),
+                "credits": claude_usage.credits_json(usage.credits),
                 # Plain text, no ANSI (_plan_row_cell's colored form is for
                 # the table), and with the rate multiplier so a 5x-to-20x
                 # change on one plan is visible. Quota-reset detection
@@ -886,6 +895,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                 "usage_5h": _usage_cell(usage.five_hour, "5h"),
                 "usage_1week": _usage_cell(usage.seven_day, "1week"),
                 **reset_voucher_cells(usage.reset_vouchers),
+                "credits": _credits_cell(usage.credits),
                 "usage_updated": claude_usage.format_refreshed_at(usage),
                 "expires": f"{color}{expires_text}{RESET}",
                 "status": status,

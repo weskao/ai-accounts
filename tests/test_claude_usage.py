@@ -119,3 +119,63 @@ class TestFetchUsage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# Shape from a live read (2026-10-11), placeholder amounts: minor units + decimal_places.
+_EXTRA = {
+    "is_enabled": True,
+    "monthly_limit": 10000,
+    "used_credits": 6626.0,
+    "utilization": 66.26,
+    "currency": "USD",
+    "decimal_places": 2,
+}
+
+
+class TestCredits(unittest.TestCase):
+    def test_parses_extra_usage_in_minor_units(self) -> None:
+        self.assertEqual(cu._credits(_EXTRA), cu.ExtraUsage(6626, 10000, 2, "USD", 66))
+
+    def test_off_missing_or_odd_block_is_unknown(self) -> None:
+        for odd in (None, "x", {}, {**_EXTRA, "is_enabled": False}, {**_EXTRA, "used_credits": "1"}):
+            self.assertIsNone(cu._credits(odd), odd)
+
+    def test_no_limit_and_no_utilization(self) -> None:
+        got = cu._credits({**_EXTRA, "monthly_limit": None, "utilization": None})
+        self.assertEqual(got, cu.ExtraUsage(6626, None, 2, "USD", None))
+
+    def test_format_matches_claude_code_line(self) -> None:
+        from datetime import date
+
+        self.assertEqual(
+            cu.format_credits(cu._credits(_EXTRA), today=date(2026, 10, 11)),
+            "66% · $66.26 / $100.00 · resets Nov 1",
+        )
+        self.assertEqual(
+            cu.format_credits(cu._credits(_EXTRA), today=date(2026, 12, 31)),
+            "66% · $66.26 / $100.00 · resets Jan 1",
+        )
+
+    def test_format_other_currency_no_limit_and_unknown(self) -> None:
+        from datetime import date
+
+        eur = cu.ExtraUsage(1234, None, 2, "EUR", None)
+        self.assertEqual(cu.format_credits(eur, today=date(2026, 1, 5)), "EUR 12.34 · resets Feb 1")
+        self.assertEqual(cu.format_credits(None), "—")
+
+    def test_json_form(self) -> None:
+        from datetime import date
+
+        self.assertEqual(
+            cu.credits_json(cu._credits(_EXTRA), today=date(2026, 10, 11)),
+            {"used": 66.26, "limit": 100.0, "currency": "USD", "percent": 66, "resets_on": "2026-11-01"},
+        )
+        self.assertIsNone(cu.credits_json(None))
+
+    def test_fetch_usage_attaches_credits_and_bad_block_keeps_windows(self) -> None:
+        with mock.patch.object(cu, "_request_usage", return_value={**_WINDOWS, "extra_usage": _EXTRA}):
+            self.assertEqual(cu.fetch_usage("token-placeholder").credits.used_minor, 6626)
+        with mock.patch.object(cu, "_request_usage", return_value={**_WINDOWS, "extra_usage": 7}):
+            snap = cu.fetch_usage("token-placeholder")
+        self.assertIsNone(snap.credits)
+        self.assertEqual(snap.five_hour.percentage, 12)

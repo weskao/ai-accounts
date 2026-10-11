@@ -511,6 +511,34 @@ class ProfileCommandTests(_HomeMixin):
         self.assertEqual(vouchers["count"], 1)
         self.assertEqual(vouchers["vouchers"][0]["expires_at_unix"], soon)
 
+    def _credits_snapshot(self, credits: cu.ExtraUsage | None) -> cu.UsageSnapshot:
+        return cu.UsageSnapshot(
+            cu.UsageWindow(45, 2_000_000_000, 300), None, "Max", 2_000_000_000, None, credits=credits
+        )
+
+    def test_list_shows_credits_column(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        snap = self._credits_snapshot(cu.ExtraUsage(6626, 10000, 2, "USD", 66))
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
+            _, output, _ = self.capture(ca.cmd_list)
+        text = ca._ANSI_RE.sub("", output)
+        self.assertIn("CREDITS", text)
+        self.assertIn("66% · $66.26 / $100.00 · resets ", text)
+
+    def test_list_hides_credits_column_when_unknown(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=self._credits_snapshot(None)):
+            _, output, _ = self.capture(ca.cmd_list)
+        self.assertNotIn("CREDITS", ca._ANSI_RE.sub("", output))
+
+    def test_json_carries_credits_per_profile(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        snap = self._credits_snapshot(cu.ExtraUsage(6626, 10000, 2, "USD", 66))
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
+            _, output, _ = self.capture(lambda: ca.cmd_list(json_output=True))
+        credits = json.loads(output)[0]["credits"]
+        self.assertEqual((credits["used"], credits["limit"], credits["percent"]), (66.26, 100.0, 66))
+
     def test_list_shows_account_from_stored_identity(self) -> None:
         path = self.home / "accounts" / "work.json"
         path.write_text(
@@ -600,6 +628,7 @@ class ProfileCommandTests(_HomeMixin):
                     },
                     "no_quota_api": False,
                     "reset_vouchers": {"count": None, "expires_soonest": None, "vouchers": []},
+                    "credits": None,
                     # Tier included, so a 5x-to-20x change on the same plan is
                     # still visible to quota-reset detection.
                     "plan": "Max · 20x",

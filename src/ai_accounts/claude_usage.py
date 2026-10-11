@@ -14,8 +14,10 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import date
 from typing import Final, TypeAlias
 
+from ._utils import clamp_percent, finite_number
 from .usage_format import ResetVouchers, UsageWindow, format_unix_time_compact
 from .usage_format import parse_iso8601 as _parse_iso8601
 
@@ -43,6 +45,18 @@ _SEVEN_DAY_MINUTES: Final = 7 * 24 * 60
 
 
 @dataclass(frozen=True, slots=True)
+class ExtraUsage:
+    """Paid extra usage ("credits") this month, from the ``extra_usage`` block. Amounts
+    are in minor units (cents) as the server sends them; ``decimals`` says how many."""
+
+    used_minor: int
+    limit_minor: int | None
+    decimals: int
+    currency: str
+    percent: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class UsageSnapshot:
     five_hour: UsageWindow | None
     seven_day: UsageWindow | None
@@ -50,6 +64,7 @@ class UsageSnapshot:
     refreshed_at: int | None
     error: str | None
     reset_vouchers: ResetVouchers = ResetVouchers()
+    credits: ExtraUsage | None = None
 
 
 def _window(data: JsonValue, window_minutes: int) -> UsageWindow | None:
@@ -108,6 +123,64 @@ def _vouchers(cedar_ember: JsonValue, now: float | None = None) -> ResetVouchers
     return ResetVouchers(count=count, expires_at=tuple(sorted(expiries)))
 
 
+def _credits(block: JsonValue) -> ExtraUsage | None:
+    """:class:`ExtraUsage` from the ``extra_usage`` block; ``None`` when it is off,
+    missing or odd, so a schema change never breaks the windows parsed alongside it."""
+    if not isinstance(block, dict) or block.get("is_enabled") is not True:
+        return None
+    used = finite_number(block.get("used_credits"))
+    decimals = block.get("decimal_places", 2)
+    if used is None or isinstance(decimals, bool) or not isinstance(decimals, int) or not 0 <= decimals <= 4:
+        return None
+    limit = finite_number(block.get("monthly_limit"))
+    currency = block.get("currency")
+    return ExtraUsage(
+        used_minor=round(used),
+        limit_minor=None if limit is None else round(limit),
+        decimals=decimals,
+        currency=currency if isinstance(currency, str) and currency else "USD",
+        percent=clamp_percent(block.get("utilization")),
+    )
+
+
+def _credits_reset_on(today: date | None) -> date:
+    # shortcut: the reply has no reset date; assumes calendar-month billing (Claude Code
+    # shows "resets Nov 1"). Read a server date instead if one ever appears.
+    today = today or date.today()
+    return date(today.year + today.month // 12, today.month % 12 + 1, 1)
+
+
+def _money(minor: int, credits: ExtraUsage) -> str:
+    amount = f"{minor / 10 ** credits.decimals:.{credits.decimals}f}"
+    return f"${amount}" if credits.currency == "USD" else f"{credits.currency} {amount}"
+
+
+def format_credits(credits: ExtraUsage | None, *, today: date | None = None) -> str:
+    """Table cell like Claude Code's ``66% · $66.26 / $100.00 · resets Nov 1``; ``—`` when unknown."""
+    if credits is None:
+        return "—"
+    spent = _money(credits.used_minor, credits)
+    if credits.limit_minor is not None:
+        spent += f" / {_money(credits.limit_minor, credits)}"
+    reset = _credits_reset_on(today)
+    parts = [f"{credits.percent}%"] if credits.percent is not None else []
+    return " · ".join([*parts, spent, f"resets {reset:%b} {reset.day}"])
+
+
+def credits_json(credits: ExtraUsage | None, *, today: date | None = None) -> dict[str, object] | None:
+    """``--json`` form of :class:`ExtraUsage` in major units (``None`` in, ``None`` out)."""
+    if credits is None:
+        return None
+    scale = 10 ** credits.decimals
+    return {
+        "used": credits.used_minor / scale,
+        "limit": None if credits.limit_minor is None else credits.limit_minor / scale,
+        "currency": credits.currency,
+        "percent": credits.percent,
+        "resets_on": _credits_reset_on(today).isoformat(),
+    }
+
+
 def _request_usage(access_token: str, *, timeout: float, url: str = USAGE_URL) -> JsonDict | str:
     request = urllib.request.Request(
         url,
@@ -152,6 +225,7 @@ def fetch_usage(
         refreshed_at=int(time.time()),
         error=None,
         reset_vouchers=_vouchers(result.get("cedar_ember")),
+        credits=_credits(result.get("extra_usage")),
     )
 
 
