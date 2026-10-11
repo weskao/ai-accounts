@@ -40,7 +40,8 @@ _HEADERS: Final = {
     "User-Agent": "ai-accounts",
 }
 
-# Legacy credentials.toml keys carry this prefix; the raw key is what works.
+# credentials.toml keys carry this prefix and the server wants it kept (a stripped
+# key gets HTTP 401); a bare prefix with nothing after it is no key at all.
 _KEY_PREFIX: Final = "devin-session-token$"
 
 # ASSUMPTION: candidate field names below are guesses (camelCase proto3 JSON);
@@ -147,8 +148,8 @@ def fetch_usage(token: str | None, *, timeout: float = 20) -> UsageSnapshot:
     Never raises: an unreachable endpoint, a rejected key, or an unexpected JSON
     shape come back as a snapshot with ``error`` set and every window ``None``.
     """
-    key = (token or "").removeprefix(_KEY_PREFIX).strip()
-    if not key:
+    key = (token or "").strip()
+    if not key.removeprefix(_KEY_PREFIX):
         return _failed("missing access token")
     body = {
         "metadata": {

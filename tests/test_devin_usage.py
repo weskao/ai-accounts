@@ -111,14 +111,15 @@ class DevinUsageTests(unittest.TestCase):
         self.assertEqual(snap.weekly, UsageWindow(60, 1894060800, 10080))
         self.assertIsNotNone(snap.refreshed_at)
 
-    def test_request_shape_and_prefix_stripping(self) -> None:
+    def test_request_shape_keeps_session_token_prefix(self) -> None:
         _, opener = _fetch("devin-session-token$key-123", _status())
         request = opener.call_args.args[0]
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.full_url, du.USAGE_URL)
         self.assertEqual(request.get_header("Connect-protocol-version"), "1")
         body = json.loads(request.data)
-        self.assertEqual(body["metadata"]["apiKey"], "key-123")
+        # Live check 2026-10-11: the stripped key gets HTTP 401, the full one 200.
+        self.assertEqual(body["metadata"]["apiKey"], "devin-session-token$key-123")
         self.assertEqual(body["metadata"]["ideName"], "devin-cli")
 
     def test_missing_token_never_hits_network(self) -> None:
