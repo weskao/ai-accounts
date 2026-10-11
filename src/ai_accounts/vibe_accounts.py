@@ -32,7 +32,7 @@ from ._utils import (
     resolve_account_dir,
 )
 from .config_schema import mask_secret
-from .usage_format import json_empty_list, no_quota_json_entries, print_no_active_account
+from .usage_format import json_empty_list, no_quota_json_entries, print_no_active_account, state_cells
 
 JsonDict = dict[str, Any]
 
@@ -391,8 +391,10 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
         print(json.dumps(no_quota_json_entries(profiles, active)))
         return 0
 
+    # Vibe's API reports no account id or email, so a profile's account is unknown (None).
+    states = state_cells([(path, None) for path in profiles], {active})
     rows = []
-    for path in profiles:
+    for path, state in zip(profiles, states):
         claims = _claims(_load_profile(path))
         is_active = path == active
         rows.append(
@@ -400,7 +402,7 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
                 "profile": f"{GREEN}{BOLD}{path.stem}{RESET}" if is_active else path.stem,
                 "env_var": claims.get("env_var", "—"),
                 "api_key": claims.get("api_key", "—"),
-                "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
+                "state": state,
             }
         )
 

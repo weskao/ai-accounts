@@ -72,6 +72,7 @@ from .usage_format import (
     format_usage_window,
     json_empty_list,
     print_no_active_account,
+    state_cells,
     usage_window_to_json,
 )
 
@@ -478,6 +479,13 @@ def _label(payload: JsonDict | None) -> str:
     return "—"
 
 
+def _account_key(payload: JsonDict | None) -> str | None:
+    """The GitHub account a profile belongs to, per host (the identity `state_cells` groups by)."""
+    payload = payload or {}
+    account = payload.get("id") or payload.get("login")
+    return f"{payload.get('host')}:{account}" if account else None
+
+
 def _claims(payload: JsonDict | None) -> dict[str, str]:
     token = _token(payload)
     if not token:
@@ -739,8 +747,9 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
         )
         return 0
 
+    states = state_cells([(path, _account_key(payload)) for path, (payload, _u) in zip(profiles, readings)], {active})
     rows = []
-    for path, (payload, usage) in zip(profiles, readings):
+    for path, (payload, usage), state in zip(profiles, readings, states):
         is_active = path == active
         unit = "AIC" if usage.token_based_billing else "requests"
         used = "unlimited" if usage.unlimited else _usage_cell(usage.plan_usage)
@@ -760,7 +769,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                 "remaining": remaining,
                 "usage_updated": copilot_usage.format_refreshed_at(usage),
                 "auth": payload.get("auth", "unknown"),
-                "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
+                "state": state,
             }
         )
     if only_active:

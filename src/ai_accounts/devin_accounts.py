@@ -51,6 +51,7 @@ from .usage_format import (
     format_usage_window,
     json_empty_list,
     print_no_active_account,
+    state_cells,
     usage_window_to_json,
 )
 
@@ -434,18 +435,20 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
         print(json.dumps(entries))
         return 0
 
+    emails = [usage.email or _identity_label(path) for path, usage in zip(profiles, usages)]
+    states = state_cells(list(zip(profiles, emails)), {active})
     rows = []
-    for path, usage in zip(profiles, usages):
+    for path, usage, email, state in zip(profiles, usages, emails, states):
         is_active = path == active
         rows.append(
             {
                 "profile": f"{GREEN}{BOLD}{path.stem}{RESET}" if is_active else path.stem,
-                "account": usage.email or _identity_label(path) or "—",
+                "account": email or "—",
                 "plan": _plan_cell(usage.plan),
                 "usage_1d": _usage_cell(usage.daily, "1d"),
                 "usage_1w": _usage_cell(usage.weekly, "1w"),
                 "usage_updated": format_refreshed_at(usage),
-                "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
+                "state": state,
             }
         )
     print(

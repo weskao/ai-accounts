@@ -357,6 +357,17 @@ class DevinAccountsTests(unittest.TestCase):
             self.assertIn(needle, text)
         self.assertNotIn("key-aaaa-1111-secret", text)
 
+    def test_list_marks_other_profile_of_the_active_account_same_acct(self) -> None:
+        self._save("work", "key-bbbb-2222-secret")
+        self._save("personal", "key-aaaa-1111-secret")
+        out = io.StringIO()
+        with mock.patch.object(du, "fetch_usage", return_value=_snapshot(40, 70)):
+            with redirect_stdout(out):
+                self.assertEqual(da.main(["list"]), 0)
+        lines = _ANSI_RE.sub("", out.getvalue()).splitlines()
+        self.assertIn("ACTIVE", next(line for line in lines if "personal" in line))
+        self.assertIn("SAME ACCT", next(line for line in lines if "work" in line))
+
     def test_list_json_with_quota_and_degraded(self) -> None:
         self._save("personal", "key-aaaa-1111-secret")
         out = io.StringIO()

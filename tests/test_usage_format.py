@@ -5,6 +5,7 @@ import os
 import time
 import unittest
 from contextlib import redirect_stderr
+from pathlib import Path
 from unittest import mock
 
 from ai_accounts import usage_format as uf
@@ -35,6 +36,23 @@ class TestStateCells(unittest.TestCase):
     def test_without_an_active_row_the_first_duplicate_is_plain(self) -> None:
         rows = [("a", "x"), ("b", "x"), ("c", "x")]
         self.assertEqual(self._states(rows, set()), ["—", "SAME ACCT", "SAME ACCT"])
+
+
+class TestEveryListUsesStateCells(unittest.TestCase):
+    """A new <tool>_accounts.py gets ACTIVE / SAME ACCT by calling state_cells — never by hand."""
+
+    def test_every_account_tool_list_calls_state_cells(self) -> None:
+        tools = [
+            path for path in Path(uf.__file__).parent.glob("*_accounts.py")
+            if path.name != "ai_accounts.py"
+        ]
+        self.assertGreaterEqual(len(tools), 8)
+        for path in tools:
+            source = path.read_text(encoding="utf-8")
+            with self.subTest(tool=path.name):
+                self.assertTrue("state_cells(" in source, "list must build STATE with state_cells")
+                for literal in ("ACTIVE{RESET}", "SAME ACCT"):
+                    self.assertFalse(literal in source, f"hand-rolled {literal!r}; use state_cells")
 
 
 class TestAlignUsageCells(unittest.TestCase):

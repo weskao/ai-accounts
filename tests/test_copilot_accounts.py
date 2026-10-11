@@ -452,6 +452,19 @@ class CopilotAccountsTests(unittest.TestCase):
                 self.assertEqual(ca.cmd_switch("personal"), 0)
         self.assertEqual(_ANSI_RE.sub("", err.getvalue()).count("$GH_TOKEN is exported"), 1)
 
+    def test_list_marks_other_profile_of_the_active_account_same_acct(self) -> None:
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+        self.assertTrue(ca._write_json(self.account_dir / "again.json", _profile("ghu_work_token")))
+        self._sign_in()
+        (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
+        out = io.StringIO()
+        with mock.patch.object(cu, "fetch_usage", return_value=cu.empty_usage()):
+            with redirect_stdout(out):
+                self.assertEqual(ca.cmd_list(), 0)
+        lines = _ANSI_RE.sub("", out.getvalue()).splitlines()
+        self.assertIn("ACTIVE", next(line for line in lines if "personal" in line))
+        self.assertIn("SAME ACCT", next(line for line in lines if "again" in line))
+
     def test_usage_shows_only_the_active_profile(self) -> None:
         self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
         self.assertTrue(ca._write_json(self.account_dir / "work.json", _profile("ghu_work_token")))

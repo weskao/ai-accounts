@@ -422,6 +422,24 @@ class ProfileCommandTests(_HomeMixin):
         self.assertIn("1W USED", text)
         self.assertEqual(text.count("ACTIVE"), 1)
 
+    def test_list_marks_other_profile_of_the_active_account_same_acct(self) -> None:
+        oauth = _oauth(access="at-a", refresh="rt-a")
+        for name, profile_oauth in (("again", _oauth(access="at-b", refresh="rt-b")), ("active", oauth)):
+            path = self.home / "accounts" / f"{name}.json"
+            path.write_text(
+                json.dumps({"claudeAiOauth": profile_oauth, "aiAccountsAccount": {"email": "user@example.com"}}),
+                encoding="utf-8",
+            )
+        self.set_active(oauth)
+        self.mark_current("active")
+        snap = cu.UsageSnapshot(None, None, None, None, None)
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
+            result, output, _ = self.capture(ca.cmd_list)
+        lines = ca._ANSI_RE.sub("", output).splitlines()
+        self.assertEqual(result, 0)
+        self.assertIn("ACTIVE", next(line for line in lines if " active " in line))
+        self.assertIn("SAME ACCT", next(line for line in lines if " again " in line))
+
     def test_list_fetches_concurrently_without_swapping_rows(self) -> None:
         self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
         self.write_profile("b", _oauth(access="at-b", refresh="rt-b"))

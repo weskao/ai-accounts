@@ -1120,6 +1120,12 @@ Saved Codex profiles  (2)
 └──────────┴───────────────────┴──────┴────────────────┴──────────────┴─────────────────┴─────────┴───────┴────────┘
 ```
 
+`STATE` reads the same in every tool's `list`: `ACTIVE` for the live login,
+`SAME ACCT` for another saved profile of an account that already has a row
+(the active row, else the first, stays `ACTIVE`/`—`), and `—` otherwise. The
+account is the provider's account id or email — per integration for opencode;
+Vibe reports none, so it never shows `SAME ACCT`.
+
 ```sh
 COLUMNS=40 codex-accounts list
 ```

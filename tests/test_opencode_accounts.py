@@ -248,6 +248,27 @@ def test_list_table_marks_active_and_dashes_quota_less_rows(db, usage, capsys):
     assert "—" in zen_line
 
 
+def test_list_marks_other_login_of_the_active_account_same_acct(data, usage, capsys):
+    def oauth(access: str, account: str) -> str:
+        return json.dumps({"type": "oauth", "access": access, "metadata": {"accountID": account}})
+
+    _make_db(data / "opencode.db", [
+        ("cred-1", "openai", "personal", oauth("access-test-001", "acct-test-1"), 1),
+        ("cred-2", "openai", "again", oauth("access-test-002", "acct-test-1"), 0),
+        ("cred-3", "openai", "work", oauth("access-test-003", "acct-test-2"), 0),
+        # Same account id under another integration is not the same login.
+        ("cred-4", "anthropic", "main", oauth("access-test-004", "acct-test-1"), 1),
+    ])
+    rc, out = _main(capsys, "list")
+    assert rc == 0
+    state = {name: next(line for line in out.splitlines() if name in line)
+             for name in ("openai:personal", "openai:again", "openai:work", "anthropic:main")}
+    assert "ACTIVE" in state["openai:personal"]
+    assert "SAME ACCT" in state["openai:again"]
+    assert "SAME ACCT" not in state["openai:work"]
+    assert "ACTIVE" in state["anthropic:main"]
+
+
 def test_list_without_any_store_is_empty(data, capsys):
     rc, out = _main(capsys, "list", "--json")
     assert (rc, json.loads(out)) == (0, [])

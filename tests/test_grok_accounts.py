@@ -114,6 +114,20 @@ class GrokAccountsTests(unittest.TestCase):
         self.assertFalse(list((self.account_dir.parent / "backups").glob("auth.backup-*.json")))
         self.assertFalse(list(self.grok_home.glob("auth.backup-*.json")))
 
+    def test_list_marks_other_profile_of_the_active_account_same_acct(self) -> None:
+        self.assertTrue(ga._write_json(ga._auth_file(), _auth()))
+        self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
+        self.assertTrue(ga._write_json(self.account_dir / "again.json", _auth()))
+        self.assertTrue(ga._write_json(self.account_dir / "work.json", _auth("user2@example.com", "principal-2")))
+        (self.account_dir / ".current-profile").write_text("personal", encoding="utf-8")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(ga.cmd_list(), 0)
+        lines = _ANSI_RE.sub("", output.getvalue()).splitlines()
+        self.assertIn("ACTIVE", next(line for line in lines if "personal" in line))
+        self.assertIn("SAME ACCT", next(line for line in lines if "again" in line))
+        self.assertNotIn("SAME ACCT", next(line for line in lines if "work" in line))
+
     def test_usage_shows_only_active_profile(self) -> None:
         self.assertTrue(ga._write_json(ga._auth_file(), _auth()))
         self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))

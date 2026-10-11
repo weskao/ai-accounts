@@ -45,18 +45,24 @@ def is_expired(credential: object) -> bool:
     return (expires / 1000 if expires > 1e11 else expires) <= time.time()
 
 
-def _openai(token: str, cred: dict[str, Any], timeout: float) -> UsageWindow | None:
-    tokens = {"access_token": token}
+def account_id(cred: object) -> str | None:
+    """The provider account id a credential belongs to, when it records one."""
+    if not isinstance(cred, dict):
+        return None
     meta = cred.get("metadata")
     # ASSUMPTION: v2 credential values keep the id in metadata.accountID; the legacy
     # auth.json record (the one observed on the dev machine) uses a top-level accountId.
-    account_id = next(
+    return next(
         (v for v in (meta.get("accountID") if isinstance(meta, dict) else None, cred.get("accountId"))
          if isinstance(v, str) and v),
         None,
     )
-    if account_id:
-        tokens["account_id"] = account_id
+
+
+def _openai(token: str, cred: dict[str, Any], timeout: float) -> UsageWindow | None:
+    tokens = {"access_token": token}
+    if account := account_id(cred):
+        tokens["account_id"] = account
     # shortcut: the codex fetcher takes no timeout; it has its own fixed one.
     snap = usage_format.fetch_usage({"tokens": tokens})
     return None if snap.error else autoswitch.pick_window(snap.hourly, snap.weekly)

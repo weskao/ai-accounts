@@ -37,6 +37,7 @@ from .usage_format import (
     json_empty_list,
     print_no_active_account,
     reset_vouchers_json,
+    state_cells,
     usage_window_to_json,
 )
 from ._present import (
@@ -862,22 +863,27 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
         print(json.dumps(entries))
         return 0
 
+    # Stored snapshot wins (captured when .claude.json provably matched). Live
+    # identity is only a fallback for an active profile with none yet — a
+    # pre-feature profile backfills on next save.
+    # ponytail: live fallback can misattribute if switched-without-relaunch;
+    # self-corrects on next save/login-switch.
+    identities = []
+    for profile_path, _oauth in profile_oauth:
+        identity = _read_profile_identity(profile_path)
+        if identity is None and profile_path == active_profile:
+            identity = _read_active_identity()
+        identities.append(identity)
+    states = state_cells(
+        [(p, (i or {}).get("email")) for (p, _o), i in zip(profile_oauth, identities)], {active_profile}
+    )
+
     rows = []
-    for (profile_path, oauth), usage in zip(profile_oauth, usages):
+    for (profile_path, oauth), usage, identity, status in zip(profile_oauth, usages, identities, states):
         name = profile_path.stem
         claims = _claims_from_oauth(oauth) if oauth else None
         is_active = profile_path == active_profile
-        status = f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}"
         expires_text, color = _list_expiry_status(claims)
-
-        # Stored snapshot wins (captured when .claude.json provably matched). Live
-        # identity is only a fallback for an active profile with none yet — a
-        # pre-feature profile backfills on next save.
-        # ponytail: live fallback can misattribute if switched-without-relaunch;
-        # self-corrects on next save/login-switch.
-        identity = _read_profile_identity(profile_path)
-        if identity is None and is_active:
-            identity = _read_active_identity()
         account_label = _identity_label(identity)
 
         rows.append(

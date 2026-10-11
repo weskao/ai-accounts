@@ -47,6 +47,7 @@ from .usage_format import (
     format_usage_window,
     json_empty_list,
     print_no_active_account,
+    state_cells,
     usage_window_to_json,
 )
 
@@ -208,6 +209,12 @@ def _fetch(login: Login) -> UsageWindow | None:
     return opencode_usage.fetch_usage(login.integration, login.record) if _has_quota_api(login) else None
 
 
+def _identity(login: Login) -> str | None:
+    # Scoped per integration: the same id under two integrations is two separate logins.
+    account = opencode_usage.account_id(login.record)
+    return f"{opencode_usage.normalize(login.integration)}:{account}" if account else None
+
+
 def _find(name: str) -> tuple[Login | None, bool]:
     logins, legacy = _logins()
     return next((login for login in logins if login.name == name), None), legacy
@@ -284,15 +291,19 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
         ]))
         return 0
 
+    states = state_cells(
+        [(login.name, _identity(login)) for login in logins],
+        {login.name for login in logins if login.active},
+    )
     rows = [
         {
             "profile": f"{GREEN}{BOLD}{login.name}{RESET}" if login.active else login.name,
             "integration": login.integration,
             "type": str((login.record or {}).get("type") or f"{DIM}—{RESET}"),
             "usage": _usage_cell(window),
-            "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if login.active else f"{DIM}—{RESET}",
+            "state": state,
         }
-        for login, window in zip(logins, windows)
+        for login, window, state in zip(logins, windows, states)
     ]
     title = "Active opencode logins" if only_active else "opencode logins"
     print(f"{BOLD}{title}{RESET}  {DIM}({len(rows)}){RESET}")

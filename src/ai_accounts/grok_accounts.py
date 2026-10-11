@@ -53,6 +53,7 @@ from .usage_format import (
     json_empty_list,
     UsageWindow,
     print_no_active_account,
+    state_cells,
     usage_window_to_json,
 )
 
@@ -306,6 +307,12 @@ def _identity(payload: JsonDict | None) -> tuple[str, str, str]:
         str(claims.get("email", "")),
         str(claims.get("team_id", "")),
     )
+
+
+def _account_key(payload: JsonDict | None) -> str | None:
+    """The xAI account a profile belongs to (the identity `state_cells` groups by)."""
+    principal, email, _team = _identity(payload)
+    return principal or email or None
 
 
 def _access_token(payload: JsonDict | None) -> str | None:
@@ -570,8 +577,9 @@ def cmd_list(
         print(json.dumps(entries))
         return 0
 
+    states = state_cells([(path, _account_key(payload)) for path, (payload, _u) in zip(profiles, readings)], {active})
     rows = []
-    for path, (payload, usage) in zip(profiles, readings):
+    for path, (payload, usage), state in zip(profiles, readings, states):
         claims = _claims(payload)
         malformed = claims.get("malformed")
         account = f"{YELLOW}malformed{RESET}" if malformed else claims.get("email", "unreadable")
@@ -589,7 +597,7 @@ def cmd_list(
                 "usage_build": _usage_cell(usage.build),
                 "usage_updated": grok_usage.format_refreshed_at(usage),
                 "expires": f"{expires_color}{expires_text}{RESET}",
-                "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
+                "state": state,
             }
         )
     if only_active:
