@@ -176,7 +176,7 @@ differs per tool:
 | `agy-accounts` | `list` is slow (one account at a time) — see [Fast Antigravity lists](#fast-antigravity-lists); `usage` checks only the active account; `api-schema` prints agy's reply fields for [change watching](#watching-agys-api-for-changes) |
 | `grok-accounts` | `list` shows SuperGrok plan and weekly usage; auto-switches on the weekly window |
 | `vibe-accounts` | API-key profiles with no quota data; `refresh` is not needed for static keys; no auto-switch |
-| `copilot-accounts` | `list` shows the monthly AI-credit balance; `refresh` only checks the token is still valid; no auto-switch yet |
+| `copilot-accounts` | `list` shows the monthly AI-credit balance; `refresh` only checks the token is still valid; auto-switches on the monthly window |
 | `devin-accounts` | `list` shows daily and weekly quota; `refresh` only checks the API key is still accepted; auto-switches on the weekly window |
 | `opencode-accounts` | Lists and switches opencode's own logins (it never copies tokens); `save`, `sync` and `refresh` are explanatory no-ops; auto-switches per integration — see [opencode logins](#opencode-logins) |
 
@@ -947,9 +947,8 @@ window resets and full usage is available again. `reset_notify_min_used_pct`
 (default `90`) gates it: only a window that was at least that heavily used
 just before it reset triggers a notification, so a window that reset while
 barely touched stays quiet. Both are `ai-accounts config` keys (group
-"Notifications"), also available from `codex-accounts config`,
-`claude-accounts config`, `copilot-accounts config`, and
-`devin-accounts config`.
+"Notifications"), also available from every per-provider `config` (the
+config is shared), e.g. `devin-accounts config` or `opencode-accounts config`.
 
 A reset is recognised two ways, so one that happens **off schedule** still
 notifies. Normally the window's recorded reset time arrives and the provider
