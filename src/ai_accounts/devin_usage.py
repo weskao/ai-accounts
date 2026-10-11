@@ -44,8 +44,11 @@ _HEADERS: Final = {
 # key gets HTTP 401); a bare prefix with nothing after it is no key at all.
 _KEY_PREFIX: Final = "devin-session-token$"
 
-# ASSUMPTION: candidate field names below are guesses (camelCase proto3 JSON);
-# extend these tuples once a live response shows the real names.
+# Live check 2026-10-11: planStatus carries {daily,weekly}QuotaRemainingPercent and
+# {daily,weekly}QuotaResetAtUnix (digit string). The *used* names are unconfirmed guesses
+# (camelCase proto3 JSON), kept as a fallback.
+_REMAINING_KEYS: Final = ("{p}QuotaRemainingPercent",)
+_NESTED_REMAINING: Final = ("remainingPercent",)
 _PERCENT_KEYS: Final = ("{p}QuotaUsedPercent", "{p}UsagePercent", "{p}QuotaUsagePercent", "{p}UsedPercent")
 _RESET_KEYS: Final = ("{p}QuotaResetAtUnix", "{p}QuotaResetTime", "{p}ResetAt", "{p}ResetTime")
 # Nested form: planStatus.<window>.{usedPercent,...}
@@ -105,14 +108,18 @@ def _first(sources: list[dict[str, Any]], keys: tuple[str, ...], prefix: str, pa
 
 def _window(sources: list[dict[str, Any]], prefix: str, minutes: int) -> UsageWindow | None:
     keys = _PERCENT_KEYS + _NESTED_PERCENT
+    left_keys = _REMAINING_KEYS + _NESTED_REMAINING
     percent = _first(sources, keys, prefix, clamp_percent)
+    if percent is None and (left := _first(sources, left_keys, prefix, clamp_percent)) is not None:
+        percent = 100 - left
     reset = _first(sources, _RESET_KEYS + _NESTED_RESET, prefix, _reset)
     if percent is None:
-        # proto3 JSON omits zero values: a reset with *no* percent key is a fresh window.
-        # A present-but-unparseable percent is a malformed window, not 0%.
-        if reset is None or _first(sources, keys, prefix, lambda v: v) is not None:
+        # proto3 JSON omits zero values and the live field is *remaining*: a reset with
+        # no percent key at all is an exhausted window (0% left). A present-but-
+        # unparseable percent is a malformed window, not exhausted.
+        if reset is None or any(_first(sources, k, prefix, lambda v: v) is not None for k in (keys, left_keys)):
             return None
-        percent = 0
+        percent = 100
     return UsageWindow(percentage=percent, reset_time=reset, window_minutes=minutes)
 
 

@@ -211,12 +211,38 @@ class DevinUsageTests(unittest.TestCase):
         self.assertEqual(snap.error, "unexpected quota shape")
         self.assertNotIn("boom", snap.error)
 
-    def test_reset_without_percent_means_zero_used(self) -> None:
-        # proto3 JSON omits zero values: a rolled-over window sends only its reset.
+    def test_live_shape_reports_remaining_percent_as_used(self) -> None:
+        # Live check 2026-10-11: the server sends *remaining* percent, reset as a digit string.
+        plan_status = {
+            "planInfo": {"planName": "Pro"},
+            "dailyQuotaRemainingPercent": 75,
+            "weeklyQuotaRemainingPercent": 40,
+            "dailyQuotaResetAtUnix": "1894060800",
+            "weeklyQuotaResetAtUnix": "1894060800",
+        }
+        snap, _ = _fetch("k", {"userStatus": {"planStatus": plan_status}})
+        self.assertIsNone(snap.error)
+        self.assertEqual(snap.daily, UsageWindow(25, 1894060800, 1440))
+        self.assertEqual(snap.weekly, UsageWindow(60, 1894060800, 10080))
+
+    def test_reset_without_percent_means_exhausted(self) -> None:
+        # proto3 JSON omits zero values; the live field is *remaining*, so an omitted
+        # one is 0% left. Showing 0% used here would stop autoswitch from ever firing.
         body = {"userStatus": {"planStatus": {"dailyQuotaResetAtUnix": 1894060800}}}
         snap, _ = _fetch("k", body)
         self.assertIsNone(snap.error)
-        self.assertEqual(snap.daily, UsageWindow(0, 1894060800, 1440))
+        self.assertEqual(snap.daily, UsageWindow(100, 1894060800, 1440))
+        self.assertIsNone(snap.weekly)
+
+    def test_remaining_percent_clamped_and_garbage_is_not_exhausted(self) -> None:
+        snap, _ = _fetch(
+            "k",
+            _status(
+                dailyQuotaUsedPercent=None, dailyQuotaRemainingPercent=140,
+                weeklyQuotaUsedPercent=None, weeklyQuotaRemainingPercent="lots",
+            ),
+        )
+        self.assertEqual(snap.daily.percentage, 0)
         self.assertIsNone(snap.weekly)
 
     def test_garbage_percent_with_reset_is_not_zero(self) -> None:
