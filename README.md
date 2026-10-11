@@ -364,12 +364,16 @@ Measured on **2026-09-07 (Asia/Taipei)**, on a local macOS machine:
 | `agy-accounts list` | 6 | 24.484 s | 4.081 s | Sequential credential sessions; concurrent RPCs within each session |
 | `grok-accounts list` | 7 | 0.003 s | <0.001 s | Concurrent SuperGrok billing requests (was local-only before quota lookup) |
 | `vibe-accounts list` | 1 | 0.028 s | 0.028 s | Local profile and credential-store reads |
+| `copilot-accounts list` | 7 | 1.173 s | 0.168 s | Concurrent usage requests plus per-profile GitHub identity lookups |
 
 These are single-run measurements of each provider's `cmd_list()`, with the
 five providers running concurrently in separate processes and output captured.
 They include list rendering and, for Antigravity, `agy` startup and cleanup,
 but exclude Python interpreter startup and module imports. Counts refer to
 saved profiles, which are not necessarily distinct accounts.
+
+The Copilot row was added later (measured on **2026-10-11**): the median of five
+sequential in-process `cmd_list()` runs (1.152–1.553 s), with output captured.
 
 **Time per profile is an amortized value, not individual request latency.**
 In particular, dividing a concurrent provider's total time by its profile count

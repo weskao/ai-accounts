@@ -125,7 +125,7 @@ CLI actually uses). Follow the same three-step shape.
 
 ## 4. Docs (same change, not a follow-up)
 
-- [ ] `README.md`: intro provider list, Commands table, per-tool section, Profile
+- [x] `README.md`: intro provider list, Commands table, per-tool section, Profile
       storage tree, List performance table (measure it), Platform notes row
       (credential source + required binary), Supported OS caveats if any.
       Done: intro provider list, Commands table row, Profile storage tree,
@@ -133,13 +133,12 @@ CLI actually uses). Follow the same three-step shape.
       `copilot_accounts.py`'s actual read order, not this file's speculative
       candidates), plus the `list`/`usage --json` and Doctor/List-performance prose
       updated to mention Copilot's degrade-to-no-quota-API behavior.
+      List performance table row: done (7 saved profiles, median of 5 runs =
+      1.173 s, 0.168 s/profile; measured 2026-10-11).
       Not done, on purpose: no dedicated "per-tool section" — grep confirms neither
       Grok nor Vibe has one either (README documents all providers together via the
       shared tables/prose above, not per-tool headers), so none was invented for
-      Copilot. Also skipped the List performance table row: with zero saved Copilot
-      profiles on this machine there is nothing meaningful to time (division by zero
-      profiles), unlike Grok/Vibe's rows which come from real saved profiles. No
-      Supported-OS caveat was needed (Copilot doesn't have an agy-style platform gap
+      Copilot. No Supported-OS caveat was needed (Copilot doesn't have an agy-style platform gap
       yet — its Windows/Linux keychain gap is tracked under section 0 above instead,
       since it's a correctness question, not a documented product caveat).
 - [x] `CLAUDE.md`: mention `copilot_usage.py` next to the other `*_usage.py` modules.
