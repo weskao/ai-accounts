@@ -487,6 +487,24 @@ def expiry_status(expires_epoch: object, *, refreshable: bool = False) -> tuple[
     return text, GREEN
 
 
+# Where a too-wide table breaks a cell: each " · " part, and a "Name <email>" before its "<".
+_STACK_BREAK_RE = re.compile(r" · | (?=<)")
+
+
+def _stack_cell(text: str) -> str:
+    """``text`` with each :data:`_STACK_BREAK_RE` part on its own line; a color
+    still open at a break is closed there and re-armed on the next line."""
+    lines: list[str] = []
+    carry = ""
+    for part in _STACK_BREAK_RE.split(text):
+        line = carry + part
+        codes = _ANSI_RE.findall(line)
+        last_reset = max((i for i, code in enumerate(codes) if code == RESET), default=-1)
+        carry = "".join(codes[last_reset + 1 :])
+        lines.append(line + RESET if carry else line)
+    return "\n".join(lines)
+
+
 def accounts_table(
     rows: list[dict[str, str]],
     columns: Sequence[tuple[str, str]],
@@ -525,8 +543,13 @@ def accounts_table(
 
     lines = table_lines(aligned, columns, optional_columns=optional_columns, style=style)
     if layout_mode(mode, fit=visible_len(lines[0]) if lines else 0) == "narrow":
-        _accounts_cards(rows, columns)
-        return
+        # Too wide: stack each cell's parts and the header words before giving up on a table.
+        stacked = [{key: _stack_cell(cell) for key, cell in row.items()} for row in rows]
+        stacked_columns = [(header.replace(" ", "\n"), key) for header, key in columns]
+        lines = table_lines(stacked, stacked_columns, optional_columns=optional_columns, style=style)
+        if layout_mode(mode, fit=visible_len(lines[0]) if lines else 0) == "narrow":
+            _accounts_cards(rows, columns)
+            return
 
     for line in lines:
         print(line)
@@ -557,7 +580,7 @@ def table_lines(
         return []
     headers, keys = zip(*columns, strict=True)
     widths = [
-        max(visible_len(h), max((visible_len(part) for r in rows for part in r[k].split("\n")), default=0))
+        max(visible_len(part) for cells in ([h], [r[k] for r in rows]) for cell in cells for part in cell.split("\n"))
         for h, k in zip(headers, keys)
     ]
 
@@ -599,7 +622,7 @@ def table_lines(
 
     return [
         rule(top_left, "┬", top_right),
-        row([f"{BOLD}{h}{RESET}" for h in headers], HEADER_BAND if modern else ""),
+        row(["\n".join(f"{BOLD}{part}{RESET}" for part in h.split("\n")) for h in headers], HEADER_BAND if modern else ""),
         rule("├", "┼", "┤"),
         *(
             row([r[k] for k in keys], STRIPE_BAND if modern and index % 2 else "")

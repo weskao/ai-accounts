@@ -496,6 +496,20 @@ class TableFitsTerminalTests(unittest.TestCase):
     def test_configured_wide_keeps_table_even_when_too_wide(self) -> None:
         self.assertIn("┬", self._render("wide", present.NARROW_BELOW + 1))
 
+    def test_auto_stacks_cell_parts_before_falling_back_to_cards(self) -> None:
+        a, b, c = "a" * 20, "b" * 20, "c" * 20
+        rows = [{"profile": "work", "usage": f"{present.RED}{a} · {b}{present.RESET} · {c}"}]
+        with mock.patch.object(aw, "load_config", return_value={**aw.DEFAULTS, "layout": "auto"}), \
+                mock.patch.object(present, "terminal_width", return_value=present.NARROW_BELOW + 1):
+            text = _capture(present.accounts_table, rows, [("PROFILE", "profile"), ("5H USED", "usage")])
+        self.assertIn("┬", text)  # still a table, one part per line
+        lines = text.splitlines()
+        self.assertTrue(any("5H" in line and "USED" not in line for line in lines))
+        # A color open at a break closes on its line and re-opens on the next.
+        self.assertTrue(any(f"{a}{present.RESET}" in line for line in lines))
+        self.assertTrue(any(f"{present.RED}{b}" in line for line in lines))
+        self.assertTrue(all(len(present.strip_ansi(line)) <= present.NARROW_BELOW + 1 for line in lines))
+
 
 if __name__ == "__main__":
     unittest.main()
