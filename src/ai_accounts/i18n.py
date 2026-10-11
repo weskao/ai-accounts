@@ -413,7 +413,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     "menu.masked_hint": {"zh-TW": "（留空保持原值）"},
     "menu.select": {"zh-TW": "選擇要修改的項目（留空離開）："},
     "menu.bad_number": {"zh-TW": "請輸入上面列出的項目編號。"},
-    "menu.install_prompt": {"zh-TW": "尚未安裝自動切換設定，要現在安裝嗎？[y/N]："},
+    "menu.install_prompt": {"zh-TW": "自動切換設定（排程計時器與 hooks）尚未完整安裝，要現在安裝嗎？[y/N]："},
+    "doctor.timer_needed": {
+        "en": "Settings that need the scheduled timer are on ({keys}) but it is not"
+        " installed, so they do nothing until you run: {cmd}",
+        "zh-TW": "已開啟需要排程計時器的設定（{keys}），但計時器尚未安裝"
+        "——這些設定在安裝前不會執行。請執行：{cmd}"
+    },
     "menu.usage": {
         "zh-TW": "用法：{prog} config get [key] | config set <key> <value>"
         " | config export [檔案] | config import <檔案>"

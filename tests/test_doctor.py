@@ -415,6 +415,35 @@ class DoctorOutputTest(unittest.TestCase):
         self.assertIn("FAIL", output)
         self.assertIn("Autoswitch timer", output)
 
+    def _timer_note(self, state, on_keys):
+        flag = lambda key, cfg=None: key in on_keys  # noqa: E731
+        with mock.patch("ai_accounts.autoswitch.config_flag", side_effect=flag):
+            return doctor._timer_note(doctor._Check(True, state))
+
+    def test_timer_note_names_the_timer_dependent_keys_that_are_on(self) -> None:
+        note = _plain(self._timer_note("not installed", {"reset_notify"}))
+        self.assertIn("reset_notify", note)
+        self.assertNotIn("enabled", note)
+        self.assertIn("ai-accounts install-timer", note)
+
+    def test_timer_note_is_silent_when_installed_or_nothing_needs_it(self) -> None:
+        self.assertIsNone(self._timer_note("installed", {"reset_notify", "enabled"}))
+        self.assertIsNone(self._timer_note("not installed", set()))
+        self.assertIsNone(self._timer_note("not installed", {"update_check"}))
+
+    def test_timer_note_is_silent_when_the_probe_itself_failed(self) -> None:
+        with mock.patch("ai_accounts.autoswitch.config_flag", return_value=True):
+            self.assertIsNone(doctor._timer_note(doctor._Check(False, "boom")))
+
+    def test_table_prints_the_timer_note(self) -> None:
+        with self._patched(), mock.patch(
+            "ai_accounts.autoswitch_timer.status", return_value="not installed"
+        ), mock.patch("ai_accounts.autoswitch.config_flag", side_effect=lambda k, cfg=None: k == "reset_notify"):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                doctor.run_doctor(False)
+        self.assertIn("reset_notify", _plain(buf.getvalue()))
+
     def test_table_cell_stays_short_and_remediation_moves_to_footer(self) -> None:
         # Regression test for the table-readability finding: with every
         # provider's account-tool check failing, the table itself must stay

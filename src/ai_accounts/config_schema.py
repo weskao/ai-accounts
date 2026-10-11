@@ -82,6 +82,10 @@ class Field:
     # Longest a typed string value may grow to — a paste-flood/held-key
     # backstop, not a format check. Only meaningful for an unchoiced str field.
     max_len: int | None = None
+    # A bool key whose feature only runs inside the scheduled timer
+    # (`autoswitch_timer.run_once`): turning it on without the timer installed
+    # does nothing, so the menu offers to install it and `doctor` flags it.
+    needs_timer: bool = False
 
     def display_group(self, lang: str | None = None) -> str | None:
         """This field's group heading in *lang*, if it has one.
@@ -260,6 +264,7 @@ FIELDS: tuple[Field, ...] = (
         label="Enable automatic switching",
         help="When the active account reaches the limit below, switch to the saved account with the most quota left.",
         group="Automatic switching",
+        needs_timer=True,
     ),
     Field(
         key="switch_when_used_pct",
@@ -328,6 +333,7 @@ FIELDS: tuple[Field, ...] = (
         label="Notify on quota reset",
         help="Notify when a provider's quota window resets and full quota is available again.",
         group="Notifications",
+        needs_timer=True,
     ),
     Field(
         key="reset_notify_min_used_pct",
@@ -405,6 +411,7 @@ FIELDS: tuple[Field, ...] = (
         label="Automatic token refresh",
         help="Refresh OAuth tokens on the scheduled timer, independent of auto-switch.",
         group="General",
+        needs_timer=True,
     ),
     Field(
         key="update_check",

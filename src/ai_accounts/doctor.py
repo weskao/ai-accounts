@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from . import _present, profile_secrets
+from . import _present, autoswitch, config_schema, i18n, profile_secrets
 from ._utils import GREEN, RED, RESET, go_keyring_available, have
 from .providers import PROVIDERS, Provider
 
@@ -353,6 +353,25 @@ def _check_timer() -> _Check:
     return _Check(True, state)
 
 
+def _timer_note(timer: _Check) -> str | None:
+    """A warning when a timer-only setting is on but the timer isn't installed.
+
+    ``None`` when the probe itself failed (``timer.ok`` False — already shown),
+    the timer is installed, or no ``needs_timer`` key is on.
+    """
+    if not timer.ok or timer.detail == "installed":
+        return None
+    cfg = autoswitch.load_config()
+    keys = [f.key for f in config_schema.FIELDS if f.needs_timer and autoswitch.config_flag(f.key, cfg)]
+    if not keys:
+        return None
+    return i18n.t(
+        "doctor.timer_needed",
+        keys=", ".join(keys),
+        cmd=_present.highlight_cmd("ai-accounts install-timer"),
+    )
+
+
 def _run_checks() -> tuple[list[dict[str, object]], _Check, str | None, _Check]:
     rows: list[dict[str, object]] = []
     repo_root = _repo_root()
@@ -443,6 +462,9 @@ def _print_table(
     ]
     _present.accounts_table(table_rows, columns)
     print(f"\nAutoswitch timer: {_mark(timer)}")
+    note = _timer_note(timer)
+    if note:
+        print(note)
     print(f"Token storage: {_mark(token_storage)}")
     footer = _account_tool_footer(rows, account_tool_note)
     if footer:

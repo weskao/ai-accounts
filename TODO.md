@@ -177,3 +177,6 @@ CLI actually uses). Follow the same three-step shape.
       Phase 1 landed: see [`docs/spec.md`](docs/spec.md) for the locked design
       decisions and [`src/ai_accounts/quota_reset.py`](src/ai_accounts/quota_reset.py)
       for the detection engine.
+      Phase 2 landed: the config menu's "Install it now?" prompt now also fires
+      when `reset_notify` (or any timer-only key) is turned on, and `doctor`
+      notes when such a setting is on but the timer is not installed.

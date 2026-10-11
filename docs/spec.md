@@ -85,7 +85,7 @@ ships default-**on** at a **90%** threshold instead:
   `switch_when_used_pct`-parity suggestion so default-on doesn't also mean noisy-by-default:
   only windows that were genuinely nearly exhausted trigger a notification on reset.
 
-**(c) The feature is inert without `ai-accounts install-timer`; no auto-install prompt.**
+**(c) The feature is inert without `ai-accounts install-timer`; the install prompt and doctor note are Phase 2 (shipped — see below).**
 `reset_notify` only does anything inside `autoswitch_timer.run_once()`, which only runs
 under the installed scheduled timer. The plan's §3 also proposed widening `cmd_config`'s
 existing "Install it now?" prompt from `enabled` to `enabled or reset_notify` (its file
@@ -94,6 +94,17 @@ timer. **That tie-in is out of scope for Phase 1** — it stays exactly where th
 §8 phasing already put it, Phase 2, and is not one of the six tasks below. A user who
 enables `reset_notify` without a timer installed sees no notifications and no in-product
 signal telling them why, until Phase 2 ships.
+
+**Phase 2 — shipped.** `config_schema.Field` gained `needs_timer: bool`, set on
+the three keys that only run inside `autoswitch_timer.run_once` (`enabled`,
+`token_refresh`, `reset_notify`). `cmd_config`'s interactive "Install it now?"
+prompt fires when, after the menu, any `needs_timer` key is on and either it was
+switched on during the menu session or its schema default is off (`enabled`), and
+`autoswitch_setup.is_installed()` is False (timer AND hooks). Default-on keys already
+on never prompt, because `reset_notify`/`token_refresh` default to on; the non-TTY
+`config set` path never had the prompt and still doesn't. `doctor.py` prints a timer note (`_timer_note`,
+reusing `autoswitch_timer.status()`) when a `needs_timer` key is on but the timer
+is not installed. Strings: `menu.install_prompt`, `doctor.timer_needed` in `i18n.py`.
 
 **(d) Default-on notification volume is bounded and intended, but real.**
 With `reset_notify=True` out of the box, an existing user with the timer already
@@ -124,7 +135,7 @@ parallel; everything else is a chain.
 Not touched by Phase 1 (unchanged from the plan): any `*_accounts.py`/`*_usage.py`
 provider HTTP code, `autoswitch.py`'s engine, `autoswitch_hooks.py` (event-driven hooks
 only run `autoswitch`; reset detection is timer-only), and — per Locked decision (c) —
-`config_menu.py`'s install prompt and `doctor.py`'s timer-note (both remain Phase 2).
+`config_menu.py`'s install prompt and `doctor.py`'s timer-note (both shipped in Phase 2).
 
 ## Sign-off verification: `reset_time` stability against live accounts
 

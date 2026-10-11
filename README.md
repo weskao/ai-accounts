@@ -265,7 +265,8 @@ set up; it reports the gap instead:
   this reads a migrated profile's `_secrets.has_refresh_token` marker the same
   way it reads an unmigrated profile's inline refresh token, never the
   credential store itself
-- the auto-switch timer's install state
+- the auto-switch timer's install state — plus a note when a timer-only setting
+  (`enabled`, `token_refresh`, `reset_notify`) is on but the timer is not installed
 - where saved-profile secrets currently live (see "Where your secrets live"
   below) — the OS credential store's label, or a plaintext-fallback reason —
   printed once for the whole run, not per provider
@@ -851,11 +852,16 @@ Detection only happens on a timer tick, so a notification lands up to one
 tick interval (`install-timer`'s `--interval`, default 1800 seconds) after
 the actual reset — it is not instantaneous or event-driven.
 
-**`ai-accounts install-timer` must already be installed, or this feature is
-completely inert:** with no timer running, `reset_notify` makes no extra
-`list --json` calls and sends no notifications. Turning `reset_notify` on
-does not yet prompt you to install the timer — that tie-in is deferred to a
-later phase.
+**The scheduled timer (`ai-accounts install-timer`) must be installed, or this
+feature does nothing:** with no timer running, `reset_notify` makes no extra
+`list --json` calls and sends no notifications. Two in-product signals cover
+this. Turning `reset_notify` (or `enabled` / `token_refresh`, the other
+timer-only settings) on in the interactive `ai-accounts config` menu offers
+"Install it now?" when the timer is missing — only for a key you switched on
+in that session, so leaving the menu with the defaults untouched never prompts.
+(`config set` and the non-interactive menu never prompt.) And `ai-accounts
+doctor` prints a note under the timer line whenever one of those settings is on
+but the timer is not installed, naming the settings and the install command.
 
 Because `reset_notify` defaults to on, anyone who already has the timer
 installed starts getting these notifications the next time a covered window

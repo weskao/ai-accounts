@@ -1316,15 +1316,28 @@ def cmd_config(rest: list[str], *, prog: str = "ai-accounts") -> int:
     if not rest:
         title = f"{prog} config (v{package_version()})"
         if kr.is_interactive_tty():
+            # Offer the timer for a timer-dependent key switched ON this session, or one on
+            # that is an explicit opt-in (default off). Default-on keys already being on
+            # would nag on every exit.
+            timer_fields = [f for f in fields if f.needs_timer]
+            cfg = autoswitch.load_config()
+            was_on = {f.key: autoswitch.config_flag(f.key, cfg) for f in timer_fields}
             result = run_menu(title, fields)
-            if result == 0 and autoswitch.config_flag("enabled"):
+            cfg = autoswitch.load_config() if result == 0 else {}
+            if result == 0 and any(
+                autoswitch.config_flag(f.key, cfg) and (not was_on[f.key] or not f.default)
+                for f in timer_fields
+            ):
                 from . import autoswitch_setup
 
                 answer = (
                     _ask(
                         i18n.t(
                             "menu.install_prompt",
-                            default="Auto-switch setup is not installed. Install it now? [y/N]: ",
+                            default=(
+                                "Auto-switch setup (scheduled timer + hooks) is not fully"
+                                " installed. Install it now? [y/N]: "
+                            ),
                         )
                     )
                     if not autoswitch_setup.is_installed()

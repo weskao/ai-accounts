@@ -1195,23 +1195,61 @@ class ConfigSetupTimingTest(_ConfigFileMixin, unittest.TestCase):
     def test_a_rejected_save_never_reaches_setup(self) -> None:
         self.config_path.write_text(json.dumps({"notify": "bogus"}), encoding="utf-8")
         self.assertEqual(self.call(["set", "enabled", "true"]), 1)
-    def test_interactive_config_offers_one_time_setup_when_enabled(self) -> None:
-        autoswitch.save_config({"enabled": True})
+    def _interactive(self, *, turn_on=None, installed=False, answer="y"):
+        """Run the interactive menu; *turn_on* is saved the way the menu would."""
+        def fake_menu(*_a, **_k):
+            if turn_on:
+                autoswitch.save_config(turn_on)
+            return 0
+
         with mock.patch.object(cm.kr, "is_interactive_tty", return_value=True), \
-                mock.patch.object(cm, "run_menu", return_value=0), \
-                mock.patch.object(cm, "_ask", return_value="y"), \
-                mock.patch("ai_accounts.autoswitch_setup.is_installed", return_value=False), \
+                mock.patch.object(cm, "run_menu", side_effect=fake_menu), \
+                mock.patch.object(cm, "_ask", return_value=answer) as ask, \
+                mock.patch("ai_accounts.autoswitch_setup.is_installed", return_value=installed), \
                 mock.patch("ai_accounts.autoswitch_setup.install") as install:
             self.assertEqual(cm.cmd_config([], prog="ai-accounts"), 0)
+        return ask, install
+
+    def test_interactive_config_offers_one_time_setup_when_enabled(self) -> None:
+        _ask, install = self._interactive(turn_on={"enabled": True})
         install.assert_called_once_with()
 
+    def test_interactive_config_offers_setup_when_reset_notify_turned_on(self) -> None:
+        autoswitch.save_config({"reset_notify": False})
+        _ask, install = self._interactive(turn_on={"reset_notify": True})
+        install.assert_called_once_with()
+
+    def test_every_timer_dependent_key_triggers_the_offer(self) -> None:
+        keys = [f.key for f in config_schema.FIELDS if f.needs_timer]
+        self.assertGreaterEqual(set(keys), {"enabled", "reset_notify", "token_refresh"})
+        for key in keys:
+            with self.subTest(key=key):
+                autoswitch.save_config({key: False})
+                ask, _install = self._interactive(turn_on={key: True})
+                ask.assert_called_once()
+
+    def test_declining_the_offer_installs_nothing(self) -> None:
+        _ask, install = self._interactive(turn_on={"enabled": True}, answer="n")
+        install.assert_not_called()
+
     def test_interactive_config_does_not_prompt_when_setup_exists(self) -> None:
+        ask, _install = self._interactive(turn_on={"enabled": True}, installed=True)
+        ask.assert_not_called()
+
+    def test_leaving_the_menu_without_turning_anything_on_never_prompts(self) -> None:
+        # reset_notify / token_refresh default to on — "is on" must not nag.
+        ask, _install = self._interactive()
+        ask.assert_not_called()
+
+    def test_an_opt_in_key_already_on_is_offered_while_setup_is_missing(self) -> None:
+        # `enabled` defaults off, so being on is a deliberate opt-in that still has no timer.
         autoswitch.save_config({"enabled": True})
-        with mock.patch.object(cm.kr, "is_interactive_tty", return_value=True), \
-                mock.patch.object(cm, "run_menu", return_value=0), \
-                mock.patch.object(cm, "_ask") as ask, \
-                mock.patch("ai_accounts.autoswitch_setup.is_installed", return_value=True):
-            self.assertEqual(cm.cmd_config([], prog="ai-accounts"), 0)
+        _ask, install = self._interactive()
+        install.assert_called_once_with()
+
+    def test_a_default_on_key_that_was_already_on_is_not_offered_again(self) -> None:
+        autoswitch.save_config({"reset_notify": True, "token_refresh": True})
+        ask, _install = self._interactive(turn_on={"reset_notify": True})
         ask.assert_not_called()
 
 
