@@ -166,7 +166,7 @@ tool you need. For example:
 claude-accounts login-switch work             # Log in to Claude Code and save it as "work"
 agy-accounts switch                           # Pick a saved Antigravity profile from a menu
 copilot-accounts usage                        # Show the active Copilot account's credit balance
-devin-accounts login-switch personal         # Log in to Devin and save it as "personal"
+devin-accounts login-switch personal         # Log out, run `devin auth login`, save as "personal" (a cancelled login restores the old one)
 opencode-accounts switch openai:work          # Make opencode's "work" OpenAI login the active one
 ```
 

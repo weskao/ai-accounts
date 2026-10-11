@@ -523,6 +523,48 @@ class DevinAccountsTests(unittest.TestCase):
             self.assertEqual(da.cmd_login_switch("fresh"), 1)  # cancelled login
         self.assertEqual(ps.read_backup("devin"), raw)
 
+    def _login_switch_with(self, login_effect) -> int:
+        """Run login-switch over a live login; logout deletes it like the real CLI."""
+        raw = 'windsurf_api_key = "key-old-9999-secret"\nextra = "x"\n'
+        da._auth_file().parent.mkdir(parents=True)
+        da._auth_file().write_text(raw, encoding="utf-8")
+        self.raw_live = raw
+
+        def fake_run(argv, **_kw):
+            if argv[1:] == ["auth", "logout"]:
+                da._auth_file().unlink()
+                return mock.Mock(returncode=0)
+            return login_effect()
+
+        with (
+            mock.patch.object(da.shutil, "which", return_value="/usr/bin/devin"),
+            mock.patch.object(da.subprocess, "run", side_effect=fake_run),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+        ):
+            return da.cmd_login_switch("fresh")
+
+    def test_login_switch_restores_previous_login_when_login_fails(self) -> None:
+        rc = self._login_switch_with(lambda: mock.Mock(returncode=1))
+        self.assertEqual(rc, 1)
+        self.assertEqual(da._auth_file().read_text(encoding="utf-8"), self.raw_live)
+
+    def test_login_switch_restores_previous_login_on_ctrl_c(self) -> None:
+        def interrupt():
+            raise KeyboardInterrupt
+
+        with self.assertRaises(KeyboardInterrupt):
+            self._login_switch_with(interrupt)
+        self.assertEqual(da._auth_file().read_text(encoding="utf-8"), self.raw_live)
+
+    def test_login_switch_keeps_new_login_when_it_succeeds(self) -> None:
+        def login():
+            self._login("key-new-3333-secret")
+            return mock.Mock(returncode=0)
+
+        self.assertEqual(self._login_switch_with(login), 0)
+        self.assertIn("key-new-3333-secret", da._auth_file().read_text(encoding="utf-8"))
+
     def test_login_switch_requires_the_cli(self) -> None:
         err = io.StringIO()
         with mock.patch.object(da.shutil, "which", return_value=None), redirect_stderr(err):

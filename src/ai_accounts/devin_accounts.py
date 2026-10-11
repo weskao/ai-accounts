@@ -201,15 +201,17 @@ def _read_creds() -> JsonDict | None:
     return creds if creds.get("windsurf_api_key") else None
 
 
-def _backup_live() -> None:
+def _backup_live() -> str | None:
     """Keep the RAW live credentials.toml (every key/table, not the parsed
-    subset) as the one-deep pre-switch backup. No file = nothing to keep."""
+    subset) as the one-deep pre-switch backup and return it. No file = None."""
     try:
         raw = _auth_file().read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return
-    if raw.strip():
-        profile_secrets.backup("devin", raw)
+        return None
+    if not raw.strip():
+        return None
+    profile_secrets.backup("devin", raw)
+    return raw
 
 
 def _write_creds(path: Path, creds: JsonDict) -> bool:
@@ -609,10 +611,29 @@ def cmd_login_switch(name: str) -> int:
         return 1
     if _profile_file(name) is None:  # fail before logout / the browser login
         return 1
-    _backup_live()  # logout destroys an unsaved login; a cancelled login leaves none
+    outgoing = _backup_live()  # logout destroys an unsaved login
     subprocess.run([executable, "auth", "logout"])
-    result = subprocess.run([executable, "auth", "login"])
-    return cmd_save(name) if result.returncode == 0 else result.returncode
+    try:
+        result = subprocess.run([executable, "auth", "login"])
+    except BaseException:  # Ctrl-C included: never leave the user logged out
+        _restore_live(outgoing)
+        raise
+    if result.returncode == 0:
+        return cmd_save(name)
+    _restore_live(outgoing)
+    return result.returncode
+
+
+def _restore_live(raw: str | None) -> None:
+    """Put the pre-logout credentials.toml back after a failed or cancelled login."""
+    if raw is None:
+        return
+    try:
+        atomic_write_text(_auth_file(), raw)
+    except (OSError, ValueError) as exc:
+        log_red(f"❌ Could not restore your previous login: {exc}")
+        return
+    log_yellow("Login cancelled. Your previous Devin login was restored.")
 
 
 # ── autoswitch ───────────────────────────────────────────────────────────────
