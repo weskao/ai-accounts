@@ -1059,9 +1059,10 @@ In `wide`, the `config` menu grows its box to fit the longest label, value and
 help text, but never past the terminal — long help lines wrap inside the box
 instead of pushing it off-screen.
 
-`auto` renders the `wide` box-drawing table at 60 columns or wider, and
-switches to stacked `narrow` cards — one per profile, no column dropped —
-below that, which is the layout a phone-width SSH session or a narrow split
+`auto` renders the `wide` box-drawing table at 60 columns or wider — as long
+as the whole table fits the terminal — and switches to stacked `narrow` cards
+— one per profile, no column dropped — below that or when the table would be
+wider than the screen (a wrapped table breaks its borders), which is the layout a phone-width SSH session or a narrow split
 pane needs. `COLUMNS` overrides the detected width, so either mode can be
 previewed from a full-size terminal:
 

@@ -460,6 +460,34 @@ class ResetVoucherColumnTests(unittest.TestCase):
         self.assertEqual(first.index("11d"), second.index("18d"), plain)
 
 
+class TableFitsTerminalTests(unittest.TestCase):
+    """Under ``layout: auto`` a table wider than the terminal would wrap and break
+    its borders, so it falls back to cards; an explicit ``wide`` keeps the table."""
+
+    _ROWS = [{"profile": "work", "account": "Test <<<hs:9b9c21357a74e473e8bba89340b5c231>>>", "plan": "Plus"}]
+    _COLUMNS = [("PROFILE", "profile"), ("ACCOUNT", "account"), ("PLAN", "plan")]
+
+    def setUp(self) -> None:
+        present.reset_layout_cache()
+        self.addCleanup(present.reset_layout_cache)
+
+    def _render(self, layout: str, width: int) -> str:
+        with mock.patch.object(aw, "load_config", return_value={**aw.DEFAULTS, "layout": layout}), \
+                mock.patch.object(present, "terminal_width", return_value=width):
+            return _capture(present.accounts_table, self._ROWS, self._COLUMNS)
+
+    def test_auto_falls_back_to_cards_when_table_is_wider_than_terminal(self) -> None:
+        text = self._render("auto", present.NARROW_BELOW + 1)
+        self.assertNotIn("┬", text)
+        self.assertIn("work", text)
+
+    def test_auto_keeps_table_when_it_fits(self) -> None:
+        self.assertIn("┬", self._render("auto", 200))
+
+    def test_configured_wide_keeps_table_even_when_too_wide(self) -> None:
+        self.assertIn("┬", self._render("wide", present.NARROW_BELOW + 1))
+
+
 if __name__ == "__main__":
     unittest.main()
 

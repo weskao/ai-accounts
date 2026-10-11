@@ -199,7 +199,7 @@ def reset_layout_cache() -> None:
     _table_style_config = None
 
 
-def layout_mode(override: str | None = None) -> str:
+def layout_mode(override: str | None = None, fit: int = 0) -> str:
     """The active layout: ``"wide"`` (box tables, 64-column panels) or
     ``"narrow"`` (stacked cards, ``NARROW_WIDTH``-column panels).
 
@@ -207,8 +207,9 @@ def layout_mode(override: str | None = None) -> str:
     mode (``"wide"``/``"narrow"``) or force the width-based resolution
     (``"auto"``). Otherwise the ``layout`` setting decides: ``wide``/``narrow``
     are taken as given, ``auto`` (the default, and anything unrecognized)
-    resolves by terminal width — narrow below :data:`NARROW_BELOW` columns, wide
-    when at or above it or when the width is unmeasurable.
+    resolves by terminal width — narrow below :data:`NARROW_BELOW` columns (or
+    below ``fit``, the caller's content width, so a too-wide table never wraps),
+    wide when at or above it or when the width is unmeasurable.
 
     **Only the config read is cached** (see :func:`reset_layout_cache`), so a
     multi-panel command still touches the file once — but ``auto`` re-measures
@@ -234,7 +235,7 @@ def layout_mode(override: str | None = None) -> str:
     if configured in ("wide", "narrow"):
         return configured
     width = terminal_width()
-    return "narrow" if width is not None and width < NARROW_BELOW else "wide"
+    return "narrow" if width is not None and width < max(NARROW_BELOW, fit) else "wide"
 
 
 def narrow_width() -> int:
@@ -502,11 +503,12 @@ def accounts_table(
     for key in numeric_keys:
         usage_format.align_numeric_cells(rows, key)
 
-    if (mode or layout_mode()) == "narrow":
+    lines = table_lines(rows, columns, optional_columns=optional_columns, style=style)
+    if layout_mode(mode, fit=visible_len(lines[0]) if lines else 0) == "narrow":
         _accounts_cards(rows, columns)
         return
 
-    for line in table_lines(rows, columns, optional_columns=optional_columns, style=style):
+    for line in lines:
         print(line)
 
 
