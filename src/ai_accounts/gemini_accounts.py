@@ -64,6 +64,7 @@ from .usage_format import (
     format_usage_window,
     json_empty_list,
     print_no_active_account,
+    state_cells,
     usage_window_to_json,
 )
 
@@ -1037,16 +1038,7 @@ def cmd_list(
         # activated and queried (the loop temporarily writes each profile's auth).
         profile_claims = [(p, c) for p, c in profile_claims if p == active_profile]
 
-    identity_groups: dict[str, list[Path]] = {}
-    for profile_path, claims in profile_claims:
-        identity = _identity_key(claims)
-        if identity is not None:
-            identity_groups.setdefault(identity, []).append(profile_path)
-    same_account_profiles: set[Path] = set()
-    for group in identity_groups.values():
-        if len(group) > 1:
-            primary = active_profile if active_profile in group else group[0]
-            same_account_profiles.update(p for p in group if p != primary)
+    states = state_cells([(p, _identity_key(c)) for p, c in profile_claims], {active_profile})
 
     cached_list = (
         fetch_usage
@@ -1069,16 +1061,9 @@ def cmd_list(
     spinner = Spinner("Fetching Antigravity usage…")
     try:
         with spinner if live_query else nullcontext():
-            for index, (profile_path, claims) in enumerate(profile_claims, 1):
+            for index, ((profile_path, claims), status) in enumerate(zip(profile_claims, states), 1):
                 name = profile_path.stem
                 is_active = profile_path == active_profile
-                status = (
-                    f"{GREEN}{BOLD}ACTIVE{RESET}"
-                    if is_active
-                    else f"{YELLOW}SAME ACCT{RESET}"
-                    if profile_path in same_account_profiles
-                    else f"{DIM}—{RESET}"
-                )
                 usage = empty_usage
                 if cached_list and not is_active:
                     usage = _cached_snapshot(name, usage_cache) or empty_usage

@@ -12,9 +12,11 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Final, TypeAlias
+from typing import Callable, Container, Final, Sequence, TypeAlias, TypeVar
 
-from ._utils import DIM, GREEN, RESET, YELLOW, log_yellow
+from ._utils import BOLD, DIM, GREEN, RESET, YELLOW, log_yellow
+
+K = TypeVar("K")
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonDict: TypeAlias = dict[str, JsonValue]
@@ -145,6 +147,30 @@ def print_no_active_account(provider: str, command: str) -> None:
         f"{DIM}   or activate a saved one with: {command} switch <name>{RESET}",
         file=sys.stderr,
     )
+
+
+def state_cells(rows: Sequence[tuple[K, str | None]], active: Container[K]) -> list[str]:
+    """The STATE column of every `<tool>-accounts list`, one cell per ``(key, identity)`` row.
+
+    ACTIVE for a key in *active*; SAME ACCT for a row whose identity (account id
+    or email; None = unknown) another row shares — except the one kept plain per
+    account: the active row, else the first.
+    """
+    groups: dict[str, list[K]] = {}
+    for key, identity in rows:
+        if identity is not None:
+            groups.setdefault(identity, []).append(key)
+    same: set[K] = set()
+    for group in groups.values():
+        if len(group) > 1:
+            primary = next((key for key in group if key in active), group[0])
+            same.update(key for key in group if key != primary)
+    return [
+        f"{GREEN}{BOLD}ACTIVE{RESET}" if key in active
+        else f"{YELLOW}SAME ACCT{RESET}" if key in same
+        else f"{DIM}—{RESET}"
+        for key, _ in rows
+    ]
 
 
 def _load_json(path: Path) -> JsonDict | None:

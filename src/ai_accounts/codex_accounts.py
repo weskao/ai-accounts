@@ -920,16 +920,6 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
             return 0
         # Filter before fetching so only the active account's usage is queried.
         profile_claims = [(p, c) for p, c in profile_claims if p == active_profile]
-    identity_groups: dict[str, list[Path]] = {}
-    for profile_path, claims in profile_claims:
-        identity = _identity_key(claims)
-        if identity is not None:
-            identity_groups.setdefault(identity, []).append(profile_path)
-    same_account_profiles: set[Path] = set()
-    for group in identity_groups.values():
-        if len(group) > 1:
-            primary = active_profile if active_profile in group else group[0]
-            same_account_profiles.update(profile for profile in group if profile != primary)
 
     empty_usage = usage_format.UsageSnapshot(
         hourly=None,
@@ -994,17 +984,11 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
         print(json.dumps(entries))
         return 0
 
+    states = usage_format.state_cells([(p, _identity_key(c)) for p, c in profile_claims], {active_profile})
     rows = []
-    for (profile_path, claims), usage in zip(profile_claims, usages):
+    for (profile_path, claims), usage, status in zip(profile_claims, usages, states):
         name = profile_path.stem
         is_active = profile_path == active_profile
-        status = (
-            f"{GREEN}{BOLD}ACTIVE{RESET}"
-            if is_active
-            else f"{YELLOW}SAME ACCT{RESET}"
-            if profile_path in same_account_profiles
-            else f"{DIM}—{RESET}"
-        )
         expires_text, color = _list_expiry_status(claims)
         rows.append(
             {

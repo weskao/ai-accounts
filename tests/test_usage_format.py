@@ -8,6 +8,7 @@ from contextlib import redirect_stderr
 from unittest import mock
 
 from ai_accounts import usage_format as uf
+from ai_accounts._present import _ANSI_RE
 
 
 class TestPrintNoActiveAccount(unittest.TestCase):
@@ -19,6 +20,21 @@ class TestPrintNoActiveAccount(unittest.TestCase):
         self.assertIn("No active Codex account detected.", output)
         self.assertIn("codex-accounts save <name>", output)
         self.assertIn("codex-accounts switch <name>", output)
+
+
+class TestStateCells(unittest.TestCase):
+    def _states(self, rows, active) -> list[str]:
+        return [_ANSI_RE.sub("", cell) for cell in uf.state_cells(rows, active)]
+
+    def test_duplicates_are_same_acct_except_the_active_one(self) -> None:
+        rows = [("a", "x"), ("b", "x"), ("c", "y"), ("d", None), ("e", None), ("f", "x")]
+        self.assertEqual(
+            self._states(rows, {"b"}), ["SAME ACCT", "ACTIVE", "—", "—", "—", "SAME ACCT"]
+        )
+
+    def test_without_an_active_row_the_first_duplicate_is_plain(self) -> None:
+        rows = [("a", "x"), ("b", "x"), ("c", "x")]
+        self.assertEqual(self._states(rows, set()), ["—", "SAME ACCT", "SAME ACCT"])
 
 
 class TestAlignUsageCells(unittest.TestCase):
