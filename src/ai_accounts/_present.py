@@ -498,12 +498,14 @@ def accounts_table(
     keeps its line across a 9-column table; ``classic`` prints the original
     full-brightness grid.
     """
+    # Column alignment pads across rows; cards show one row each, so they keep the raw cells.
+    aligned = [dict(row) for row in rows]
     for key in align_keys:
-        usage_format.align_usage_cells(rows, key)
+        usage_format.align_usage_cells(aligned, key)
     for key in numeric_keys:
-        usage_format.align_numeric_cells(rows, key)
+        usage_format.align_numeric_cells(aligned, key)
 
-    lines = table_lines(rows, columns, optional_columns=optional_columns, style=style)
+    lines = table_lines(aligned, columns, optional_columns=optional_columns, style=style)
     if layout_mode(mode, fit=visible_len(lines[0]) if lines else 0) == "narrow":
         _accounts_cards(rows, columns)
         return

@@ -46,7 +46,6 @@ from ._utils import (
 from .config_schema import mask_secret
 from .usage_format import (
     UsageWindow,
-    align_usage_cells,
     format_refreshed_at,
     format_usage_window,
     json_empty_list,
@@ -446,14 +445,12 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
                 "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
             }
         )
-    align_usage_cells(rows, "usage_1d")
-    align_usage_cells(rows, "usage_1w")
     print(
         f"{BOLD}Current Devin account{RESET}"
         if only_active
         else f"{BOLD}Saved Devin profiles{RESET}  {DIM}({len(rows)}){RESET}"
     )
-    accounts_table(rows, _TABLE_COLUMNS)
+    accounts_table(rows, _TABLE_COLUMNS, align_keys=("usage_1d", "usage_1w"))
     return 0
 
 

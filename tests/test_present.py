@@ -459,6 +459,15 @@ class ResetVoucherColumnTests(unittest.TestCase):
         second = next(line for line in plain if "18d 0h" in line)
         self.assertEqual(first.index("11d"), second.index("18d"), plain)
 
+    def test_narrow_cards_skip_column_alignment_padding(self) -> None:
+        rows = [
+            {"profile": "a", "usage_1week": "1% · 6d 21h 10m"},
+            {"profile": "b", "usage_1week": "100% · 12d 1h 0m"},
+        ]
+        columns = [("PROFILE", "profile"), ("1W USED", "usage_1week")]
+        text = _capture(present.accounts_table, rows, columns, align_keys=("usage_1week",), mode="narrow")
+        self.assertIn("1W USED  1% · 6d 21h 10m", present._ANSI_RE.sub("", text))
+
 
 class TableFitsTerminalTests(unittest.TestCase):
     """Under ``layout: auto`` a table wider than the terminal would wrap and break

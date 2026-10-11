@@ -47,7 +47,6 @@ from ._utils import (
     resolve_account_dir,
 )
 from .usage_format import (
-    align_usage_cells,
     credential_status_prefix,
     format_usage_window,
     json_empty_list,
@@ -592,14 +591,11 @@ def cmd_list(
                 "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
             }
         )
-    align_usage_cells(rows, "usage_1w")
-    align_usage_cells(rows, "usage_build")
-
     if only_active:
         print(f"{BOLD}Current Grok account{RESET}")
     else:
         print(f"{BOLD}Saved Grok profiles{RESET}  {DIM}({len(rows)}){RESET}")
-    accounts_table(rows, _TABLE_COLUMNS)
+    accounts_table(rows, _TABLE_COLUMNS, align_keys=("usage_1w", "usage_build"))
     return 0
 
 

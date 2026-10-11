@@ -68,8 +68,6 @@ from ._utils import (
 from .config_schema import mask_secret
 from .usage_format import (
     UsageWindow,
-    align_numeric_cells,
-    align_usage_cells,
     format_usage_window,
     json_empty_list,
     print_no_active_account,
@@ -764,14 +762,11 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                 "state": f"{GREEN}{BOLD}ACTIVE{RESET}" if is_active else f"{DIM}—{RESET}",
             }
         )
-    align_usage_cells(rows, "usage_premium")
-    align_numeric_cells(rows, "remaining")
-
     if only_active:
         print(f"{BOLD}Current Copilot account{RESET}")
     else:
         print(f"{BOLD}Saved Copilot profiles{RESET}  {DIM}({len(rows)}){RESET}")
-    accounts_table(rows, _TABLE_COLUMNS)
+    accounts_table(rows, _TABLE_COLUMNS, align_keys=("usage_premium",), numeric_keys=("remaining",))
     return 0
 
 

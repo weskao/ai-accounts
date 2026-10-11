@@ -43,7 +43,6 @@ from ._utils import (
 )
 from .usage_format import (
     UsageWindow,
-    align_usage_cells,
     format_usage_window,
     json_empty_list,
     print_no_active_account,
@@ -292,10 +291,9 @@ def cmd_list(*, only_active: bool = False, json_output: bool = False) -> int:
         }
         for login, window in zip(logins, windows)
     ]
-    align_usage_cells(rows, "usage")
     title = "Active opencode logins" if only_active else "opencode logins"
     print(f"{BOLD}{title}{RESET}  {DIM}({len(rows)}){RESET}")
-    accounts_table(rows, _TABLE_COLUMNS)
+    accounts_table(rows, _TABLE_COLUMNS, align_keys=("usage",))
     return 0
 
 
