@@ -524,7 +524,8 @@ class ProfileCommandTests(_HomeMixin):
             _, output, _ = self.capture(ca.cmd_list)
         text = ca._ANSI_RE.sub("", output)
         self.assertIn("CREDITS", text)
-        self.assertIn("66% · $66.26 / $100.00 · resets ", text)
+        self.assertIn("66% · $66.26 / $100.00 │", text)
+        self.assertIn("│ resets ", text)
 
     def test_list_hides_credits_column_when_unknown(self) -> None:
         self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))

@@ -14,11 +14,11 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Final, TypeAlias
 
 from ._utils import clamp_percent, finite_number
-from .usage_format import ResetVouchers, UsageWindow, format_unix_time_compact
+from .usage_format import ResetVouchers, UsageWindow, format_elapsed, format_unix_time_compact
 from .usage_format import parse_iso8601 as _parse_iso8601
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
@@ -155,16 +155,18 @@ def _money(minor: int, credits: ExtraUsage) -> str:
     return f"${amount}" if credits.currency == "USD" else f"{credits.currency} {amount}"
 
 
-def format_credits(credits: ExtraUsage | None, *, today: date | None = None) -> str:
-    """Table cell like Claude Code's ``66% · $66.26 / $100.00 · resets Nov 1``; ``—`` when unknown."""
+def format_credits(credits: ExtraUsage | None, *, now: float | None = None) -> str:
+    """Two-line table cell ``66% · $66.26 / $100.00`` + ``resets 20d 7h`` (time left,
+    like VOUCHER EXPIRY); ``—`` when unknown."""
     if credits is None:
         return "—"
+    now = time.time() if now is None else now
     spent = _money(credits.used_minor, credits)
     if credits.limit_minor is not None:
         spent += f" / {_money(credits.limit_minor, credits)}"
-    reset = _credits_reset_on(today)
+    reset_at = datetime.combine(_credits_reset_on(date.fromtimestamp(now)), datetime.min.time()).timestamp()
     parts = [f"{credits.percent}%"] if credits.percent is not None else []
-    return " · ".join([*parts, spent, f"resets {reset:%b} {reset.day}"])
+    return " · ".join([*parts, spent]) + f"\nresets {format_elapsed(int(reset_at - now))}"
 
 
 def credits_json(credits: ExtraUsage | None, *, today: date | None = None) -> dict[str, object] | None:

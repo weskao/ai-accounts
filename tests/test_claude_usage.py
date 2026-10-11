@@ -144,23 +144,25 @@ class TestCredits(unittest.TestCase):
         got = cu._credits({**_EXTRA, "monthly_limit": None, "utilization": None})
         self.assertEqual(got, cu.ExtraUsage(6626, None, 2, "USD", None))
 
-    def test_format_matches_claude_code_line(self) -> None:
-        from datetime import date
+    def test_format_amount_then_time_to_reset(self) -> None:
+        from datetime import datetime
 
         self.assertEqual(
-            cu.format_credits(cu._credits(_EXTRA), today=date(2026, 10, 11)),
-            "66% · $66.26 / $100.00 · resets Nov 1",
+            cu.format_credits(cu._credits(_EXTRA), now=datetime(2026, 10, 11, 16, 0).timestamp()),
+            "66% · $66.26 / $100.00\nresets 20d 8h",
         )
         self.assertEqual(
-            cu.format_credits(cu._credits(_EXTRA), today=date(2026, 12, 31)),
-            "66% · $66.26 / $100.00 · resets Jan 1",
+            cu.format_credits(cu._credits(_EXTRA), now=datetime(2026, 12, 31, 12, 0).timestamp()),
+            "66% · $66.26 / $100.00\nresets 12h 0m",
         )
 
     def test_format_other_currency_no_limit_and_unknown(self) -> None:
-        from datetime import date
+        from datetime import datetime
 
         eur = cu.ExtraUsage(1234, None, 2, "EUR", None)
-        self.assertEqual(cu.format_credits(eur, today=date(2026, 1, 5)), "EUR 12.34 · resets Feb 1")
+        self.assertEqual(
+            cu.format_credits(eur, now=datetime(2026, 1, 5).timestamp()), "EUR 12.34\nresets 27d 0h"
+        )
         self.assertEqual(cu.format_credits(None), "—")
 
     def test_json_form(self) -> None:

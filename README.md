@@ -259,14 +259,16 @@ a current value (for example `claude-cli/<your claude --version> (external, cli)
 
 Claude's paid extra usage ("credits", spent once the plan limits run out) shows
 in `claude-accounts` `list` / `usage` (and `ai-accounts list` / `usage`) as a
-`CREDITS` column, written the way Claude Code writes it:
+`CREDITS` column, on two lines:
 
 ```text
-66% · $66.26 / $100.00 · resets Nov 1
+66% · $66.26 / $100.00
+resets 20d 7h
 ```
 
-That is the share of the monthly limit used, spent / limit, and the date the
-month rolls over. The percent is colored like the usage columns (green, yellow
+That is the share of the monthly limit used, spent / limit, and the time left
+until the month rolls over (counted like `VOUCHER EXPIRY`). `--json` keeps the
+date as `resets_on`. The percent is colored like the usage columns (green, yellow
 from 50%, red from 80%). The column disappears when no account has extra usage
 turned on. `save`, `switch` and `login-switch` end with the same table, so they
 show it too.

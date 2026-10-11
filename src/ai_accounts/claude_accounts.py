@@ -708,7 +708,10 @@ def _credits_cell(credits: claude_usage.ExtraUsage | None) -> str:
     text = claude_usage.format_credits(credits)
     if credits is None:
         return f"{DIM}{text}{RESET}"
-    return f"{usage_color(credits.percent)}{text}{RESET}" if credits.percent is not None else text
+    amount, reset = text.split("\n")
+    if credits.percent is not None:
+        amount = f"{usage_color(credits.percent)}{amount}{RESET}"
+    return f"{amount}\n{DIM}{reset}{RESET}"
 
 
 def _print_accounts_table(rows: list[dict]) -> None:
