@@ -141,6 +141,14 @@ def test_duplicate_labels_stay_unique(data):
     assert _names(oa._logins()[0]) == ["openai:dup", "openai:cred-b"]
 
 
+def test_mcp_server_credentials_are_not_listed(data):
+    _make_db(data / "opencode.db", [
+        ("cred-a", "openai", "main", _oauth("access-test-a"), 1),
+        ("cred-m", "mcp_0000aaaa", "notion", _oauth("access-test-m"), 1),
+    ])
+    assert _names(oa._logins()[0]) == ["openai:main"]
+
+
 def test_a_label_equal_to_another_id_never_shares_a_name(data):
     # A shared name would let `remove` log out the wrong credential.
     _make_db(data / "opencode.db", [

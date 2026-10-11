@@ -144,6 +144,8 @@ def _db_rows(db: Path) -> list[tuple] | None:
         return con.execute(
             "SELECT id, integration_id, label, value, active, time_created FROM credential"
             " WHERE integration_id IS NOT NULL"  # opencode skips such rows
+            # MCP server OAuth tokens (e.g. Notion) share the table but are not AI logins.
+            " AND integration_id NOT LIKE 'mcp\\_%' ESCAPE '\\'"
             " ORDER BY integration_id, time_created, id"
         ).fetchall()
 

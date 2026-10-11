@@ -366,7 +366,8 @@ still accepted and never modifies a login.
 store — opencode v2 already keeps several logins per integration. It lists
 them from opencode's database read-only, switches with `opencode auth switch`,
 and never writes opencode's files. Logins are named `<integration>:<label>`
-(for example `openai:work`). It never refreshes tokens: opencode does that
+(for example `openai:work`). MCP server logins (integration `mcp_…`, such as
+Notion) live in the same table but are not AI logins, so they are hidden. It never refreshes tokens: opencode does that
 itself, and refreshing elsewhere would log out `codex-accounts` /
 `claude-accounts`, which share the same single-use OpenAI refresh token.
 
