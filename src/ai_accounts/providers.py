@@ -4,7 +4,7 @@ verdict) is declared — leaf module, no imports from ``ai_accounts``,
 
 ``ai_accounts.py``'s ``_TOOLS``/``_PROVIDER_COLOR``, ``refresh_report.py``'s
 ``PROVIDER_COLORS`` and ``autoswitch.py``'s ``PROVIDER_VERDICTS`` are all
-derived from :data:`PROVIDERS` below instead of repeating the six providers
+derived from :data:`PROVIDERS` below instead of repeating the eight providers
 as four separate hardcoded dicts that could drift out of sync.
 
 Two independent color fields exist because the two consumers genuinely
@@ -29,7 +29,7 @@ from ._utils import BLUE, CYAN, GREEN, MAGENTA, ORANGE, RED, YELLOW
 
 @dataclass(frozen=True, slots=True)
 class Provider:
-    key: str  # short id: "codex", "claude", "agy", "grok", "vibe", "copilot"
+    key: str  # short id: "codex", "claude", "agy", ..., "devin", "opencode"
     label: str  # display label: "codex-accounts"
     module: str  # importable module: "ai_accounts.codex_accounts"
     binary: str  # CLI binary the login flow shells out to (README's "Platform notes" table)
@@ -77,6 +77,18 @@ PROVIDERS: list[Provider] = [
         "copilot", "copilot-accounts", "ai_accounts.copilot_accounts", "copilot", RED, RED,
         None, reset_windows=("monthly",),
     ),
+    # Every color in _utils is already taken, so devin/opencode reuse MAGENTA/CYAN.
+    Provider(
+        "devin", "devin-accounts", "ai_accounts.devin_accounts", "devin", MAGENTA, MAGENTA,
+        "auto-restart", reset_windows=("daily", "weekly"),
+    ),
+    # reset_windows deliberately empty: opencode's OpenAI/Claude/Copilot quotas are the
+    # same accounts codex/claude/copilot-accounts already watch, so a reset notification
+    # here would duplicate theirs.
+    Provider(
+        "opencode", "opencode-accounts", "ai_accounts.opencode_accounts", "opencode", CYAN, CYAN,
+        "auto-restart", reset_windows=(),
+    ),
 ]
 
 
@@ -85,12 +97,14 @@ if __name__ == "__main__":
     # equality with the old literals is already covered by the existing
     # test files (test_ai_accounts.py, test_refresh_report.py,
     # test_autoswitch.py), which import the real consumer modules.
-    assert [p.key for p in PROVIDERS] == ["codex", "claude", "agy", "grok", "vibe", "copilot"]
+    assert [p.key for p in PROVIDERS] == ["codex", "claude", "agy", "grok", "vibe", "copilot", "devin", "opencode"]
     assert {p.key: p.verdict for p in PROVIDERS if p.verdict is not None} == {
         "codex": "auto-restart",
         "claude": "auto-restart",
         "agy": "auto-restart",
         "grok": "auto-restart",
+        "devin": "auto-restart",
+        "opencode": "auto-restart",
     }
     assert {"vibe", "copilot"}.isdisjoint({p.key for p in PROVIDERS if p.verdict is not None})
     assert {p.key: p.reset_windows for p in PROVIDERS} == {
@@ -100,6 +114,8 @@ if __name__ == "__main__":
         "grok": ("weekly", "build"),
         "vibe": (),
         "copilot": ("monthly",),
+        "devin": ("daily", "weekly"),
+        "opencode": (),
     }
     assert {p.key for p in PROVIDERS if p.reset_windows_cached} == {"agy"}
     assert {p.key: p.binary for p in PROVIDERS} == {
@@ -109,5 +125,7 @@ if __name__ == "__main__":
         "grok": "grok",
         "vibe": "vibe",
         "copilot": "copilot",
+        "devin": "devin",
+        "opencode": "opencode",
     }
     print("providers.py self-check OK")

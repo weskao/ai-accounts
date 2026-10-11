@@ -42,9 +42,9 @@ class AiAccountsTest(unittest.TestCase):
         # though codex is declared first in _TOOLS.
         codex_may_finish = threading.Event()
         completed_yields = 0
-        # 6 providers total, 5 of them not codex — codex is released only once
-        # all 5 others have been yielded.
-        _NON_CODEX_COUNT = 5
+        # 8 providers total, 7 of them not codex — codex is released only once
+        # all 7 others have been yielded.
+        _NON_CODEX_COUNT = 7
 
         class ReleaseCodexAfterOthersYield:
             def __init__(self, message: str) -> None:
@@ -69,6 +69,8 @@ class AiAccountsTest(unittest.TestCase):
                 "ai_accounts.grok_accounts": "GROK-TABLE",
                 "ai_accounts.vibe_accounts": "VIBE-TABLE",
                 "ai_accounts.copilot_accounts": "COPILOT-TABLE",
+                "ai_accounts.devin_accounts": "DEVIN-TABLE",
+                "ai_accounts.opencode_accounts": "OPENCODE-TABLE",
             }[module]
             return _fake(module, table)
 
@@ -84,6 +86,8 @@ class AiAccountsTest(unittest.TestCase):
         self.assertLess(text.index("GROK-TABLE"), text.index("CODEX-TABLE"))
         self.assertLess(text.index("VIBE-TABLE"), text.index("CODEX-TABLE"))
         self.assertLess(text.index("COPILOT-TABLE"), text.index("CODEX-TABLE"))
+        self.assertLess(text.index("DEVIN-TABLE"), text.index("CODEX-TABLE"))
+        self.assertLess(text.index("OPENCODE-TABLE"), text.index("CODEX-TABLE"))
         for label in (
             "codex-accounts",
             "claude-accounts",
@@ -91,6 +95,8 @@ class AiAccountsTest(unittest.TestCase):
             "grok-accounts",
             "vibe-accounts",
             "copilot-accounts",
+            "devin-accounts",
+            "opencode-accounts",
         ):
             self.assertIn(label, text)
 
@@ -116,6 +122,8 @@ class AiAccountsTest(unittest.TestCase):
             "ai_accounts.grok_accounts": _fake("ai_accounts.grok_accounts", "GROK-TABLE"),
             "ai_accounts.vibe_accounts": _fake("ai_accounts.vibe_accounts", "VIBE-TABLE"),
             "ai_accounts.copilot_accounts": _fake("ai_accounts.copilot_accounts", "COPILOT-TABLE"),
+            "ai_accounts.devin_accounts": _fake("ai_accounts.devin_accounts", "DEVIN-TABLE"),
+            "ai_accounts.opencode_accounts": _fake("ai_accounts.opencode_accounts", "OPENCODE-TABLE"),
         }
         with mock.patch.object(aa, "Spinner", RecordingSpinner):
             with mock.patch.object(aa, "_run_list", side_effect=lambda m: outputs[m]):
@@ -124,7 +132,9 @@ class AiAccountsTest(unittest.TestCase):
         self.assertEqual(
             messages,
             [
-                "Fetching accounts from 6 providers…",
+                "Fetching accounts from 8 providers…",
+                "Fetching remaining 7 providers…",
+                "Fetching remaining 6 providers…",
                 "Fetching remaining 5 providers…",
                 "Fetching remaining 4 providers…",
                 "Fetching remaining 3 providers…",
@@ -158,6 +168,8 @@ class AiAccountsTest(unittest.TestCase):
             "ai_accounts.grok_accounts": [{"name": "work", "active": False, "usage": None, "no_quota_api": True}],
             "ai_accounts.vibe_accounts": [],
             "ai_accounts.copilot_accounts": [],
+            "ai_accounts.devin_accounts": [],
+            "ai_accounts.opencode_accounts": [],
         }
 
         def run(module: str, command: str) -> subprocess.CompletedProcess[str]:
@@ -185,6 +197,8 @@ class AiAccountsTest(unittest.TestCase):
                 "grok-accounts",
                 "vibe-accounts",
                 "copilot-accounts",
+                "devin-accounts",
+                "opencode-accounts",
             ],
         )
         self.assertEqual(merged["codex-accounts"], entries["ai_accounts.codex_accounts"])
@@ -342,6 +356,8 @@ class AiAccountsTest(unittest.TestCase):
                 "ai_accounts.grok_accounts",
                 "ai_accounts.vibe_accounts",
                 "ai_accounts.copilot_accounts",
+                "ai_accounts.devin_accounts",
+                "ai_accounts.opencode_accounts",
             ],
         )
         for c in calls:

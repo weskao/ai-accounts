@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import time
+from datetime import datetime, timezone
 from functools import lru_cache, wraps
 from pathlib import Path
 import shutil
@@ -246,6 +248,47 @@ def fetch_parallel(
                 name = f" {MAGENTA}{labels[index]}{RESET}" if labels else ""
                 spinner.update(f"{message} {DIM}({done}/{total}){RESET}{name}")
     return results
+
+
+def no_redirect_opener():
+    """urllib opener that refuses redirects, so a bearer token never follows one off-host."""
+    import urllib.request  # lazy: keeps urllib/ssl off the import path of non-network commands
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+            return None
+
+    return urllib.request.build_opener(_NoRedirect)
+
+
+def finite_number(value: object) -> float | None:
+    """``value`` as a finite float; ``None`` for bools, non-numbers, NaN/inf and ints too big for a float."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def clamp_percent(value: object) -> int | None:
+    """``value`` rounded and clamped to 0-100; ``None`` when it is not a finite number."""
+    number = finite_number(value)
+    return None if number is None else max(0, min(100, round(number)))
+
+
+def parse_iso_epoch(value: object) -> int | None:
+    """Epoch seconds from an ISO-8601 string (naive means UTC); ``None`` when unparseable."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return int(stamp.timestamp())
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def have(cmd: str) -> bool:
@@ -964,13 +1007,13 @@ def keyring_core_write(service: str, user: str, secret: str) -> bool:
 
 # ── credential files ─────────────────────────────────────────────────────────
 
-def atomic_write_json(path: Path, payload, *, indent: int = 2, mode: int = 0o600) -> None:
-    """Write `payload` as JSON to `path` atomically, 0600 by default.
+def atomic_write_text(path: Path, text: str, *, mode: int = 0o600) -> None:
+    """Write `text` (utf-8) to `path` atomically, 0600 by default.
 
     A same-directory temp file is filled, chmod'd and `replace`d onto the
     target, so a crash mid-write — or a vendor CLI reading the same credential
     concurrently — never sees a truncated file. Raises OSError on failure,
-    after removing the temp file.
+    after removing the temp file (also for an unencodable `text`, which raises ValueError).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
@@ -982,16 +1025,20 @@ def atomic_write_json(path: Path, payload, *, indent: int = 2, mode: int = 0o600
             prefix=f".{path.name}.",
             delete=False,
         ) as handle:
-            json.dump(payload, handle, indent=indent)
-            handle.write("\n")
             temporary = Path(handle.name)
+            handle.write(text)
         temporary.chmod(mode)
         temporary.replace(path)
         path.chmod(mode)
-    except OSError:
+    except (OSError, ValueError):  # ValueError: UnicodeEncodeError (lone surrogate)
         if temporary is not None:
             temporary.unlink(missing_ok=True)
         raise
+
+
+def atomic_write_json(path: Path, payload, *, indent: int = 2, mode: int = 0o600) -> None:
+    """Write `payload` as JSON to `path` via `atomic_write_text` (see there)."""
+    atomic_write_text(path, json.dumps(payload, indent=indent) + "\n", mode=mode)
 
 
 # ── OAuth token refresh ──────────────────────────────────────────────────────

@@ -17,8 +17,8 @@ Per :data:`ai_accounts.providers.PROVIDERS` entry, checks:
       :func:`ai_accounts._utils.go_keyring_available` (already handles macOS/
       Windows keychain vs Linux ``secret-tool``) rather than re-deriving the
       per-OS branching; only ``agy`` hard-requires it (see README's "Platform
-      notes" — codex/claude/vibe fall back to a plaintext file, grok never
-      touches a credential store at all)
+      notes" — codex/claude/vibe/devin fall back to a plaintext file, grok and opencode never
+      touch a credential store at all)
   (d) every saved profile under that provider's account dir is well-formed
       JSON and, if it carries a recognizable expiry field, not already
       expired — a lightweight, fully offline heuristic scan, never a live
@@ -53,13 +53,13 @@ from .providers import PROVIDERS, Provider
 
 # ponytail: only `agy` hard-requires the OS credential store (its live session
 # lives there with no file fallback — see gemini_accounts.py's "agy-accounts
-# needs access to the OS credential store" guard). codex/claude/vibe treat it
-# as optional (file-based fallback exists); grok never touches it. Upgrade
+# needs access to the OS credential store" guard). codex/claude/vibe/devin treat it
+# as optional (file-based fallback exists); grok and opencode never touch it. Upgrade
 # path: move this onto Provider itself if a future provider's requirement
 # stops being a two-way split.
 _STORE_REQUIRED = frozenset({"agy"})
 
-# Key names that show up, across the five providers' saved profile JSON, as an
+# Key names that show up, across the providers' saved profile JSON, as an
 # ACCESS token's absolute expiry moment. Not exhaustive by design (this is an
 # offline, best-effort scan, not a per-provider JWT/claims decoder) — a
 # profile with none of these is reported as "no expiry field to check", not

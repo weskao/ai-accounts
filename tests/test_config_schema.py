@@ -290,6 +290,15 @@ class LayoutFieldTests(unittest.TestCase):
         self.assertEqual(aw.DEFAULTS[self.KEY], "auto")
 
 
+class ResetNotifyProgramsTests(unittest.TestCase):
+    def test_devin_is_covered_and_opencode_is_not(self) -> None:
+        # opencode has no quota API, so it has no reset window to notify about.
+        for key in ("reset_notify", "reset_notify_min_used_pct"):
+            programs = cs.field(key).programs
+            self.assertIn("devin-accounts", programs, key)
+            self.assertNotIn("opencode-accounts", programs, key)
+
+
 class GrowthTests(unittest.TestCase):
     """Adding a key must be one declarative entry and nothing else."""
 

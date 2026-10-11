@@ -264,11 +264,17 @@ def _run_autoswitch_everywhere() -> None:
     """Default *check*: quota probe/switch across eligible providers in parallel.
 
     The provider registry lives with the hook installer, keeping timed and
-    event-triggered checks on the same cross-platform support matrix. copilot
-    and grok have no Stop hook to install, so the timer is their only trigger.
+    event-triggered checks on the same cross-platform support matrix. copilot,
+    grok, devin and opencode have no Stop hook to install, so the timer is their
+    only trigger.
     """
     modules = [autoswitch_hooks.module(provider) for provider in autoswitch_hooks.providers()]
-    modules += ["ai_accounts.copilot_accounts", "ai_accounts.grok_accounts"]
+    modules += [
+        "ai_accounts.copilot_accounts",
+        "ai_accounts.grok_accounts",
+        "ai_accounts.devin_accounts",
+        "ai_accounts.opencode_accounts",
+    ]
     with ThreadPoolExecutor(max_workers=len(modules)) as pool:
         _ = list(pool.map(_run_provider, modules))
 
@@ -297,9 +303,9 @@ _REFRESH_TIMEOUT_SEC = 300
 
 
 def _run_token_refresh_everywhere() -> str:
-    """Default *refresh*: direct-OAuth token refresh, across all four providers.
+    """Default *refresh*: direct-OAuth token refresh, across every provider.
 
-    Drives the same four provider CLIs :func:`_run_autoswitch_everywhere` does
+    Drives the same provider CLIs :func:`_run_autoswitch_everywhere` does
     (via :data:`ai_accounts.ai_accounts._TOOLS`, so the provider list is never
     duplicated), with ``refresh --all`` — already a ``<provider>-accounts
     refresh --all`` command on every one of them — in place of ``autoswitch``.
@@ -351,7 +357,7 @@ def run_once(
 
     Three INDEPENDENT gates, each reading its own config flag, run in this
     fixed order — ``enabled`` (quota auto-switch check), then
-    ``token_refresh`` (renewing tokens across all four providers), then
+    ``token_refresh`` (renewing tokens across every provider), then
     ``reset_notify`` (quota-reset notifications, :func:`quota_reset.run_tick`)
     last. Any subset runs on a given tick: a user who does not want automatic
     account switching still wants live tokens (plan.md §4 phase 4 — this is

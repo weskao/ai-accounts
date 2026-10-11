@@ -12,6 +12,7 @@ from unittest import mock
 
 from ai_accounts import _utils as u
 from ai_accounts import claude_accounts as ca
+from ai_accounts import devin_accounts as da
 from ai_accounts import gemini_accounts as ga
 from ai_accounts import gemini_usage as gu
 
@@ -129,6 +130,29 @@ class ResolveAccountDirTests(unittest.TestCase):
             self.assertEqual(resolved, central)
             self.assertTrue((central / "new.json").exists())
             self.assertTrue((legacy / "old.json").exists())  # never merged/overwritten
+
+
+class DevinDataDirTests(unittest.TestCase):
+    """credentials.toml lives under %APPDATA%\\devin on Windows, XDG elsewhere."""
+
+    def test_windows_uses_appdata_then_roaming_fallback(self):
+        with mock.patch.object(da.sys, "platform", "win32"):
+            with mock.patch.dict(os.environ, {"APPDATA": "C:/Roaming"}, clear=True):
+                self.assertEqual(da._data_dir(), Path("C:/Roaming") / "devin")
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                Path, "home", return_value=Path("/home/u")
+            ):
+                self.assertEqual(da._data_dir(), Path("/home/u/AppData/Roaming/devin"))
+
+    def test_posix_ignores_appdata_and_honours_xdg(self):
+        with mock.patch.object(da.sys, "platform", "linux"):
+            env = {"APPDATA": "C:/Roaming", "XDG_DATA_HOME": "/xdg"}
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(da._data_dir(), Path("/xdg/devin"))
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                Path, "home", return_value=Path("/home/u")
+            ):
+                self.assertEqual(da._data_dir(), Path("/home/u/.local/share/devin"))
 
 
 class GoKeyringDispatchTests(_PlatformMixin, unittest.TestCase):
