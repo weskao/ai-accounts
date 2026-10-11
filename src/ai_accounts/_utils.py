@@ -152,6 +152,22 @@ def log_red(msg: str) -> None:
         print(msg, file=sys.stderr)
 
 
+# Subcommands every per-provider account tool understands (the shared surface).
+ACCOUNT_COMMANDS = (
+    "config", "who", "current", "save", "list", "usage", "switch",
+    "remove", "refresh", "sync", "autoswitch", "login-switch",
+)
+
+
+def log_unknown_command(command: str, known: Sequence[str] = ACCOUNT_COMMANDS) -> None:
+    """Reject `command`, hinting the closest known one (e.g. `login-swtich`)."""
+    import difflib
+
+    log_red(f"❌ Unknown command: {command}")
+    if match := difflib.get_close_matches(command, known, n=1):
+        log_yellow(f"   Did you mean: {match[0]}?")
+
+
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 _SPINNER_FRAMES_ASCII = ("|", "/", "-", "\\")
 _SPINNER_INTERVAL = 0.08

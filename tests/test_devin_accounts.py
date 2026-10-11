@@ -543,7 +543,7 @@ class DevinAccountsTests(unittest.TestCase):
         err = io.StringIO()
         with redirect_stdout(io.StringIO()), redirect_stderr(err):
             self.assertEqual(da.main(["frobnicate"]), 1)
-        self.assertIn("Unknown or incomplete command: frobnicate", _ANSI_RE.sub("", err.getvalue()))
+        self.assertIn("Unknown command: frobnicate", _ANSI_RE.sub("", err.getvalue()))
 
 
 class DevinAutoswitchTests(unittest.TestCase):

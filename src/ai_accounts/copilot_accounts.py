@@ -47,6 +47,7 @@ from ._present import (
     usage_color,
 )
 from ._utils import (
+    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
@@ -1013,7 +1014,7 @@ def main(argv: list[str] | None = None) -> int:
             log_red("Usage: copilot-accounts login-switch <profile_name>")
             return 1
         return cmd_login_switch(rest[0])
-    log_red(f"❌ Unknown or incomplete command: {command}")
+    log_unknown_command(command)
     print(format_help(i18n.t("help.copilot", default=HELP)))
     return 1
 

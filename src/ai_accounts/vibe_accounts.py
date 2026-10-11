@@ -15,6 +15,7 @@ from . import i18n
 from . import profile_secrets
 from ._present import accounts_table, choose_and_run, choose_profile, format_help, ok, panel, success_panel
 from ._utils import (
+    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
@@ -552,7 +553,7 @@ def main(argv: list[str] | None = None) -> int:
             log_red("Usage: vibe-accounts login-switch <profile_name>")
             return 1
         return cmd_login_switch(rest[0])
-    log_red(f"❌ Unknown or incomplete command: {command}")
+    log_unknown_command(command)
     print(format_help(i18n.t("help.vibe", default=HELP)))
     return 1
 

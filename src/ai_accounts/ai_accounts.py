@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import config_menu as cm
 from . import _present, i18n
 from ._utils import (
+    log_unknown_command,
     BOLD,
     CYAN,
     RESET,
@@ -312,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if command not in _COMMANDS:
-        log_red(f"❌ Unknown command: {command}")
+        log_unknown_command(command, sorted(_COMMANDS))
         print(_present.format_help(i18n.t("help.ai_accounts", default=HELP)))
         return 1
 

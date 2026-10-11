@@ -433,7 +433,7 @@ class GrokAccountsTests(unittest.TestCase):
 
         self.assertEqual(rc, 1)
         self.assertIn(
-            "Unknown or incomplete command: frobnicate", _ANSI_RE.sub("", err.getvalue())
+            "Unknown command: frobnicate", _ANSI_RE.sub("", err.getvalue())
         )
 
 

@@ -30,6 +30,8 @@ from ._present import (
     usage_color,
 )
 from ._utils import (
+    log_unknown_command,
+    ACCOUNT_COMMANDS,
     BOLD,
     DIM,
     GREEN,
@@ -2120,7 +2122,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return cmd_login_switch(rest[0])
 
-    log_red(f"❌ Unknown command: {command}")
+    log_unknown_command(command, (*ACCOUNT_COMMANDS, "api-schema"))
     print(format_help(i18n.t("help.agy", default=HELP)))
     return 1
 

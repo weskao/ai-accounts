@@ -108,6 +108,10 @@ Every command also accepts a `--` prefix: `ai-accounts --config` is the same
 as `ai-accounts config`, `codex-accounts --list` is the same as
 `codex-accounts list`, and so on for every provider tool.
 
+A mistyped command is rejected with a hint, the same in every tool:
+`devin-accounts login-swtich work` prints `Did you mean: login-switch?`.
+`login-switch` with no name prints its usage line.
+
 Use the umbrella command to run the same action for all providers:
 
 ```sh

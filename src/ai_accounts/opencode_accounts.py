@@ -27,6 +27,7 @@ from . import i18n
 from . import opencode_usage
 from ._present import accounts_table, choose_and_run, choose_profile, format_help, ok, panel, usage_color
 from ._utils import (
+    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
@@ -524,9 +525,12 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_refresh()
     if command == "autoswitch":
         return cmd_autoswitch()
-    if command == "login-switch" and rest:
+    if command == "login-switch":
+        if not rest:
+            log_red("Usage: opencode-accounts login-switch <profile_name>")
+            return 1
         return cmd_login_switch(rest[0])
-    log_red(f"❌ Unknown or incomplete command: {command}")
+    log_unknown_command(command)
     print(format_help(i18n.t("help.opencode", default=HELP)))
     return 1
 
