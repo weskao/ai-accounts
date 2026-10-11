@@ -20,14 +20,13 @@ degrade to the previous no-quota path instead of breaking.
 from __future__ import annotations
 
 import json
-import math
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Final
 
+from ._utils import clamp_percent, no_redirect_opener, parse_iso_epoch
 from .usage_format import UsageWindow, capitalize_first, format_unix_time_compact
 
 BILLING_URL: Final = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
@@ -56,12 +55,7 @@ _PLAN_ALIASES: Final = {
 }
 
 
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
-        return None
-
-
-_OPENER = urllib.request.build_opener(_NoRedirectHandler)
+_OPENER = no_redirect_opener()
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,31 +81,6 @@ def plan_label(tier: str | None) -> str | None:
     return capitalize_first(tier.strip())
 
 
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return float(value) if math.isfinite(value) else None
-
-
-def _parse_iso(value: Any) -> int | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (ValueError, OverflowError, OSError):
-        return None
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return int(stamp.timestamp())
-
-
-def _percent(value: Any) -> int | None:
-    number = _number(value)
-    if number is None:
-        return None
-    return max(0, min(100, round(number)))
-
-
 def _period_reset(config: dict[str, Any]) -> tuple[int | None, int | None, bool]:
     """``(reset_epoch, window_minutes, is_weekly)`` from ``currentPeriod``."""
     period = config.get("currentPeriod")
@@ -119,8 +88,8 @@ def _period_reset(config: dict[str, Any]) -> tuple[int | None, int | None, bool]
         period = {}
     kind = str(period.get("type") or "")
     weekly = kind == "USAGE_PERIOD_TYPE_WEEKLY"
-    start = _parse_iso(period.get("start") or config.get("billingPeriodStart"))
-    end = _parse_iso(period.get("end") or config.get("billingPeriodEnd"))
+    start = parse_iso_epoch(period.get("start") or config.get("billingPeriodStart"))
+    end = parse_iso_epoch(period.get("end") or config.get("billingPeriodEnd"))
     minutes = _WEEK_MINUTES if weekly else None
     if start is not None and end is not None and end > start:
         minutes = max(1, (end - start + 59) // 60)
@@ -142,7 +111,7 @@ def _build_percent(config: dict[str, Any]) -> int | None:
             continue
         if str(row.get("product") or "").lower() != "grokbuild":
             continue
-        return _percent(row.get("usagePercent"))
+        return clamp_percent(row.get("usagePercent"))
     return None
 
 
@@ -162,7 +131,7 @@ def _parse(billing: dict[str, Any], user: dict[str, Any]) -> UsageSnapshot:
     if not isinstance(config, dict):
         return UsageSnapshot(None, None, None, None, None, "unexpected quota shape")
     reset, minutes, weekly = _period_reset(config)
-    used = _percent(config.get("creditUsagePercent"))
+    used = clamp_percent(config.get("creditUsagePercent"))
     if used is None and weekly:
         # Proto3 JSON omits default zeros. A confirmed weekly period with no
         # percent is a fresh 0% window, matching grok.com/billing at reset.
