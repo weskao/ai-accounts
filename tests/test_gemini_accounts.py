@@ -451,6 +451,25 @@ class UsageTests(unittest.TestCase):
         self.assertIsNone(snapshot.other_session)
         self.assertEqual((snapshot.email, snapshot.plan), ("user@example.com", "Free"))
 
+    def test_optional_tier_credit_fields_do_not_affect_identity(self) -> None:
+        """agy 1.3.3 added ``availableCredits``/``disableTelemetry`` and dropped
+        ``upgradeButtonText``; none feed email or PLAN."""
+        for tier in (
+            {"id": "free-tier"},
+            {"id": "free-tier", "availableCredits": [
+                {"creditType": "GOOGLE_ONE_AI", "minimumCreditAmountForUsage": "50"},
+            ]},
+            {"id": "g1-pro-tier", "name": "Google AI Pro", "availableCredits": []},
+        ):
+            with self.subTest(tier=tier):
+                snapshot = gu._snapshot({}, {"userStatus": {
+                    "email": "user@example.com", "disableTelemetry": True, "userTier": tier,
+                }})
+                self.assertEqual(
+                    (snapshot.email, snapshot.plan),
+                    ("user@example.com", tier.get("name", "Free")),
+                )
+
     def test_explicit_quota_period_overrides_legacy_labels(self) -> None:
         for period, expected_minutes in (("five-hour", 300), ("daily", None), ("unknown", None)):
             with self.subTest(period=period):
