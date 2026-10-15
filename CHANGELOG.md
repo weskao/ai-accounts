@@ -1,3 +1,28 @@
+## [0.25.0] - 2026-10-15
+
+### 🚀 Features
+
+- **update:** Add <cmd> update via update-kit and a one-line hint
+
+### 🐛 Bug Fixes
+
+- **list:** Clarify reset column labels
+- **timer:** Warn about launchd-blocked sources
+- **update:** Hint wait outlasts lookup, keep Ctrl-C quiet, refuse update args, config-only language
+
+### 💼 Other
+
+- **deps:** Resolve update-kit from PyPI
+
+### 📚 Documentation
+
+- Track refresh token expiry investigation
+- Use home-relative log path
+
+### 🧪 Testing
+
+- **gemini:** Cover optional tier fields
+- Stub the credential-store gate in command-surface tests
 ## [0.24.0] - 2026-10-11
 
 ### 🚀 Features
