@@ -169,7 +169,7 @@ CLI actually uses). Follow the same three-step shape.
       導致 `list` / `usage` 無法顯示正確數值。現況需先用 `save` 重新設置當前帳號；同一
       agent 的其他帳號則必須重新登入後才會恢復資訊。以 2026-10-15 09:56:16 (UTC+8)
       的 refresh 結果為例，追查 `com.ai_accounts.refresh` 及
-      `/Users/wes_flutter/scripts/ai-accounts-refresh/logs/` 下的
+      `~/scripts/ai-accounts-refresh/logs/` 下的
       `refresh.log`、`launchd.stdout.log`、`launchd.stderr.log`，釐清 refresh 是否真正更新
       各帳號憑證並讓 `list` / `usage` 重新取得有效 token。
 - [ ] Research [codex-resets.com](https://codex-resets.com/) (or its data source) and
