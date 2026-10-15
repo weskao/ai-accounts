@@ -119,6 +119,7 @@ USAGE
                                      unreachable)
   agy-accounts config get [key]      Print the shared auto-switch config (or one key)
   agy-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
+  agy-accounts update | --update     Update to the latest release (no prompts)
   agy-accounts -h | --help | help    Show this help
 
 EXAMPLES

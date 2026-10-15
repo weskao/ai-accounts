@@ -74,6 +74,7 @@ USAGE
   opencode-accounts config                Interactive config menu shared by every ai-accounts CLI
   opencode-accounts config get [key]      Print the shared auto-switch config (or one key)
   opencode-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
+  opencode-accounts update | --update     Update to the latest release (no prompts)
   opencode-accounts -h | --help | help    Show this help
 
 EXAMPLES

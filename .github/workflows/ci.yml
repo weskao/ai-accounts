@@ -23,6 +23,9 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # CI has no sibling ../update-kit checkout; resolve it from the index.
+      UV_NO_SOURCES: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

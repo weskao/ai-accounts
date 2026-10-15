@@ -84,6 +84,7 @@ USAGE
   grok-accounts config                Interactive config menu shared by every ai-accounts CLI
   grok-accounts config get [key]      Print the shared auto-switch config (or one key)
   grok-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
+  grok-accounts update | --update     Update to the latest release (no prompts)
   grok-accounts -h | --help | help    Show this help
 
 EXAMPLES

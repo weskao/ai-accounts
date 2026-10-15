@@ -8,6 +8,7 @@ authors = [{ name = "Wes Kao" }]
 license = { text = "MIT" }
 dependencies = [
     "telegram-kit>=0.2.2,<0.3",
+    "update-kit>=0.1,<0.2",
 ]
 
 [project.scripts]
@@ -41,6 +42,9 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.15.21",
 ]
+
+[tool.uv.sources]
+update-kit = { path = "../update-kit", editable = true }
 
 [tool.ruff.lint]
 # Ruff 0.16 widened the default rule set; pin the pre-0.16 defaults so lint

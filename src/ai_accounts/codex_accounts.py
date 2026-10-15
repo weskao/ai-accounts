@@ -96,6 +96,7 @@ USAGE
   codex-accounts config                Interactive config menu shared by every ai-accounts CLI
   codex-accounts config get [key]      Print the shared auto-switch config (or one key)
   codex-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
+  codex-accounts update | --update     Update to the latest release (no prompts)
   codex-accounts -h | --help | help    Show this help
 
 EXAMPLES

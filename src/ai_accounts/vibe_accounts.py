@@ -57,6 +57,7 @@ USAGE
   vibe-accounts config                Interactive config menu shared by every ai-accounts CLI
   vibe-accounts config get [key]      Print the shared auto-switch config (or one key)
   vibe-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
+  vibe-accounts update | --update     Update to the latest release (no prompts)
   vibe-accounts -h | --help | help    Show this help
 
 EXAMPLES

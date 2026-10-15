@@ -355,27 +355,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "config.update_check.label": {"zh-TW": "檢查更新"},
     "config.update_check.help": {
-        "zh-TW": "指令結束後，若 GitHub 有更新的 ai-accounts 版本就提示（背景查詢，每 10 分鐘最多一次）。"
-    },
-    "update.available": {
-        "en": "ai-accounts {latest} is available (you have {current})",
-        "zh-TW": "ai-accounts {latest} 已推出（目前是 {current}）",
-    },
-    "update.now": {"en": "Update now", "zh-TW": "立即更新"},
-    "update.skip": {"en": "Skip", "zh-TW": "略過"},
-    "update.skip_detail": {"en": "ask again next run", "zh-TW": "下次執行再問"},
-    "update.skip_version": {"en": "Skip until next version", "zh-TW": "略過到下一版"},
-    "update.skip_version_detail": {
-        "en": "ask again once a newer version ships",
-        "zh-TW": "有新版本推出後才會再詢問",
-    },
-    "update.confirm": {"en": "confirm", "zh-TW": "確認"},
-    "update.select": {"en": "select", "zh-TW": "選擇"},
-    "update.skip_key": {"en": "skip", "zh-TW": "略過"},
-    "update.release_notes": {"en": "Release notes:", "zh-TW": "版本說明："},
-    "update.failed": {
-        "en": "Update did not finish — run it yourself:",
-        "zh-TW": "更新沒有完成 — 請自行執行：",
+        "zh-TW": "在終端機執行指令時，若 GitHub 有更新的 ai-accounts 版本就在結尾提示一行（背景查詢，每天最多一次）；用 `<指令> update` 更新。"
     },
     "config.language.label": {"zh-TW": "語言"},
     "config.language.help": {
@@ -518,6 +498,7 @@ MESSAGES: dict[str, dict[str, str]] = {
                                       JSON 是否正確且未過期、自動切換計時器狀態；
                                       預設印出成功/失敗表格，--json 則印出單一
                                       JSON 文件
+  ai-accounts update | --update      更新到最新版本（不會詢問）
   ai-accounts -h | --help | help     顯示這份說明
   ai-accounts --version | version    顯示目前的 ai-accounts 版本
 
@@ -557,6 +538,7 @@ vibe-accounts、copilot-accounts、devin-accounts 與 opencode-accounts。
   codex-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
   codex-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
   codex-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  codex-accounts update | --update     更新到最新版本（不會詢問）
   codex-accounts -h | --help | help    顯示這份說明
 
 範例
@@ -598,6 +580,7 @@ $CODEX_ACCOUNT_DIR 覆寫）；舊的 ~/.codex/accounts 位置會自動搬移過
   claude-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
   claude-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
   claude-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  claude-accounts update | --update     更新到最新版本（不會詢問）
   claude-accounts -h | --help | help    顯示這份說明
 
 範例
@@ -653,6 +636,7 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
                                      （即使憑證儲存區無法使用也能運作）
   agy-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
   agy-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  agy-accounts update | --update     更新到最新版本（不會詢問）
   agy-accounts -h | --help | help    顯示這份說明
 
 範例
@@ -694,6 +678,7 @@ $CLAUDE_ACCOUNT_DIR 覆寫）；舊的 ~/.claude/accounts 位置會自動搬移�
   grok-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
   grok-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
   grok-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  grok-accounts update | --update     更新到最新版本（不會詢問）
   grok-accounts -h | --help | help    顯示這份說明
 
 範例
@@ -745,6 +730,7 @@ OS 憑證儲存區可用時會存放在裡面，否則以純文字方式留在�
   vibe-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
   vibe-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
   vibe-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  vibe-accounts update | --update     更新到最新版本（不會詢問）
   vibe-accounts -h | --help | help    顯示這份說明
 
 範例
@@ -786,6 +772,7 @@ service 名稱 "ai.mistral.vibe"），若無則改用 $VIBE_HOME/.env；
   copilot-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
   copilot-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
   copilot-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  copilot-accounts update | --update     更新到最新版本（不會詢問）
   copilot-accounts -h | --help | help    顯示這份說明
 
 範例
@@ -836,6 +823,7 @@ Copilot 的配額端點（premium/chat/completions 用量）尚未對照真實�
   devin-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
   devin-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
   devin-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  devin-accounts update | --update     更新到最新版本（不會詢問）
   devin-accounts -h | --help | help    顯示這份說明
 
 範例
@@ -879,6 +867,7 @@ Devin API key 不會自行過期，因此 `refresh` 只會驗證每把 key 是�
   opencode-accounts config                所有 ai-accounts CLI 共用的互動式設定選單
   opencode-accounts config get [key]      印出共用的自動切換設定（或指定單一項目）
   opencode-accounts config set <k> <v>    設定單一共用設定項目（拒絕未知項目）
+  opencode-accounts update | --update     更新到最新版本（不會詢問）
   opencode-accounts -h | --help | help    顯示這份說明
 
 範例

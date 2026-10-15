@@ -63,18 +63,27 @@ def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
     the command still run before this returns, so in-flight cleanup (restoring
     the live session, stopping a spawned CLI) happens first.
 
-    Every entry point's ``main`` wears this, so it is also where the GitHub
-    update hint runs (:mod:`ai_accounts.update_check`) — once per process tree.
+    Every entry point's ``main`` wears this, so it is also the one funnel for
+    ``<cmd> update`` / ``<cmd> --update`` (:func:`ai_accounts.update_check.run_update`)
+    and for the update hint (:mod:`ai_accounts.update_check`, once per process tree).
     """
 
     @wraps(func)
     def wrapper(*args: object, **kwargs: object) -> int:
         from . import update_check
 
-        outermost = update_check.claim()
+        cmd = update_check.command_name(func.__module__)
+        argv = args[0] if args else kwargs.get("argv")
+        if argv is None:
+            argv = sys.argv[1:]
+        # Exactly `update` — `update --help` / `update <junk>` must not start an install.
+        updating = normalize_command_argv(list(argv)) == ["update"]  # type: ignore[call-overload]
+        outermost = not updating and update_check.claim()
         if outermost:
-            update_check.start_check()
+            update_check.start_check(cmd)
         try:
+            if updating:
+                return update_check.run_update(cmd)
             return func(*args, **kwargs)
         except KeyboardInterrupt:
             print(file=sys.stderr)

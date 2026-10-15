@@ -94,6 +94,7 @@ USAGE
                                       credential-store reachability, saved-profile JSON
                                       validity/expiry, and auto-switch timer status;
                                       pass/fail table by default, one JSON document with --json
+  ai-accounts update | --update      Update to the latest release (no prompts)
   ai-accounts -h | --help | help     Show this help
   ai-accounts --version | version    Show the current ai-accounts version
 

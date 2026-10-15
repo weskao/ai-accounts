@@ -65,29 +65,35 @@ Or install the latest `main`:
 uv tool install --from git+https://github.com/weskao/ai-accounts.git ai-accounts
 ```
 
-Upgrade or uninstall:
+Update, or uninstall:
 
 ```sh
-uv tool upgrade ai-accounts
+ai-accounts update          # install the newest release tag (no prompts)
 uv tool uninstall ai-accounts
 ```
 
-When a newer GitHub release exists, any command run in a real terminal (both
-stdin and stdout are a TTY) ends by asking — `❯ Update now` / `Skip` / `Skip
-until next version` — instead of just hinting. Choosing *Update now* runs the
-`uv tool install --force --from git+…@vX.Y.Z ai-accounts` install for you;
-pressing `q` or `Ctrl+C` skips the prompt. Its labels follow the configured
-language (English or Traditional Chinese).
-*Skip until next version* is remembered (in the same cache file) so the
-prompt stays quiet until a release past that one shows up. A command whose
-output is piped, or run from the scheduled timer or a vendor-CLI hook, falls
-back to the old two-line stderr hint instead — never an interactive prompt
-with no keyboard behind it. The prompt box also shows a "Release notes:" link
-to the new version's GitHub release page. The GitHub request runs in the background while
-the command works, at most once every 10 minutes (cached in
-`~/.ai-accounts/update-check.json`, 0.8 s timeout); offline stays silent, and
-the exit code never changes. Turn it off with
-`ai-accounts config set update_check false`.
+Every tool has the same command — `ai-accounts update`, `codex-accounts update`,
+`claude-accounts update`, `agy-accounts update`, `grok-accounts update`,
+`vibe-accounts update`, `copilot-accounts update`, `devin-accounts update`,
+`opencode-accounts update` — and, like every command, accepts the `--` form
+(`ai-accounts --update`). Each one updates the same single install, using
+`uv tool install --force --no-sources git+https://github.com/weskao/ai-accounts.git@vX.Y.Z`
+(or the `pipx` equivalent), and the messages follow the configured language
+(English or Traditional Chinese). It never prompts. Exit code: `0` updated or
+already up to date, `1` the release could not be checked or the install failed
+(offline is a failure, not "up to date"), `2` a development install (use
+`git pull`) or an install it cannot manage (the manual command is printed).
+
+When a newer GitHub release exists, a command run in a real terminal (stderr is
+a TTY) ends with one stderr line naming the command you ran, e.g.
+"ai-accounts 0.25.0 is available (you have 0.24.0) — run `ai-accounts update`"
+(shown in the configured language). It is printed only when stderr is a TTY, so
+the scheduled timer and vendor-CLI hooks never print it. The lookup runs in the
+background while the command works, at most once a day (cached, failures
+included, in `~/.update-kit/state.json`); offline stays silent and the exit
+code never changes. Turn the hint off with
+`ai-accounts config set update_check false`; `update` itself always works. The
+old `~/.ai-accounts/update-check.json` is no longer read and can be deleted.
 
 ## Commands
 
@@ -95,6 +101,7 @@ the exit code never changes. Turn it off with
 | --- | --- |
 | `ai-accounts` | Run one operation across every provider |
 | `ai-accounts --version` / `ai-accounts version` | Print the current ai-accounts version |
+| `<command> update` / `<command> --update` | Update ai-accounts to the latest release (same for every command below; no prompts) |
 | `codex-accounts` | Manage Codex CLI profiles and ChatGPT OAuth usage |
 | `claude-accounts` | Manage Claude Code profiles and quota usage |
 | `agy-accounts` | Manage Antigravity profiles and quota usage |
@@ -124,6 +131,7 @@ ai-accounts login-switch <profile_name>       # Log in again and save each login
 ai-accounts doctor                            # Run offline health checks for every provider
 ai-accounts help                              # Show available commands
 ai-accounts --version                         # Print the current ai-accounts version
+ai-accounts update                            # Update to the latest release (`--update` works too)
 ```
 
 Replace `<profile_name>` with a name you choose for the saved profile.
@@ -1071,7 +1079,7 @@ period.
 
 ## Language
 
-Notifications, the interactive config menu, the version update prompt,
+Notifications, the interactive config menu, the version update hint and the `update` messages,
 `agy-accounts list`'s usage-freshness footer notes, and every tool's
 `help`/`-h`/`--help` output are localized. English (`en`) and Traditional
 Chinese (`zh-TW`) are available; the default follows the OS locale and falls
@@ -1225,6 +1233,10 @@ uv run pytest
 uv run ruff check .
 uv build
 ```
+
+Until `update-kit` is published, `uv` resolves it from a sibling checkout
+(`../update-kit`, see `[tool.uv.sources]` in `pyproject.toml`); CI sets
+`UV_NO_SOURCES=1` to resolve it from the package index instead.
 
 Install the checkout globally while developing:
 

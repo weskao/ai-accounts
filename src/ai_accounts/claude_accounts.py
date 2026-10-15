@@ -115,6 +115,7 @@ USAGE
   claude-accounts config                Interactive config menu shared by every ai-accounts CLI
   claude-accounts config get [key]      Print the shared auto-switch config (or one key)
   claude-accounts config set <k> <v>    Set one shared config key (rejects unknown keys)
+  claude-accounts update | --update     Update to the latest release (no prompts)
   claude-accounts -h | --help | help    Show this help
 
 EXAMPLES
