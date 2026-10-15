@@ -76,8 +76,11 @@ def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
         argv = args[0] if args else kwargs.get("argv")
         if argv is None:
             argv = sys.argv[1:]
-        # Exactly `update` — `update --help` / `update <junk>` must not start an install.
-        updating = normalize_command_argv(list(argv)) == ["update"]  # type: ignore[call-overload]
+        # Exactly `update` installs — `update --help` / `update <junk>` is refused, never installs.
+        norm = normalize_command_argv(list(argv))  # type: ignore[call-overload]
+        updating = norm == ["update"]
+        if norm[:1] == ["update"] and not updating:
+            return update_check.refuse_args(cmd)
         outermost = not updating and update_check.claim()
         if outermost:
             update_check.start_check(cmd)

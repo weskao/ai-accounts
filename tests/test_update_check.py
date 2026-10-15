@@ -198,9 +198,22 @@ def test_every_script_starts_and_reports_the_check(monkeypatch):
             assert seen == [name, "hint"], (name, argv)
 
 
-def test_update_with_extra_args_is_not_an_update(monkeypatch):
+@pytest.mark.parametrize("argv", [["update", "--help"], ["--update", "extra"]])
+@pytest.mark.parametrize("lang", ["en", "zh-TW"])
+def test_update_with_extra_args_is_refused_with_exit_2(tmp_path, monkeypatch, capsys, argv, lang):
+    from ai_accounts import i18n
+
+    (tmp_path / "config.json").write_text(json.dumps({"language": lang}), encoding="utf-8")
+    i18n.refresh()
     monkeypatch.setattr(update_kit, "update", lambda **kw: pytest.fail("must not install"))
-    _main(_console_scripts()["codex-accounts"])(["update", "--help"])
+    try:
+        assert _main(_console_scripts()["codex-accounts"])(argv) == 2
+    finally:
+        i18n.refresh()
+    err = capsys.readouterr().err
+    assert "Unknown command" not in err
+    assert ("takes no arguments" if lang == "en" else "不接受任何參數") in err
+    assert "codex-accounts update" in err
 
 
 def test_ctrl_c_during_update_exits_130_without_traceback(monkeypatch):
@@ -217,3 +230,54 @@ def test_console_script_reads_argv_from_sys_argv(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["codex-accounts", "--update"])
     assert _main(_console_scripts()["codex-accounts"])() == 0
     assert calls[0]["app"] == "codex-accounts"
+
+
+# ── hint timing / Ctrl-C / language source ───────────────────────────────────
+
+
+def test_lookup_finishes_within_the_wait_so_failures_get_cached(monkeypatch, capsys):
+    """A check that takes its full timeout must be done when the wait ends — else update-kit
+    never writes its (negative) cache and every TTY command pays the wait again."""
+    import time
+
+    _tty(monkeypatch)
+    monkeypatch.setattr(update_kit, "check", lambda **kw: time.sleep(kw["timeout"]))
+    uc.start_check("codex-accounts")
+    uc.maybe_hint()
+    assert not uc._check.is_alive()
+    assert uc.CHECK_TIMEOUT_SECONDS < uc.TIMEOUT_SECONDS
+
+
+def test_ctrl_c_during_the_hint_wait_is_swallowed(monkeypatch):
+    class Waiting:
+        def join(self, timeout=None):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(uc, "_check", Waiting())
+    uc.maybe_hint()  # must not raise
+
+
+def test_ctrl_c_during_the_hint_wait_keeps_the_exit_status(monkeypatch):
+    class Waiting:
+        def join(self, timeout=None):
+            raise KeyboardInterrupt
+
+    _tty(monkeypatch)
+    monkeypatch.setattr(update_kit, "check", lambda **kw: None)
+    monkeypatch.setattr(uc, "start_check", lambda cmd: setattr(uc, "_check", Waiting()))
+    assert _main(_console_scripts()["codex-accounts"])(["--help"]) == 0
+
+
+def test_language_never_reads_the_keychain(monkeypatch, capsys):
+    from ai_accounts import i18n, secrets_store
+
+    i18n.refresh()  # current_language() is cached; a warm cache would hide the read
+    monkeypatch.setattr(secrets_store, "get", lambda *a, **k: pytest.fail("keychain read"))
+    monkeypatch.setattr(update_kit, "update", lambda **kw: 0)
+    try:
+        _main(_console_scripts()["codex-accounts"])(["update"])
+        i18n.refresh()
+        _tty(monkeypatch)
+        _run_hint(monkeypatch, "v9.9.0")
+    finally:
+        i18n.refresh()

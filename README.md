@@ -79,7 +79,8 @@ Every tool has the same command — `ai-accounts update`, `codex-accounts update
 (`ai-accounts --update`). Each one updates the same single install, using
 `uv tool install --force --no-sources git+https://github.com/weskao/ai-accounts.git@vX.Y.Z`
 (or the `pipx` equivalent), and the messages follow the configured language
-(English or Traditional Chinese). It never prompts. Exit code: `0` updated or
+(English or Traditional Chinese). It never prompts and takes no arguments
+(`update --help` is refused with exit `2`, never an install). Exit code: `0` updated or
 already up to date, `1` the release could not be checked or the install failed
 (offline is a failure, not "up to date"), `2` a development install (use
 `git pull`) or an install it cannot manage (the manual command is printed).

@@ -450,6 +450,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "開啟快取後 list 會快很多——非作用中帳號改顯示上次查到的用量，不必逐一即時查詢："
         "{cmd}",
     },
+    "update.no_args": {
+        "en": "❌ `{cmd} update` takes no arguments — run it as just `{cmd} update`.",
+        "zh-TW": "❌ `{cmd} update` 不接受任何參數——請直接執行 `{cmd} update`。",
+    },
     # ── validation errors (shown inline in the menu and by `config set`) ─────
     "error.bool": {"zh-TW": "需要布林值（true/false），得到 {raw}"},
     "error.int": {"zh-TW": "{key} 必須是整數{bounds}，得到 {raw}"},

@@ -24,10 +24,11 @@ import update_kit
 
 REPO = "weskao/ai-accounts"
 DIST = "ai-accounts"
-#: How long the command waits for the hint; the lookup itself may run longer
-#: (update-kit caches a timeout for a day, so it must not be too tight for git).
-TIMEOUT_SECONDS = 0.8
-CHECK_TIMEOUT_SECONDS = 2.5
+#: How long the command waits for the hint. It must exceed the lookup's own timeout:
+#: update-kit writes its cache (failures too) only after the lookup returns, so exiting
+#: first would re-run the lookup, and re-pay this wait, on every TTY command.
+TIMEOUT_SECONDS = 2.0
+CHECK_TIMEOUT_SECONDS = 1.5
 _check: threading.Thread | None = None
 _latest: list[str | None] = []
 _cmd = DIST
@@ -51,11 +52,29 @@ def command_name(module: str) -> str:
     return next((p.label for p in PROVIDERS if p.module == module), DIST)
 
 
-def run_update(cmd: str) -> int:
-    """``<cmd> update``: install the newest release tag; update-kit's exit code. No prompts."""
+def _language() -> str:
+    """The configured language from the config file alone — ``i18n.current_language()``
+    would also read the keychain just to pick a message language."""
+    from . import autoswitch as aw
     from . import i18n
 
-    return update_kit.update(app=cmd, repo=REPO, dist=DIST, lang=i18n.current_language(), out=sys.stderr)
+    try:
+        return i18n.resolve_language(aw._read_json(aw.config_path()).get("language"))
+    except Exception:  # noqa: BLE001 - message language never fails the command
+        return i18n.system_language()
+
+
+def run_update(cmd: str) -> int:
+    """``<cmd> update``: install the newest release tag; update-kit's exit code. No prompts."""
+    return update_kit.update(app=cmd, repo=REPO, dist=DIST, lang=_language(), out=sys.stderr)
+
+
+def refuse_args(cmd: str) -> int:
+    """``<cmd> update <extra>``: say so (never install) and return exit status 2."""
+    from . import i18n
+
+    print(i18n.t("update.no_args", _language(), cmd=cmd), file=sys.stderr)
+    return 2
 
 
 def start_check(cmd: str = DIST) -> None:
@@ -96,8 +115,6 @@ def maybe_hint() -> None:
         if latest is None:
             return
         from . import _utils as u
-        from . import i18n
-
-        print(update_kit.hint(_cmd, latest.lstrip("vV"), u.package_version(), i18n.current_language()), file=sys.stderr)
-    except Exception:  # noqa: BLE001 - a hint must never fail the command
+        print(update_kit.hint(_cmd, latest.lstrip("vV"), u.package_version(), _language()), file=sys.stderr)
+    except (Exception, KeyboardInterrupt):  # noqa: BLE001 - a hint must never fail (or traceback) the command
         return
