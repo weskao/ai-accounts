@@ -837,6 +837,11 @@ Telegram notifications from timer runs include the scheduler and job label:
 `systemd: com.ai_accounts.autoswitch.timer` or `cron: ai-accounts-autoswitch`
 on Linux, and `Task Scheduler: com.ai_accounts.autoswitch` on Windows.
 The timer has no dedicated log file.
+On macOS, `launchd` cannot read `~/Documents`, `~/Desktop` or `~/Downloads`, so a
+`uv tool install --editable` from one of those folders makes every timer tick
+fail at start-up (exit code 1, nothing logged) and neither autoswitch nor token
+refresh ever runs. `install-timer` warns about this; fix it with a normal
+install: `uv tool install --reinstall <path-to-repo>`.
 `copilot-accounts autoswitch` switches off the active profile once its monthly
 quota reaches `switch_when_used_pct`; Copilot has no Stop hook, so the timer is
 its only trigger, and the new account applies on Copilot CLI's next launch.

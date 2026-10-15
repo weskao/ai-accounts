@@ -183,6 +183,36 @@ class MacOSInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.T
         self.assertIn(str(plist_path), launchctl_calls[0]["cmd"])
 
 
+class MacOSProtectedSourceTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
+    def test_install_warns_when_package_lives_in_a_launchd_blocked_folder(self) -> None:
+        # Given: the package imported from ~/Documents (an editable install there)
+        self.force_platform(macos=True)
+        self.capture_subprocess()
+        source = self.home / "Documents" / "repo" / "src" / "ai_accounts" / "autoswitch_timer.py"
+        source.parent.mkdir(parents=True)
+        source.touch()
+
+        # When: install() runs
+        with mock.patch.object(at, "__file__", str(source)), mock.patch.object(u, "log_yellow") as warn:
+            at.install()
+
+        # Then: the user is told why the timer would die at start-up
+        warn.assert_called_once()
+        self.assertIn("~/Documents", warn.call_args.args[0])
+
+    def test_install_is_silent_for_a_normal_install_location(self) -> None:
+        self.force_platform(macos=True)
+        self.capture_subprocess()
+        source = self.home / ".local" / "share" / "uv" / "ai_accounts" / "autoswitch_timer.py"
+        source.parent.mkdir(parents=True)
+        source.touch()
+
+        with mock.patch.object(at, "__file__", str(source)), mock.patch.object(u, "log_yellow") as warn:
+            at.install()
+
+        warn.assert_not_called()
+
+
 class LinuxInstallTests(_PlatformMixin, _HomeMixin, _SubprocessMixin, unittest.TestCase):
     def test_install_with_systemctl_writes_systemd_user_timer(self) -> None:
         # Given: a forced Linux platform where `systemctl` is on PATH

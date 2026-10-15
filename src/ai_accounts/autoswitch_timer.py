@@ -87,7 +87,29 @@ def _cron_line(interval_sec: int) -> str:
 
 # ── install ───────────────────────────────────────────────────────────────
 
+# shortcut: only the three folders macOS commonly gates; extend if another shows up.
+_TCC_FOLDERS = ("Documents", "Desktop", "Downloads")
+
+
+def _tcc_blocked_source() -> str | None:
+    """The macOS-protected folder this package is loaded from, else None.
+
+    launchd jobs get no access to ~/Documents, ~/Desktop or ~/Downloads, so an
+    editable install living there makes every tick die on ``import ai_accounts``
+    (exit 1, no output) — the scheduled autoswitch and refresh silently never run.
+    """
+    source = Path(__file__).resolve()
+    home = Path.home().resolve()
+    return next((name for name in _TCC_FOLDERS if source.is_relative_to(home / name)), None)
+
+
 def _install_macos(interval_sec: int) -> None:
+    if blocked := _tcc_blocked_source():
+        u.log_yellow(
+            f"⚠️  ai-accounts is installed from ~/{blocked}, which macOS hides from launchd, "
+            "so the timer will fail at start-up. Reinstall without --editable: "
+            "uv tool install --reinstall <path-to-repo>"
+        )
     plist_path = _launchd_plist_path()
     # Re-install must unload the stale job first: launchd keeps running the
     # already-loaded plist on its OLD StartInterval, so rewriting the file alone
