@@ -159,6 +159,14 @@ CLI actually uses). Follow the same three-step shape.
 
 ## Future work
 
+- [ ] **修正每日 refresh 後的 token 過期問題：** 即使 launchd `com.ai_accounts.refresh`
+      每天執行並顯示所有帳號已刷新，agy、Grok、Claude 的部分帳號仍可能 token expired，
+      導致 `list` / `usage` 無法顯示正確數值。現況需先用 `save` 重新設置當前帳號；同一
+      agent 的其他帳號則必須重新登入後才會恢復資訊。以 2026-10-15 09:56:16 (UTC+8)
+      的 refresh 結果為例，追查 `com.ai_accounts.refresh` 及
+      `/Users/wes_flutter/scripts/ai-accounts-refresh/logs/` 下的
+      `refresh.log`、`launchd.stdout.log`、`launchd.stderr.log`，釐清 refresh 是否真正更新
+      各帳號憑證並讓 `list` / `usage` 重新取得有效 token。
 - [ ] Research [codex-resets.com](https://codex-resets.com/) (or its data source) and
       surface Codex quota-reset information: upcoming resets, an initial notification,
       time remaining until reset, and how long ago the last reset occurred.
