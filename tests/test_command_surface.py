@@ -4,7 +4,8 @@ import importlib
 import io
 import re
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from unittest import mock
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -24,7 +25,15 @@ TOOLS = {
 def _run(module: str, argv: list[str]) -> tuple[int, str]:
     mod = importlib.import_module(f"ai_accounts.{module}")
     err = io.StringIO()
-    with redirect_stdout(io.StringIO()), redirect_stderr(err):
+    with ExitStack() as stack:
+        # Hermetic: the credential-store gate runs before command parsing, and a bare
+        # Linux runner has no `secret-tool`. These tests only exercise parsing.
+        if hasattr(mod, "go_keyring_available"):
+            stack.enter_context(
+                mock.patch.object(mod, "go_keyring_available", return_value=(True, ""))
+            )
+        stack.enter_context(redirect_stdout(io.StringIO()))
+        stack.enter_context(redirect_stderr(err))
         rc = mod.main(argv)
     return rc, _ANSI_RE.sub("", err.getvalue())
 
