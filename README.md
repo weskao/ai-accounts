@@ -1235,10 +1235,6 @@ uv run ruff check .
 uv build
 ```
 
-Until `update-kit` is published, `uv` resolves it from a sibling checkout
-(`../update-kit`, see `[tool.uv.sources]` in `pyproject.toml`); CI sets
-`UV_NO_SOURCES=1` to resolve it from the package index instead.
-
 Install the checkout globally while developing:
 
 ```sh

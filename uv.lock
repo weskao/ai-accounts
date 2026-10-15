@@ -20,7 +20,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "telegram-kit", specifier = ">=0.2.2,<0.3" },
-    { name = "update-kit", editable = "../update-kit" },
+    { name = "update-kit", specifier = ">=0.1,<0.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -232,12 +232,9 @@ wheels = [
 
 [[package]]
 name = "update-kit"
-source = { editable = "../update-kit" }
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8" },
-    { name = "ruff", specifier = ">=0.15.21" },
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/8e/919696cf167397baa2a56c93302b745152734886c407261f92adc9bfde96/update_kit-0.1.0.tar.gz", hash = "sha256:cb01aa777359bddb92b64d685f5cf498c8dc3da66d86719e05dddd556232b452", size = 29408, upload-time = "2026-10-15T18:44:29.597Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/7e/72eb6ac00af7df4f8b304e74e61c9d9c16ee5f4647e3cf39734f63419ce4/update_kit-0.1.0-py3-none-any.whl", hash = "sha256:aa337eef12e65792db8a4b09773b621fdf0ab7084c3998713e860cd0388c3d08", size = 9922, upload-time = "2026-10-15T18:44:28.523Z" },
 ]

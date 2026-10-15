@@ -163,9 +163,7 @@ CLI actually uses). Follow the same three-step shape.
       on all nine entry points (no prompts), and the old interactive update-now / skip /
       skip-version prompt replaced by a one-line, TTY-only stderr hint. Done:
       `update_check.py` + the `quiet_keyboard_interrupt` funnel in `_utils.py`; the
-      `update_check` config key still turns the hint off. Still manual and release-blocking: publish
-      `update-kit` 0.1.x, then drop the `../update-kit` path source (it breaks
-      `uv tool install --from git+…@tag`) and relock, so CI (`UV_NO_SOURCES=1`) resolves it.
+      `update_check` config key still turns the hint off. `update-kit` 0.1.0 is on PyPI; the `../update-kit` path source and `UV_NO_SOURCES=1` are gone and the lock resolves from the index.
 - [ ] **修正每日 refresh 後的 token 過期問題：** 即使 launchd `com.ai_accounts.refresh`
       每天執行並顯示所有帳號已刷新，agy、Grok、Claude 的部分帳號仍可能 token expired，
       導致 `list` / `usage` 無法顯示正確數值。現況需先用 `save` 重新設置當前帳號；同一
