@@ -65,7 +65,7 @@ def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
 
     Every entry point's ``main`` wears this, so it is also the one funnel for
     ``<cmd> update`` / ``<cmd> --update`` (:func:`ai_accounts.update_check.run_update`)
-    and for the update hint (:mod:`ai_accounts.update_check`, once per process tree).
+    and for the update prompt (:mod:`ai_accounts.update_check`, once per process tree).
     """
 
     @wraps(func)
@@ -83,7 +83,7 @@ def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
             return update_check.refuse_args(cmd)
         outermost = not updating and update_check.claim()
         if outermost:
-            update_check.start_check(cmd)
+            update_check.start_check()
         try:
             if updating:
                 return update_check.run_update(cmd)
