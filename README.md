@@ -168,6 +168,17 @@ codex-accounts remove <profile_name>          # Delete a saved profile
 codex-accounts help                           # Show available commands
 ```
 
+`codex-accounts switch` (including the picker) restarts an existing local shared
+Codex daemon after installing the selected credentials. This makes connected
+Codex clients load the new account; running work may be interrupted while clients
+reconnect. A daemon restart failure returns a nonzero exit code with a recovery
+command instead of reporting a successful switch. No daemon is started when none
+exists; older Codex and standalone sessions must be reopened to use the account.
+`CODEX_AUTH_JSON` must point to `$CODEX_HOME/auth.json` when using a shared daemon.
+Background `autoswitch` keeps its existing restart policy and never restarts the
+shared daemon. `save` stores the current login; use `switch <profile_name>` to
+apply it to a running shared daemon.
+
 The other provider tools use the same commands — swap `codex-accounts` for the
 tool you need. For example:
 

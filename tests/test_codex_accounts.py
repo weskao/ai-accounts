@@ -1680,6 +1680,111 @@ class InteractiveSwitchTests(_CodexHomeMixin):
         interactive.assert_called_once_with()
 
 
+class SwitchDaemonTests(_CodexHomeMixin):
+    def setUp(self):
+        super().setUp()
+        socket = self.home / "app-server-control" / "app-server-control.sock"
+        socket.parent.mkdir()
+        socket.touch()  # Windows also represents the daemon rendezvous as a file.
+        self.write_auth(_auth_payload("acct-old", "old@example.com"))
+        self.write_profile("target", _auth_payload("acct-new", "new@example.com"))
+
+    def test_switch_restarts_running_daemon_after_installing_target_auth(self):
+        commands = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            if command == ["codex", "app-server", "daemon", "restart"]:
+                self.assertEqual(
+                    json.loads((self.home / "auth.json").read_text(encoding="utf-8"))
+                    ["tokens"]["account_id"], "acct-new",
+                )
+                return subprocess.CompletedProcess(command, 0, '{"status":"restarted"}', "")
+            if command == ["codex", "app-server", "daemon", "version"]:
+                return subprocess.CompletedProcess(command, 0, '{"status":"running"}', "")
+            return subprocess.CompletedProcess(command, 0, "Logged in using ChatGPT", "")
+
+        with mock.patch.object(ca, "have", return_value=True), \
+                mock.patch.object(ca.subprocess, "run", side_effect=run):
+            rc, out, _err = self.run_capture(ca.cmd_switch, "target")
+
+        self.assertEqual(rc, 0)
+        self.assertIn(["codex", "app-server", "daemon", "restart"], commands)
+        self.assertIn("Switched Codex profile to", out)
+
+    def test_switch_does_not_report_success_when_daemon_cannot_reload(self):
+        for response in (
+            subprocess.CompletedProcess([], 1, "", "restart failed"),
+            subprocess.CompletedProcess([], 0, "invalid json", ""),
+            subprocess.CompletedProcess([], 0, '{"status":"notRunning"}', ""),
+            subprocess.TimeoutExpired("codex", 30),
+        ):
+            with self.subTest(response=type(response).__name__), \
+                    mock.patch.object(ca, "have", return_value=True), \
+                    mock.patch.object(ca.subprocess, "run", side_effect=[
+                        subprocess.CompletedProcess([], 0, '{"status":"running"}', ""),
+                        response,
+                    ]):
+                rc, out, err = self.run_capture(ca.cmd_switch, "target")
+
+            self.assertEqual(rc, 1)
+            self.assertNotIn("Switched Codex profile to", out)
+            self.assertIn("codex app-server daemon restart", err)
+
+    def test_background_switch_never_restarts_running_daemon(self):
+        commands = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, "Logged in using ChatGPT", "")
+
+        with mock.patch.object(ca, "have", return_value=True), \
+                mock.patch.object(ca.subprocess, "run", side_effect=run):
+            switched = ca._autoswitch_switch("target")
+
+        self.assertTrue(switched)
+        self.assertFalse(any("daemon" in command for command in commands))
+
+    @mock.patch.object(ca.platform, "system", new=lambda: "Darwin")
+    def test_switch_refuses_to_restart_when_keychain_keeps_old_account(self):
+        old = json.dumps(_auth_payload("acct-old", "old@example.com"))
+        with mock.patch.object(ca, "_read_keychain_auth", return_value=old), \
+                mock.patch.object(ca, "_write_keychain_auth", return_value=False), \
+                mock.patch.object(ca.subprocess, "run", side_effect=[
+                    subprocess.CompletedProcess([], 0, '{"status":"running"}', ""),
+                    subprocess.CompletedProcess([], 0, '{"status":"restarted"}', ""),
+                    subprocess.CompletedProcess([], 0, "Logged in using ChatGPT", ""),
+                ]) as run:
+            rc, out, err = self.run_capture(ca.cmd_switch, "target")
+
+        self.assertEqual(rc, 1)
+        self.assertNotIn("Switched Codex profile to", out)
+        self.assertIn("keychain", err)
+        run.assert_not_called()
+
+    @mock.patch.object(ca.platform, "system", new=lambda: "Darwin")
+    def test_switch_refuses_to_restart_when_refreshed_keychain_write_fails(self):
+        self.write_profile("target", _auth_payload(
+            "acct-new", "new@example.com", expires_in=-3600,
+        ))
+        refreshed = {"access_token": _jwt({"exp": int(time.time()) + 864000}),
+                     "refresh_token": "rt-new"}
+        with mock.patch.object(ca, "_read_keychain_auth", return_value="{}"), \
+                mock.patch.object(ca, "_write_keychain_auth", side_effect=[True, False, False]), \
+                mock.patch.object(ca, "_oauth_refresh", return_value=(refreshed, None)), \
+                mock.patch.object(ca.subprocess, "run", side_effect=[
+                    subprocess.CompletedProcess([], 0, '{"status":"running"}', ""),
+                    subprocess.CompletedProcess([], 0, '{"status":"restarted"}', ""),
+                    subprocess.CompletedProcess([], 0, "Logged in using ChatGPT", ""),
+                ]) as run:
+            rc, out, err = self.run_capture(ca.cmd_switch, "target")
+
+        self.assertEqual(rc, 1)
+        self.assertNotIn("Switched Codex profile to", out)
+        self.assertIn("keychain", err)
+        run.assert_not_called()
+
+
 class SwitchStalenessTests(_CodexHomeMixin):
     """switch must not restore tokens codex has already rotated away.
 
@@ -2112,7 +2217,7 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         # Then: it switches on the weekly figure instead of reporting "could
         # not determine usage" because only the 5-hour window was missing
         self.assertEqual(rc, 0)
-        switch.assert_called_once_with("beta")
+        switch.assert_called_once_with("beta", restart_daemon=False)
         self.assertNotIn("Could not determine usage", out + err)
 
     def test_switch_window_5h_reads_the_short_window_not_the_weekly_one(self):
@@ -2198,7 +2303,7 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         # (this also proves (d): the triggered switch delegates to cmd_switch with
         # the chosen target's name, not a duplicated switch implementation)
         self.assertEqual(rc, 0)
-        switch.assert_called_once_with("gamma")
+        switch.assert_called_once_with("gamma", restart_daemon=False)
 
     def test_disabled_config_is_a_clear_no_op_with_zero_probes(self):
         # Given: auto-switch is NOT enabled (default config — nothing written)
@@ -2367,7 +2472,7 @@ class AutoswitchCommandTests(_CodexHomeMixin):
         # Then: the errored candidate is skipped on the strength of its error
         # alone — a window that came back with an error is not trustworthy data
         self.assertEqual(rc, 0)
-        switch.assert_called_once_with("gamma")
+        switch.assert_called_once_with("gamma", restart_daemon=False)
 
 if __name__ == "__main__":
     unittest.main()

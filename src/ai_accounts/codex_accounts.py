@@ -214,19 +214,19 @@ def _is_default_auth(auth_path: Path) -> bool:
     return auth_path == _codex_home() / "auth.json"
 
 
-def _mirror_active_auth_to_keychain(auth_path: Path) -> None:
+def _mirror_active_auth_to_keychain(auth_path: Path) -> bool:
     """Mirror the active auth.json into codex's keychain item so codex actually
     picks up the switch. Best-effort and *update-only*: we never fabricate a
     keychain credential store codex wasn't already using — if no item exists,
     auth.json is authoritative and we leave the keychain untouched."""
     if not _is_default_auth(auth_path) or _keychain_account() is None:
-        return
+        return True
     if _read_keychain_auth() is None:
-        return  # codex isn't keychain-backed here; auth.json is the source of truth
+        return True  # codex isn't keychain-backed here; auth.json is the source of truth
     try:
         auth = json.loads(auth_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return
+        return False
     # Compact, newline-free JSON — matches codex/cockpit and avoids `security`
     # storing a value that reads back hex-encoded.
     content = json.dumps(auth, separators=(",", ":"))
@@ -235,6 +235,8 @@ def _mirror_active_auth_to_keychain(auth_path: Path) -> None:
             "⚠️  Could not update the macOS keychain; codex may keep using the "
             "previous account until its next login."
         )
+        return False
+    return True
 
 
 # ── JWT claim decoding (no raw tokens ever printed) ─────────────────────────
@@ -1014,7 +1016,34 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
     return 0
 
 
-def cmd_switch(name: str) -> int:
+def _restart_codex_daemon() -> bool:
+    # Old Codex and standalone sessions have no shared daemon to reload.
+    socket = _codex_home() / "app-server-control" / "app-server-control.sock"
+    if not socket.exists():
+        print(f"{DIM}   Restart existing standalone Codex sessions to use this account.{RESET}")
+        return True
+    if not _is_default_auth(_auth_file()):
+        log_red("❌ CODEX_AUTH_JSON must point to CODEX_HOME/auth.json for the Codex daemon.")
+        return False
+    command = ["codex", "app-server", "daemon"]
+    try:
+        probe = subprocess.run(command + ["version"], capture_output=True, text=True, timeout=10)
+        if probe.returncode != 0 or json.loads(probe.stdout).get("status") != "running":
+            raise ValueError("daemon is not ready")
+        print(f"{DIM}   Restarting the shared Codex daemon to load this account…{RESET}")
+        restarted = subprocess.run(command + ["restart"], capture_output=True, text=True, timeout=30)
+        if restarted.returncode != 0 or json.loads(restarted.stdout).get("status") != "restarted":
+            raise ValueError("daemon did not restart")
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, AttributeError):
+        log_red(
+            "❌ Credentials were saved, but the Codex daemon could not reload them. "
+            "Run: codex app-server daemon restart"
+        )
+        return False
+    return True
+
+
+def cmd_switch(name: str, *, restart_daemon: bool = True) -> int:
     profile_file = _profile_file(name)
     if profile_file is None:
         return 1
@@ -1053,12 +1082,10 @@ def cmd_switch(name: str) -> int:
     _write_vendor_auth(auth_path, auth)
     # codex reads the keychain before auth.json on macOS — without this mirror
     # the copy above is silently ignored and codex keeps the old account.
-    _mirror_active_auth_to_keychain(auth_path)
+    if not _mirror_active_auth_to_keychain(auth_path):
+        log_red("❌ Codex still has the previous keychain credentials; switch was not completed.")
+        return 1
     _set_current_profile(profile_file)
-
-    ok("Switched Codex profile to", name)
-    if backup_label:
-        print(f"{DIM}   (previous auth backed up to {backup_label}){RESET}")
 
     # Self-heal an expired snapshot before codex (and its MCP clients like
     # codex_apps) start with a dead access_token. Only fires when the restored
@@ -1067,6 +1094,15 @@ def cmd_switch(name: str) -> int:
         rc = _recover_switched_auth(auth_path, profile_file, name)
         if rc != 0:
             return rc
+        if not _mirror_active_auth_to_keychain(auth_path):
+            return 1
+
+    if restart_daemon and not _restart_codex_daemon():
+        return 1
+
+    ok("Switched Codex profile to", name)
+    if backup_label:
+        print(f"{DIM}   (previous auth backed up to {backup_label}){RESET}")
 
     print()
     return cmd_who()
@@ -1125,7 +1161,7 @@ def _autoswitch_probe(name: str) -> usage_format.UsageWindow | None:
 
 def _autoswitch_switch(name: str) -> bool:
     """Activate *name* via the existing switch command — no duplicated logic."""
-    return cmd_switch(name) == 0
+    return cmd_switch(name, restart_daemon=False) == 0
 
 
 def _autoswitch_resume() -> bool:
