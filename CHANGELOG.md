@@ -1,3 +1,13 @@
+## [0.26.0] - 2026-10-16
+
+### 🚀 Features
+
+- **codex:** Restart daemon on profile switch
+- **update:** Restore the interactive update prompt
+
+### 💼 Other
+
+- **deps:** [**breaking**] Bump update-kit to 0.2.1
 ## [0.25.0] - 2026-10-15
 
 ### 🚀 Features
