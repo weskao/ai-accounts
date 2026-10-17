@@ -172,6 +172,8 @@ CLI actually uses). Follow the same three-step shape.
       `~/scripts/ai-accounts-refresh/logs/` 下的
       `refresh.log`、`launchd.stdout.log`、`launchd.stderr.log`，釐清 refresh 是否真正更新
       各帳號憑證並讓 `list` / `usage` 重新取得有效 token。
+- [ ] 針對會快取憑證或 usage 的 AI agent，研究並加入必要的 daemon restart/reset 機制，
+      讓 refresh 後的使用率更新，並恢復 token expired 的狀態。
 - [ ] Research [codex-resets.com](https://codex-resets.com/) (or its data source) and
       surface Codex quota-reset information: upcoming resets, an initial notification,
       time remaining until reset, and how long ago the last reset occurred.
