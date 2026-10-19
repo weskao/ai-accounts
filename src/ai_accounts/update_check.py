@@ -2,16 +2,17 @@
 
 ai-accounts is installed from git tags (``uv tool install --from
 git+https://github.com/weskao/ai-accounts.git@vX.Y.Z``), not PyPI, so the
-source of truth is the repo's latest GitHub release. ``<cmd> update`` goes
+source of truth is the repo's newest release tag. ``<cmd> update`` goes
 through the shared ``update_kit`` library, which always lands on the newest tag
 (a local checkout included).
 
-After any other command, the request starts in a
+After any other command, ``update_kit.check`` (a ``git ls-remote``, cached by
+update-kit in ``~/.update-kit/state.json`` for its default TTL) starts in a
 background thread when the command starts, so it overlaps the command's own
-work; at most one per ``TTL_SECONDS`` (cached next to ``config.json``, short
-because several releases can land in one day), a sub-second timeout, and every
-failure — offline, rate-limited, junk payload — is silence: a hint must never
-slow a command noticeably or change its exit code.
+work; the command waits at most ``TIMEOUT_SECONDS`` for it, and every failure —
+offline, junk payload — is silence: a hint must never slow a command
+noticeably or change its exit code. Only the "skipped version" answer is kept
+here, in ``update-check.json`` next to ``config.json``.
 
 Only a human sees it: stderr has to be a TTY, which rules out the scheduled
 timer, the vendor-CLI hooks and ``ai-accounts list``'s captured children.
@@ -19,13 +20,10 @@ timer, the vendor-CLI hooks and ``ai-accounts list``'s captured children.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 import threading
-import time
-import urllib.request
 from pathlib import Path
 
 import update_kit
@@ -35,8 +33,6 @@ from . import _present
 
 REPO = "weskao/ai-accounts"
 DIST = "ai-accounts"
-#: Unauthenticated GitHub API allows 60 requests/hour per IP; 6/hour is polite.
-TTL_SECONDS = 600
 TIMEOUT_SECONDS = 0.8
 _check: threading.Thread | None = None
 _latest: list[str | None] = []
@@ -110,22 +106,8 @@ def version_tuple(version: str) -> tuple[int, ...] | None:
     return tuple(parts) if len(parts) >= 2 else None
 
 
-def fetch_latest_tag(timeout: float = TIMEOUT_SECONDS) -> str | None:
-    """The latest release's tag name from the GitHub API, or None."""
-    request = urllib.request.Request(
-        f"https://api.github.com/repos/{REPO}/releases/latest",
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "ai-accounts-update-check"},
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    tag = data.get("tag_name") if isinstance(data, dict) else None
-    return tag if isinstance(tag, str) and tag else None
-
-
 def _write_cache(cache_path: Path, fields: dict[str, object]) -> None:
-    """Merge *fields* into the cache file rather than overwriting it — a
-    refetch of ``latest``/``checked_at`` must never clobber a ``skipped``
-    version a previous run recorded."""
+    """Merge *fields* into the cache file rather than overwriting it."""
     from . import _utils as u
     from . import autoswitch as aw
 
@@ -141,33 +123,16 @@ def skip_version(cache_path: Path, version: str) -> None:
     _write_cache(cache_path, {"skipped": version})
 
 
-def newer_release(current: str, *, now: float | None = None, fetch=fetch_latest_tag) -> str | None:
+def newer_release(current: str) -> str | None:
     """The latest release tag when it is newer than *current* and not
     already skipped, else None."""
     from . import autoswitch as aw
 
-    current_parts = version_tuple(current)
-    if current_parts is None:
-        return None
-    stamp = time.time() if now is None else now
-    cache_path = aw.config_path().parent / "update-check.json"
-    cached = aw._read_json(cache_path)
-    latest = cached.get("latest") if isinstance(cached.get("latest"), str) else None
-    checked_at = cached.get("checked_at")
-    # A failed fetch is cached too (as the old answer or None), so being
-    # offline costs one timeout per day, not one per command.
-    if not isinstance(checked_at, (int, float)) or stamp - checked_at >= TTL_SECONDS:
-        try:
-            fetched = fetch()
-        except (OSError, ValueError):
-            fetched = None
-        latest = fetched or latest
-        _write_cache(cache_path, {"checked_at": stamp, "latest": latest})
-        cached = aw._read_json(cache_path)
+    latest = update_kit.check(repo=REPO, current=current)
     latest_parts = version_tuple(latest) if latest else None
-    if latest_parts is None or latest_parts <= current_parts:
+    if latest_parts is None:
         return None
-    skipped = cached.get("skipped")
+    skipped = aw._read_json(aw.config_path().parent / "update-check.json").get("skipped")
     skipped_parts = version_tuple(skipped) if isinstance(skipped, str) else None
     if skipped_parts is not None and latest_parts <= skipped_parts:
         return None

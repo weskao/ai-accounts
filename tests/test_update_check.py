@@ -126,45 +126,29 @@ def test_version_tuple():
     assert uc.version_tuple("junk") is None
 
 
-def test_newer_release_found_and_cached(tmp_path, monkeypatch):
-    cache = _cfg(tmp_path, monkeypatch)
-    calls = []
-
-    def fetch():
-        calls.append(1)
-        return "v0.13.0"
-
-    assert uc.newer_release("0.12.0", now=1000, fetch=fetch) == "v0.13.0"
-    assert json.loads(cache.read_text())["latest"] == "v0.13.0"
-    # Within the TTL: answered from the cache, no second request.
-    assert uc.newer_release("0.12.0", now=1000 + uc.TTL_SECONDS - 1, fetch=fetch) == "v0.13.0"
-    assert calls == [1]
+def _latest_is(monkeypatch, tag):
+    """Make update_kit.check report *tag* (None = up to date / offline)."""
+    monkeypatch.setattr(update_kit, "check", lambda **kw: tag)
 
 
-def test_same_or_older_release_is_no_hint(tmp_path, monkeypatch):
+def test_newer_release_found(tmp_path, monkeypatch):
     _cfg(tmp_path, monkeypatch)
-    assert uc.newer_release("0.12.0", now=0, fetch=lambda: "v0.12.0") is None
+    seen: list[dict] = []
+    monkeypatch.setattr(update_kit, "check", lambda **kw: seen.append(kw) or "v0.13.0")
+    assert uc.newer_release("0.12.0") == "v0.13.0"
+    assert seen == [{"repo": "weskao/ai-accounts", "current": "0.12.0"}]
 
 
-def test_offline_is_silent_and_cached(tmp_path, monkeypatch):
+def test_no_newer_release_is_no_hint(tmp_path, monkeypatch):
     _cfg(tmp_path, monkeypatch)
-    calls = []
-
-    def fetch():
-        calls.append(1)
-        raise OSError("offline")
-
-    assert uc.newer_release("0.12.0", now=0, fetch=fetch) is None
-    assert uc.newer_release("0.12.0", now=10, fetch=fetch) is None
-    assert calls == [1]  # one timeout per day, not per command
+    _latest_is(monkeypatch, None)  # update-kit only returns a tag that is newer
+    assert uc.newer_release("0.12.0") is None
 
 
-def test_new_release_seen_after_ttl(tmp_path, monkeypatch):
+def test_junk_tag_is_silent(tmp_path, monkeypatch):
     _cfg(tmp_path, monkeypatch)
-    assert uc.newer_release("0.12.0", now=0, fetch=lambda: "v0.12.0") is None
-    # Several releases can land in one day: the next one is seen within the hour.
-    assert uc.newer_release("0.12.0", now=uc.TTL_SECONDS, fetch=lambda: "v0.13.0") == "v0.13.0"
-    assert uc.TTL_SECONDS <= 3600
+    _latest_is(monkeypatch, "junk")
+    assert uc.newer_release("0.12.0") is None
 
 
 def _fake_tty(monkeypatch):
@@ -176,8 +160,7 @@ def _fake_tty(monkeypatch):
 def test_background_fetch_feeds_hint(tmp_path, monkeypatch, capsys):
     _cfg(tmp_path, monkeypatch)
     _fake_tty(monkeypatch)
-    real = uc.newer_release
-    monkeypatch.setattr(uc, "newer_release", lambda current: real(current, fetch=lambda: "v9.9.0"))
+    _latest_is(monkeypatch, "v9.9.0")
     uc.start_check()
     assert uc._check is not None
     uc.maybe_hint()
@@ -192,8 +175,8 @@ def test_hint_without_start_is_silent(tmp_path, monkeypatch, capsys):
 
 
 def test_hint_printed_on_a_tty(tmp_path, monkeypatch, capsys):
-    cache = _cfg(tmp_path, monkeypatch)
-    cache.write_text(json.dumps({"checked_at": uc.time.time(), "latest": "v9.9.0"}))
+    _cfg(tmp_path, monkeypatch)
+    _latest_is(monkeypatch, "v9.9.0")
     _fake_tty(monkeypatch)
     uc.start_check()
     uc.maybe_hint()
@@ -203,8 +186,8 @@ def test_hint_printed_on_a_tty(tmp_path, monkeypatch, capsys):
 
 
 def test_hint_respects_config_off(tmp_path, monkeypatch, capsys):
-    cache = _cfg(tmp_path, monkeypatch)
-    cache.write_text(json.dumps({"checked_at": uc.time.time(), "latest": "v9.9.0"}))
+    _cfg(tmp_path, monkeypatch)
+    _latest_is(monkeypatch, "v9.9.0")
     (tmp_path / "config.json").write_text('{"update_check": false}')
     _fake_tty(monkeypatch)
     uc.start_check()
@@ -213,45 +196,38 @@ def test_hint_respects_config_off(tmp_path, monkeypatch, capsys):
 
 
 def test_no_hint_without_a_tty(tmp_path, monkeypatch, capsys):
-    cache = _cfg(tmp_path, monkeypatch)
-    cache.write_text(json.dumps({"checked_at": uc.time.time(), "latest": "v9.9.0"}))
+    _cfg(tmp_path, monkeypatch)
+    _latest_is(monkeypatch, "v9.9.0")
     monkeypatch.setattr(uc, "_check", None)
     uc.start_check()  # pytest's captured stderr is not a TTY
     uc.maybe_hint()
     assert capsys.readouterr().err == ""
 
 
-# ── skip_version: remembered across refetches, never clobbered ──────────────
+# ── skip_version: remembered, never clobbering other cache keys ─────────────
 
 
 def test_skip_version_is_merged_into_the_existing_cache(tmp_path, monkeypatch):
     cache = _cfg(tmp_path, monkeypatch)
-    cache.write_text(json.dumps({"checked_at": 123, "latest": "v9.9.0"}))
+    cache.write_text(json.dumps({"other": 123}))
     uc.skip_version(cache, "v9.9.0")
-    saved = json.loads(cache.read_text())
-    assert saved["skipped"] == "v9.9.0"
-    assert saved["checked_at"] == 123
-    assert saved["latest"] == "v9.9.0"
+    assert json.loads(cache.read_text()) == {"other": 123, "skipped": "v9.9.0"}
 
 
 def test_newer_release_is_silent_for_a_skipped_version(tmp_path, monkeypatch):
     cache = _cfg(tmp_path, monkeypatch)
     uc.skip_version(cache, "v9.9.0")
-    assert uc.newer_release("0.12.0", now=0, fetch=lambda: "v9.9.0") is None
+    _latest_is(monkeypatch, "v9.9.0")
+    assert uc.newer_release("0.12.0") is None
+    _latest_is(monkeypatch, "v9.8.0")  # older than the skipped one: still silent
+    assert uc.newer_release("0.12.0") is None
 
 
 def test_newer_release_still_fires_for_a_version_past_the_skipped_one(tmp_path, monkeypatch):
     cache = _cfg(tmp_path, monkeypatch)
     uc.skip_version(cache, "v9.9.0")
-    assert uc.newer_release("0.12.0", now=0, fetch=lambda: "v9.9.1") == "v9.9.1"
-
-
-def test_a_refetch_after_ttl_preserves_the_skipped_version(tmp_path, monkeypatch):
-    cache = _cfg(tmp_path, monkeypatch)
-    uc.skip_version(cache, "v9.9.0")
-    # TTL expiry triggers a refetch that still reports the same, already-skipped tag.
-    assert uc.newer_release("0.12.0", now=uc.TTL_SECONDS, fetch=lambda: "v9.9.0") is None
-    assert json.loads(cache.read_text())["skipped"] == "v9.9.0"
+    _latest_is(monkeypatch, "v9.9.1")
+    assert uc.newer_release("0.12.0") == "v9.9.1"
 
 
 # ── the interactive prompt: shown only on a real keyboard-and-screen TTY ────
@@ -267,8 +243,7 @@ def _fake_full_tty(monkeypatch):
 def test_maybe_hint_asks_interactively_on_a_full_tty(tmp_path, monkeypatch, capsys):
     _cfg(tmp_path, monkeypatch)
     _fake_full_tty(monkeypatch)
-    real = uc.newer_release
-    monkeypatch.setattr(uc, "newer_release", lambda current: real(current, fetch=lambda: "v9.9.0"))
+    _latest_is(monkeypatch, "v9.9.0")
     monkeypatch.setattr(uc, "update_prompt", lambda current, latest: uc.SKIP)
     uc.start_check()
     uc.maybe_hint()
@@ -277,8 +252,8 @@ def test_maybe_hint_asks_interactively_on_a_full_tty(tmp_path, monkeypatch, caps
 
 
 def test_maybe_hint_falls_back_to_the_flat_hint_off_a_full_tty(tmp_path, monkeypatch, capsys):
-    cache = _cfg(tmp_path, monkeypatch)
-    cache.write_text(json.dumps({"checked_at": uc.time.time(), "latest": "v9.9.0"}))
+    _cfg(tmp_path, monkeypatch)
+    _latest_is(monkeypatch, "v9.9.0")
     monkeypatch.setattr(uc.kr, "is_interactive_tty", lambda: False)
     monkeypatch.setattr(uc.sys.stderr, "isatty", lambda: True, raising=False)
     monkeypatch.setattr(uc, "_check", None)
@@ -290,8 +265,7 @@ def test_maybe_hint_falls_back_to_the_flat_hint_off_a_full_tty(tmp_path, monkeyp
 def test_choosing_skip_version_persists_it(tmp_path, monkeypatch):
     cache = _cfg(tmp_path, monkeypatch)
     _fake_full_tty(monkeypatch)
-    real = uc.newer_release
-    monkeypatch.setattr(uc, "newer_release", lambda current: real(current, fetch=lambda: "v9.9.0"))
+    _latest_is(monkeypatch, "v9.9.0")
     monkeypatch.setattr(uc, "update_prompt", lambda current, latest: uc.SKIP_VERSION)
     uc.start_check()
     uc.maybe_hint()
@@ -301,8 +275,7 @@ def test_choosing_skip_version_persists_it(tmp_path, monkeypatch):
 def test_choosing_update_now_runs_the_install_command(tmp_path, monkeypatch):
     _cfg(tmp_path, monkeypatch)
     _fake_full_tty(monkeypatch)
-    real = uc.newer_release
-    monkeypatch.setattr(uc, "newer_release", lambda current: real(current, fetch=lambda: "v9.9.0"))
+    _latest_is(monkeypatch, "v9.9.0")
     monkeypatch.setattr(uc, "update_prompt", lambda current, latest: uc.UPDATE_NOW)
     calls = []
     monkeypatch.setattr(uc.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or type("R", (), {"returncode": 0})())
@@ -482,7 +455,7 @@ def test_language_never_reads_the_keychain(tmp_path, monkeypatch, capsys):
         i18n.refresh()
         uc.update_prompt("0.12.0", "v9.9.0", read=iter([]).__next__, out=io.StringIO())
         i18n.refresh()
-        (tmp_path / "update-check.json").write_text(json.dumps({"checked_at": uc.time.time(), "latest": "v9.9.0"}))
+        _latest_is(monkeypatch, "v9.9.0")
         _fake_tty(monkeypatch)
         uc.start_check()
         uc.maybe_hint()  # the flat (non-interactive) hint

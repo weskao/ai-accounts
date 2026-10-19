@@ -95,14 +95,14 @@ until next version` — instead of just hinting. Choosing *Update now* runs the
 `uv tool install --force --from git+…@vX.Y.Z ai-accounts` install for you;
 pressing `q` or `Ctrl+C` skips the prompt. Its labels follow the configured
 language (English or Traditional Chinese).
-*Skip until next version* is remembered (in the same cache file) so the
+*Skip until next version* is remembered (in `~/.ai-accounts/update-check.json`) so the
 prompt stays quiet until a release past that one shows up. A command whose
 output is piped, or run from the scheduled timer or a vendor-CLI hook, falls
 back to the old two-line stderr hint instead — never an interactive prompt
 with no keyboard behind it. The prompt box also shows a "Release notes:" link
-to the new version's GitHub release page. The GitHub request runs in the background while
+to the new version's GitHub release page. The release check (a `git ls-remote` via update-kit) runs in the background while
 the command works, at most once every 10 minutes (cached in
-`~/.ai-accounts/update-check.json`, 0.8 s timeout); offline stays silent, and
+`~/.update-kit/state.json`; the command waits at most 0.8 s); offline stays silent, and
 the exit code never changes. Turn it off with
 `ai-accounts config set update_check false`; `update` itself always works.
 
