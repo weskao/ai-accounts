@@ -1,3 +1,12 @@
+## [0.26.1] - 2026-10-19
+
+### 💼 Other
+
+- **deps:** Bump update-kit to 0.2.2
+
+### 📚 Documentation
+
+- Add refresh restart follow-up task
 ## [0.26.0] - 2026-10-16
 
 ### 🚀 Features
