@@ -1,3 +1,8 @@
+## [0.26.2] - 2026-10-19
+
+### 🚜 Refactor
+
+- **update:** Check releases via update-kit
 ## [0.26.1] - 2026-10-19
 
 ### 💼 Other
