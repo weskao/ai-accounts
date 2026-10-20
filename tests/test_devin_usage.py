@@ -39,7 +39,7 @@ class _Resp:
     def __init__(self, body: bytes) -> None:
         self._body = body
 
-    def __enter__(self) -> "_Resp":
+    def __enter__(self) -> _Resp:
         return self
 
     def __exit__(self, *exc: object) -> None:

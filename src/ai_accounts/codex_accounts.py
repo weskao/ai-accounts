@@ -9,7 +9,6 @@ token expires). Never prints raw tokens — only decoded, non-secret claims.
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -18,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,21 +25,22 @@ from . import autoswitch, i18n, profile_secrets, usage_format
 from . import config_menu as cm
 from ._present import (
     _ANSI_RE as _ANSI_RE,
+)
+from ._present import (
     RESET_COLUMNS,
     RESET_OPTIONAL_COLUMNS,
     accounts_table,
     choose_and_run,
     choose_profile,
+    expiry_status,
     format_help,
     ok,
     panel,
     reset_voucher_cells,
     success_panel,
-    expiry_status,
     usage_color,
 )
 from ._utils import (
-    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
@@ -56,6 +57,7 @@ from ._utils import (
     keychain_read,
     keychain_write,
     log_red,
+    log_unknown_command,
     log_yellow,
     normalize_command_argv,
     oauth_token_refresh,

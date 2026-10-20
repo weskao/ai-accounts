@@ -776,7 +776,7 @@ def _load_head_present():
             check=True,
         ).stdout
     except (sp.CalledProcessError, OSError) as exc:
-        raise unittest.SkipTest(f"git show HEAD:_present.py unavailable: {exc}")
+        raise unittest.SkipTest(f"git show HEAD:_present.py unavailable: {exc}") from exc
     if "def layout_mode" in old_source:
         raise unittest.SkipTest("HEAD already carries the layout feature — nothing to diff against")
 

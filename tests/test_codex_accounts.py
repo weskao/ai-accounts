@@ -309,7 +309,7 @@ class SaveCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_save, "work")
 
         self.assertEqual(rc, 0)
-        saved = self.saved((self.home / "accounts" / "work.json"))
+        saved = self.saved(self.home / "accounts" / "work.json")
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-live")
         # auth.json rewritten from the same content so file and keychain agree
         auth = json.loads((self.home / "auth.json").read_text())
@@ -322,7 +322,7 @@ class SaveCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_save, "kc-only")
 
         self.assertEqual(rc, 0)
-        saved = self.saved((self.home / "accounts" / "kc-only.json"))
+        saved = self.saved(self.home / "accounts" / "kc-only.json")
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-kc")
 
     def test_save_without_auth_or_keychain_errors(self):
@@ -375,7 +375,7 @@ class SaveCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_login_switch, "newacct")
 
         self.assertEqual(rc, 0)
-        saved = self.saved((self.home / "accounts" / "newacct.json"))
+        saved = self.saved(self.home / "accounts" / "newacct.json")
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-fresh")
 
     def test_login_switch_cancellation_is_quiet_and_preserves_profiles(self):
@@ -439,7 +439,7 @@ class SaveCommandTests(_CodexHomeMixin):
             rc = self.run_quiet(ca.cmd_save, "newacct")
 
         self.assertEqual(rc, 0)
-        saved = self.saved((self.home / "accounts" / "newacct.json"))
+        saved = self.saved(self.home / "accounts" / "newacct.json")
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-fresh-login")
         auth = json.loads((self.home / "auth.json").read_text())
         self.assertEqual(auth["tokens"]["refresh_token"], "rt-fresh-login")
@@ -476,7 +476,7 @@ class SaveCommandTests(_CodexHomeMixin):
         self.assertNotEqual(Path(login_call[1]["env"]["CODEX_HOME"]), self.home)
         self.assertIn('cli_auth_credentials_store="file"', login_call[0])
         self.assertEqual(self.saved(current)["tokens"]["refresh_token"], "rt-current")
-        saved = self.saved((self.home / "accounts" / "newacct.json"))
+        saved = self.saved(self.home / "accounts" / "newacct.json")
         self.assertEqual(saved["tokens"]["refresh_token"], "rt-new")
 
     def test_login_switch_updates_exact_token_aliases(self):
@@ -1968,7 +1968,7 @@ class SwitchExpiredFallbackTests(_CodexHomeMixin):
         auth = json.loads((self.home / "auth.json").read_text())
         self.assertEqual(auth["tokens"]["refresh_token"], "rt-fresh")
         # rotated token mirrored back to the profile so it stays live
-        prof = self.saved((self.home / "accounts" / "work.json"))
+        prof = self.saved(self.home / "accounts" / "work.json")
         self.assertEqual(prof["tokens"]["refresh_token"], "rt-fresh")
 
     def test_expired_token_with_revoked_refresh_token_triggers_login_switch(self):

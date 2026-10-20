@@ -48,7 +48,7 @@ def test_every_script_routes_update_to_update_kit(monkeypatch, flag):
     assert "ai-accounts" in scripts and len(scripts) == 9
     for name, target in scripts.items():
         calls: list[dict] = []
-        monkeypatch.setattr(update_kit, "update", lambda **kw: calls.append(kw) or 7)
+        monkeypatch.setattr(update_kit, "update", lambda calls=calls, **kw: calls.append(kw) or 7)
         assert _main(target)([flag]) == 7, name
         assert len(calls) == 1, name
         kw = calls[0]

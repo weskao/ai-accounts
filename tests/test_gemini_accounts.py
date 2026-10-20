@@ -14,12 +14,12 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+
 from ai_accounts import _utils as u
 from ai_accounts import gemini_accounts as ga
 from ai_accounts import gemini_usage as gu
 from ai_accounts._present import _ANSI_RE
 from ai_accounts.usage_format import UsageWindow
-
 
 
 class _TtyStringIO(io.StringIO):

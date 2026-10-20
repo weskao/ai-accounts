@@ -22,9 +22,7 @@ import os
 import unittest
 from unittest import mock
 
-from ai_accounts import _present
-from ai_accounts import autoswitch
-from ai_accounts import config_menu
+from ai_accounts import _present, autoswitch, config_menu
 from ai_accounts import config_schema as cs
 from ai_accounts._present import _ANSI_RE, visible_len
 

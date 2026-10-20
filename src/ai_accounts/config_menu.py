@@ -143,12 +143,23 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from . import autoswitch, config_schema, i18n
 from . import _keyreader as kr
-from . import _present
+from . import _present, autoswitch, config_schema, i18n
 from ._present import elide, visible_len, wrap
-from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET, YELLOW
-from ._utils import log_green, log_red, log_yellow, package_version
+from ._utils import (
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    MAGENTA,
+    RED,
+    RESET,
+    YELLOW,
+    log_green,
+    log_red,
+    log_yellow,
+    package_version,
+)
 
 _CURSOR_MARK = "❯ "
 _NO_CURSOR_MARK = "  "

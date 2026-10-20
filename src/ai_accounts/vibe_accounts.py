@@ -11,11 +11,17 @@ from pathlib import Path
 from typing import Any
 
 from . import config_menu as cm
-from . import i18n
-from . import profile_secrets
-from ._present import accounts_table, choose_and_run, choose_profile, format_help, ok, panel, success_panel
+from . import i18n, profile_secrets
+from ._present import (
+    accounts_table,
+    choose_and_run,
+    choose_profile,
+    format_help,
+    ok,
+    panel,
+    success_panel,
+)
 from ._utils import (
-    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
@@ -26,13 +32,19 @@ from ._utils import (
     keychain_read,
     keychain_write,
     log_red,
+    log_unknown_command,
     log_yellow,
     normalize_command_argv,
     quiet_keyboard_interrupt,
     resolve_account_dir,
 )
 from .config_schema import mask_secret
-from .usage_format import json_empty_list, no_quota_json_entries, print_no_active_account, state_cells
+from .usage_format import (
+    json_empty_list,
+    no_quota_json_entries,
+    print_no_active_account,
+    state_cells,
+)
 
 JsonDict = dict[str, Any]
 

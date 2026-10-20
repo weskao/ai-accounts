@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import unittest
 import subprocess
+import unittest
 from unittest import mock
 
 import pytest
 
-from ai_accounts import autoswitch_setup as setup
-from ai_accounts import autoswitch, autoswitch_hooks as hooks, autoswitch_timer as timer
 from ai_accounts import _utils as u
+from ai_accounts import autoswitch
+from ai_accounts import autoswitch_hooks as hooks
+from ai_accounts import autoswitch_setup as setup
+from ai_accounts import autoswitch_timer as timer
 
 
 @pytest.mark.parametrize("platform", ["macos", "linux", "windows"])

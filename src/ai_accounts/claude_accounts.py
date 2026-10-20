@@ -31,23 +31,16 @@ from typing import Final
 from . import autoswitch, claude_usage, i18n
 from . import config_menu as cm
 from . import profile_secrets as ps
-from .usage_format import (
-    capitalize_first,
-    format_usage_window,
-    json_empty_list,
-    print_no_active_account,
-    reset_vouchers_json,
-    state_cells,
-    usage_window_to_json,
-)
 from ._present import (
     _ANSI_RE as _ANSI_RE,
+)
+from ._present import (
     RESET_COLUMNS,
     RESET_OPTIONAL_COLUMNS,
     accounts_table,
     choose_and_run,
-    expiry_status,
     choose_profile,
+    expiry_status,
     format_help,
     ok,
     panel,
@@ -56,7 +49,6 @@ from ._present import (
     usage_color,
 )
 from ._utils import (
-    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
@@ -73,12 +65,22 @@ from ._utils import (
     keychain_read,
     keychain_write,
     log_red,
+    log_unknown_command,
     log_yellow,
     normalize_command_argv,
     oauth_token_refresh,
     plan_tier_color,
     quiet_keyboard_interrupt,
     resolve_account_dir,
+)
+from .usage_format import (
+    capitalize_first,
+    format_usage_window,
+    json_empty_list,
+    print_no_active_account,
+    reset_vouchers_json,
+    state_cells,
+    usage_window_to_json,
 )
 
 # Claude paid tiers, low → high (Free is left uncolored by the caller).

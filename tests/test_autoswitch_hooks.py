@@ -13,8 +13,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from ai_accounts import autoswitch_hooks as hooks
 from ai_accounts import _utils as u
+from ai_accounts import autoswitch_hooks as hooks
 
 
 class HookConfigTests(unittest.TestCase):

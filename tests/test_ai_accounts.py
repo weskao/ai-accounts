@@ -20,8 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 from ai_accounts import ai_accounts as aa
-from ai_accounts import autoswitch
-from ai_accounts import autoswitch_timer
+from ai_accounts import autoswitch, autoswitch_timer
 
 
 def _fake(
@@ -50,7 +49,7 @@ class AiAccountsTest(unittest.TestCase):
             def __init__(self, message: str) -> None:
                 pass
 
-            def __enter__(self) -> "ReleaseCodexAfterOthersYield":
+            def __enter__(self) -> ReleaseCodexAfterOthersYield:
                 return self
 
             def __exit__(self, *exc_info: object) -> None:
@@ -107,7 +106,7 @@ class AiAccountsTest(unittest.TestCase):
             def __init__(self, message: str) -> None:
                 messages.append(message)
 
-            def __enter__(self) -> "RecordingSpinner":
+            def __enter__(self) -> RecordingSpinner:
                 return self
 
             def __exit__(self, *exc_info: object) -> None:
@@ -379,7 +378,7 @@ class AiAccountsTest(unittest.TestCase):
             with self.subTest(argv=argv):
                 calls = []
 
-                def run(cmd, *a, **k):
+                def run(cmd, *a, calls=calls, **k):
                     calls.append(cmd)
                     return subprocess.CompletedProcess(args=cmd, returncode=0)
 
