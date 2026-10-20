@@ -811,7 +811,7 @@ ai-accounts config export settings.json
 ai-accounts config import settings.json
 ai-accounts autoswitch
 ai-accounts autoswitch setup
-ai-accounts install-timer --interval 1800
+ai-accounts install-timer
 ai-accounts timer-status
 ```
 
@@ -857,8 +857,7 @@ remain shared across all CLIs.
 OS timer fallback. Re-run it after reinstalling the package if hook commands or
 the installed Python path changed.
 To restart or re-register the timer on any supported OS, re-run
-`ai-accounts install-timer --interval 1800` (use your existing interval if it
-differs). This unloads and loads the LaunchAgent on macOS, reloads and restarts
+`ai-accounts install-timer` (it uses the `timer_interval_min` setting). This unloads and loads the LaunchAgent on macOS, reloads and restarts
 the systemd user timer on Linux (or replaces the cron entry), and replaces the
 Task Scheduler task on Windows. `ai-accounts config` changes are read on the
 next timer tick; they do not require a restart.
@@ -905,8 +904,16 @@ Repository secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` must be
 configured before the alert can be delivered.
 
 `ai-accounts install-timer` registers only the OS timer, without the provider
-hooks, and takes `--interval <seconds>` (default 1800). The first tick runs at
-login/boot, not one interval later — `RunAtLoad` on macOS, `OnBootSec=60` on
+hooks, and takes `--interval <seconds>` (default: the `timer_interval_min` setting, 5 minutes). Most ticks are cheap: the
+provider probes, token refresh and the routine reset scan run at most every
+30 minutes, and a 5-minute tick only does work when a quota window's
+recorded deadline has just passed (it then runs the reset scan alone).
+Upgrading from the old 1800-second default? Re-run `install-timer` once.
+`timer_interval_min` (`ai-accounts config`, under General) sets how often the timer
+wakes: numbers only, default 5, minimum 1, maximum 60. Changing it re-registers an
+already-installed timer by itself; with no timer installed it only saves the value.
+A passed `--interval` overrides the setting for that install only.
+The first tick runs at login/boot, not one interval later — `RunAtLoad` on macOS, `OnBootSec=60` on
 systemd, an `@reboot` line on cron — so a quota window that reset while the
 machine was off is reported as soon as you are back, provided `reset_notify`
 is on. (Windows' scheduled task has no logon trigger; its first tick lands
@@ -1073,9 +1080,12 @@ Provider coverage:
   duplicate those notifications
 - `vibe` — not supported: no quota API to watch.
 
-Detection only happens on a timer tick, so a notification lands up to one
-tick interval (`install-timer`'s `--interval`, default 1800 seconds) after
-the actual reset — it is not instantaneous or event-driven.
+Detection only happens on a timer tick, so a scheduled reset is noticed on
+the first tick after its deadline (the `timer_interval_min` setting, default
+5 minutes) — it is not instantaneous or event-driven. Those early scans only
+run for windows at or above `reset_notify_min_used_pct`, and only for 30
+minutes after the deadline; an off-schedule reset (no deadline passed) is
+caught by the 30-minute routine scan.
 
 **The scheduled timer (`ai-accounts install-timer`) must be installed, or this
 feature does nothing:** with no timer running, `reset_notify` makes no extra
