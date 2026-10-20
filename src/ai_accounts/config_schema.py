@@ -86,6 +86,10 @@ class Field:
     # (`autoswitch_timer.run_once`): turning it on without the timer installed
     # does nothing, so the menu offers to install it and `doctor` flags it.
     needs_timer: bool = False
+    # The OS timer is registered with this value baked in (its interval), so
+    # changing it re-registers an already-installed timer — see
+    # `config_menu._save_config`. A timer that is not installed is left alone.
+    reregisters_timer: bool = False
 
     def display_group(self, lang: str | None = None) -> str | None:
         """This field's group heading in *lang*, if it has one.
@@ -414,6 +418,18 @@ FIELDS: tuple[Field, ...] = (
         help="Refresh OAuth tokens on the scheduled timer, independent of auto-switch.",
         group="General",
         needs_timer=True,
+    ),
+    Field(
+        key="timer_interval_min",
+        type=int,
+        default=5,
+        minimum=1,
+        maximum=60,
+        clamp=True,
+        label="Timer interval (minutes)",
+        help="How often the scheduled timer wakes up. A wake-up with nothing due costs almost nothing; account checks and token refresh still run at most every 30 minutes, so a shorter interval mainly makes quota-reset notifications arrive sooner.",
+        group="General",
+        reregisters_timer=True,
     ),
     Field(
         key="update_check",

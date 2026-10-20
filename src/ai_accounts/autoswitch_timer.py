@@ -20,11 +20,13 @@ directly — so tests can force a platform without touching the real OS:
 
 from __future__ import annotations
 
+import json
 import os
 import plistlib
 import shlex
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -33,6 +35,7 @@ from . import _utils as u
 from . import (
     ai_accounts,
     autoswitch_hooks,
+    config_schema,
     host_identity,
     i18n,
     quota_reset,
@@ -41,7 +44,17 @@ from . import (
 from . import autoswitch as aw
 
 LABEL = "com.ai_accounts.autoswitch"
-DEFAULT_INTERVAL_SEC = 30 * 60  # 30 minutes
+# The OS wakes the job every `timer_interval_min`, but a tick is cheap unless something is due:
+# the heavy work (provider probes, token refresh, routine reset scan) runs at
+# most every FULL_TICK_SEC, and the reset scan also runs early, on a 5-minute
+# tick, once a recorded quota deadline has passed — so a reset notification
+# lands within ~5 minutes instead of up to 30.
+_INTERVAL_FIELD = config_schema.field("timer_interval_min")
+DEFAULT_INTERVAL_SEC = _INTERVAL_FIELD.default * 60
+FULL_TICK_SEC = 30 * 60  # 30 minutes
+# A scheduler fires a little early or late; a tick this close to the cadence
+# counts as on time, so 6 x 5 min reliably yields a full tick every 30.
+_TICK_SLACK_SEC = 60
 CRON_TAG = "# ai-accounts-autoswitch"
 
 
@@ -197,8 +210,22 @@ def _install_windows(interval_sec: int) -> None:
     )
 
 
-def install(interval_sec: int = DEFAULT_INTERVAL_SEC) -> None:
-    """Register the periodic autoswitch check with the OS scheduler."""
+def configured_interval_sec() -> int:
+    """The `timer_interval_min` setting in seconds; the default if unreadable."""
+    raw = aw.load_config().get(_INTERVAL_FIELD.key, _INTERVAL_FIELD.default)
+    try:
+        return _INTERVAL_FIELD.parse(str(raw)) * 60
+    except ValueError:  # a hand-edited non-number
+        return DEFAULT_INTERVAL_SEC
+
+
+def install(interval_sec: int | None = None) -> None:
+    """Register the periodic autoswitch check with the OS scheduler.
+
+    *interval_sec* defaults to the ``timer_interval_min`` setting.
+    """
+    if interval_sec is None:
+        interval_sec = configured_interval_sec()
     if u.IS_MACOS:
         _install_macos(interval_sec)
     elif u.IS_LINUX:
@@ -401,19 +428,53 @@ def run_once(
     inject its own to observe the call without driving real provider
     subprocesses).
 
+    ``enabled`` and ``token_refresh`` run only on a full tick (at most every
+    :data:`FULL_TICK_SEC`); ``reset_notify`` also runs between full ticks when
+    :func:`quota_reset.reset_due` says a recorded deadline just passed.
+
     A refresh tick alerts via :func:`ai_accounts.autoswitch.notify_once` only
     when the refresh output mentions a revoked refresh token — never for a
     routine, successful rotation.
     """
-    if aw.config_flag("enabled"):  # fail closed: only a JSON `true` runs
+    now = int(time.time())
+    full = _full_tick_due(now)
+    if full:
+        # Stamped before the work, so a crashing provider cannot turn every
+        # 5-minute tick into a full one.
+        _write_last_full_tick(now)
+    if full and aw.config_flag("enabled"):  # fail closed: only a JSON `true` runs
         (check or _run_autoswitch_everywhere)()
-    if aw.config_flag("token_refresh"):  # fail closed: same rule, own flag
+    if full and aw.config_flag("token_refresh"):  # fail closed: same rule, own flag
         output = (refresh or _run_token_refresh_everywhere)()
         if any(marker in output.lower() for marker in _REVOKED_MARKERS):
             _report_revoked(output)
-    if aw.config_flag("reset_notify"):  # fail closed: same rule, own flag
+    if aw.config_flag("reset_notify") and (  # fail closed: same rule, own flag
+        full or quota_reset.reset_due(now, FULL_TICK_SEC)
+    ):
         quota_reset.run_tick(collect=collect)
     return 0
+
+
+def _tick_state_path() -> Path:
+    return aw.config_path().parent / "timer-state.json"
+
+
+def _full_tick_due(now: int) -> bool:
+    """True when the last full tick is FULL_TICK_SEC old, missing, or in the future."""
+    try:
+        last = json.loads(_tick_state_path().read_text(encoding="utf-8"))["last_full_tick"]
+        elapsed = now - int(last)
+    except (OSError, ValueError, KeyError, TypeError):
+        return True
+    # A negative age is a backward clock jump; don't stall until wall time catches up.
+    return elapsed < 0 or elapsed >= FULL_TICK_SEC - _TICK_SLACK_SEC
+
+
+def _write_last_full_tick(now: int) -> None:
+    try:
+        u.atomic_write_json(_tick_state_path(), {"last_full_tick": now})
+    except OSError as exc:
+        u.log_red(f"Could not record timer state: {exc}")
 
 
 def _report_revoked(output: str) -> None:

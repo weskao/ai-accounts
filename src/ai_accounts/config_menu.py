@@ -174,8 +174,20 @@ _MIN_WIDTH = 40
 
 
 def _save_config(updates: dict) -> None:
-    """Save only config values; OS setup is an explicit, one-time action."""
+    """Save only config values; OS setup is an explicit, one-time action.
+
+    The one exception: an already-installed timer is re-registered when a
+    ``reregisters_timer`` value (its interval) actually changes, since the OS
+    scheduler keeps running the interval it was registered with.
+    """
+    timer_keys = [f.key for f in config_schema.FIELDS if f.reregisters_timer and f.key in updates]
+    before = autoswitch.load_config() if timer_keys else {}
     autoswitch.save_config(updates)
+    if any(updates[k] != before.get(k) for k in timer_keys):
+        from . import autoswitch_timer
+
+        if autoswitch_timer.status() == "installed":
+            autoswitch_timer.install()
 
 
 class _Saver:

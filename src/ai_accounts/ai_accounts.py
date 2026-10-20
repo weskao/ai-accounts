@@ -87,7 +87,7 @@ USAGE
   ai-accounts config set <key> <val> Set one auto-switch config key (rejects unknown keys)
   ai-accounts install-timer [--interval N]
                                       Schedule the auto-switch check with the OS (default:
-                                      every 1800s / 30 minutes)
+                                      the timer_interval_min setting, 5 minutes)
   ai-accounts uninstall-timer       Remove the scheduled auto-switch check
   ai-accounts timer-status          Report whether the auto-switch check is scheduled
   ai-accounts doctor [--json]        Offline health check per provider: CLI binary on PATH,
@@ -234,7 +234,7 @@ def cmd_forward(argv: list[str]) -> int:
 def cmd_install_timer(rest: list[str]) -> int:
     from . import autoswitch_timer
 
-    interval = autoswitch_timer.DEFAULT_INTERVAL_SEC
+    interval = autoswitch_timer.configured_interval_sec()
     if rest:
         if rest[0] == "--interval" and len(rest) == 2:
             try:

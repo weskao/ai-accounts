@@ -899,6 +899,90 @@ class GateOrderingTests(_ConfigMixin, unittest.TestCase):
         self.assertEqual(order, ["enabled", "token_refresh", "reset_notify"])
 
 
+class CheapTickTests(_ConfigMixin, unittest.TestCase):
+    """The OS fires every DEFAULT_INTERVAL_SEC, but heavy work runs at most
+    every FULL_TICK_SEC — except the reset scan, right after a deadline."""
+
+    def _tick(self, now: int, check, collect) -> None:
+        with mock.patch.object(at.time, "time", return_value=now):
+            at.run_once(check=check, refresh=lambda: "", collect=collect)
+
+    def _write_reset_state(self, used_pct: int, reset_time: int) -> None:
+        at.quota_reset.state_path().write_text(
+            json.dumps({"grok/p1/weekly": {"used_pct": used_pct, "reset_time": reset_time}}),
+            encoding="utf-8",
+        )
+
+    def test_a_tick_between_full_ticks_skips_the_heavy_work(self) -> None:
+        aw.save_config({"enabled": True, "reset_notify": True})
+        check, collect = mock.Mock(), mock.Mock(return_value={})
+        self._tick(1_000_000, check, collect)
+        self._tick(1_000_000 + at.DEFAULT_INTERVAL_SEC, check, collect)
+        self.assertEqual((check.call_count, collect.call_count), (1, 1))
+        # one full cadence later (minus scheduler slack) it runs again
+        self._tick(1_000_000 + at.FULL_TICK_SEC - 30, check, collect)
+        self.assertEqual((check.call_count, collect.call_count), (2, 2))
+
+    def test_a_passed_deadline_triggers_the_reset_scan_early(self) -> None:
+        aw.save_config({"enabled": True, "reset_notify": True})
+        check, collect = mock.Mock(), mock.Mock(return_value={})
+        self._tick(1_000_000, check, collect)
+        # a high-usage window's deadline passed since the full tick
+        self._write_reset_state(used_pct=95, reset_time=1_000_100)
+        self._tick(1_000_300, check, collect)
+        self.assertEqual((check.call_count, collect.call_count), (1, 2))
+
+    def test_reset_due_ignores_low_usage_and_long_past_deadlines(self) -> None:
+        aw.save_config({"reset_notify": True})
+        now = 2_000_000
+        self._write_reset_state(used_pct=10, reset_time=now - 60)
+        self.assertFalse(at.quota_reset.reset_due(now, at.FULL_TICK_SEC))
+        self._write_reset_state(used_pct=95, reset_time=now - at.FULL_TICK_SEC)
+        self.assertFalse(at.quota_reset.reset_due(now, at.FULL_TICK_SEC))
+        self._write_reset_state(used_pct=95, reset_time=now + 60)
+        self.assertFalse(at.quota_reset.reset_due(now, at.FULL_TICK_SEC))
+        self._write_reset_state(used_pct=95, reset_time=now - 60)
+        self.assertTrue(at.quota_reset.reset_due(now, at.FULL_TICK_SEC))
+
+
+class TimerIntervalSettingTests(_ConfigMixin, unittest.TestCase):
+    """`timer_interval_min`: default 5, minimum 1, numbers only, and a change
+    re-registers an already-installed timer."""
+
+    def test_default_is_five_minutes_and_one_is_the_floor(self) -> None:
+        self.assertEqual(at.configured_interval_sec(), 5 * 60)
+        field = at.config_schema.field("timer_interval_min")
+        self.assertEqual(field.parse("0"), 1)  # clamps up to the minimum
+        self.assertEqual(field.parse("1"), 1)
+        with self.assertRaises(ValueError):
+            field.parse("abc")  # numbers only
+
+    def test_configured_value_drives_the_interval_and_junk_falls_back(self) -> None:
+        aw.save_config({"timer_interval_min": 2})
+        self.assertEqual(at.configured_interval_sec(), 120)
+        self.config_path.write_text(json.dumps({"timer_interval_min": "soon"}), encoding="utf-8")
+        self.assertEqual(at.configured_interval_sec(), at.DEFAULT_INTERVAL_SEC)
+
+    def test_changing_it_reinstalls_only_an_installed_timer(self) -> None:
+        from ai_accounts import config_menu
+
+        for installed, expected in (("installed", 1), ("not installed", 0)):
+            with self.subTest(installed=installed):
+                with mock.patch.object(at, "status", return_value=installed), \
+                        mock.patch.object(at, "install") as install:
+                    config_menu._save_config({"timer_interval_min": 3 if expected else 4})
+                self.assertEqual(install.call_count, expected)
+
+    def test_saving_an_unchanged_or_unrelated_value_does_not_reinstall(self) -> None:
+        from ai_accounts import config_menu
+
+        with mock.patch.object(at, "status", return_value="installed"), \
+                mock.patch.object(at, "install") as install:
+            config_menu._save_config({"timer_interval_min": 5})  # already the default
+            config_menu._save_config({"layout": "narrow"})
+        install.assert_not_called()
+
+
 class MainRunInstallDispatchTests(
     _PlatformMixin, _HomeMixin, _SubprocessMixin, _ConfigMixin, unittest.TestCase
 ):

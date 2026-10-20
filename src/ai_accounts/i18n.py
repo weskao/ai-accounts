@@ -353,6 +353,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.token_refresh.help": {
         "zh-TW": "依排程更新 OAuth token，與自動切換各自獨立。"
     },
+    "config.timer_interval_min.label": {"zh-TW": "排程間隔（分鐘）"},
+    "config.timer_interval_min.help": {
+        "zh-TW": "排程多久喚醒一次。沒有事要做時幾乎不耗資源；帳號檢查與 token 更新仍最多每 30 分鐘一次，縮短間隔主要是讓配額重置通知更快送達。"
+    },
     "config.update_check.label": {"zh-TW": "檢查更新"},
     "config.update_check.help": {
         "zh-TW": "指令結束後，若 GitHub 有更新的 ai-accounts 版本就提示（背景查詢，每 10 分鐘最多一次）。"
@@ -514,7 +518,7 @@ MESSAGES: dict[str, dict[str, str]] = {
   ai-accounts config set <key> <val> 設定單一自動切換設定項目（拒絕未知項目）
   ai-accounts install-timer [--interval N]
                                       向作業系統排程自動切換檢查（預設：
-                                      每 1800 秒／30 分鐘一次）
+                                      依 timer_interval_min 設定，預設 5 分鐘）
   ai-accounts uninstall-timer       移除已排程的自動切換檢查
   ai-accounts timer-status          回報自動切換檢查是否已排程
   ai-accounts doctor [--json]        離線健康檢查：各提供者的 CLI 執行檔是否在
