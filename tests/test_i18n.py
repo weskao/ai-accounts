@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import tempfile
-import urllib.parse
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest import mock
 

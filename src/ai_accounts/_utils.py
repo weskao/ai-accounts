@@ -11,17 +11,17 @@ import json
 import math
 import os
 import re
-import time
-from datetime import datetime, timezone
-from functools import lru_cache, wraps
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Sequence
+from datetime import datetime, timezone
+from functools import lru_cache, wraps
+from pathlib import Path
 
 from . import host_identity
 
@@ -232,7 +232,7 @@ class Spinner:
             self._stop.wait(_SPINNER_INTERVAL)
         print("\r\033[K", end="", file=sys.stderr, flush=True)
 
-    def __enter__(self) -> "Spinner":
+    def __enter__(self) -> Spinner:
         if self._enabled:
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
@@ -247,7 +247,7 @@ class Spinner:
 def fetch_parallel(
     items: Sequence,
     fn: Callable,
-    spinner: "Spinner | None" = None,
+    spinner: Spinner | None = None,
     message: str = "",
     labels: Sequence[str] | None = None,
 ) -> list:

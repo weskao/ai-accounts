@@ -10,11 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import autoswitch
+from . import autoswitch, devin_usage, i18n, profile_secrets
 from . import config_menu as cm
-from . import devin_usage
-from . import i18n
-from . import profile_secrets
 from ._present import (
     accounts_table,
     choose_and_run,
@@ -26,21 +23,21 @@ from ._present import (
     usage_color,
 )
 from ._utils import (
-    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
     RED,
     RESET,
     Spinner,
+    atomic_write_text,
     email_local_part,
     fetch_parallel,
     has_control_chars,
     log_red,
+    log_unknown_command,
     log_yellow,
     normalize_command_argv,
     plan_tier_color,
-    atomic_write_text,
     quiet_keyboard_interrupt,
     resolve_account_dir,
 )

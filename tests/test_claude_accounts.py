@@ -20,8 +20,6 @@ from ai_accounts import claude_accounts as ca
 from ai_accounts import claude_usage as cu
 from ai_accounts import profile_secrets as ps
 
-
-
 # Env vars a running Claude Code session exports into every command it spawns.
 # The suite itself may well be running inside one — which is exactly the case
 # the resume exclusion must refuse.
@@ -1188,7 +1186,7 @@ class AutoswitchCommandTests(_HomeMixin):
                 self._given_a_switch_is_due(inside_claude=marker)
                 spawned: list[list[str]] = []
 
-                def fake_run(cmd, **kwargs):
+                def fake_run(cmd, spawned=spawned, **kwargs):
                     spawned.append(list(cmd))
                     return subprocess.CompletedProcess(args=cmd, returncode=0)
 

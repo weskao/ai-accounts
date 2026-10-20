@@ -31,11 +31,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import autoswitch
+from . import autoswitch, copilot_usage, i18n, profile_secrets
 from . import config_menu as cm
-from . import copilot_usage
-from . import i18n
-from . import profile_secrets
 from ._present import (
     accounts_table,
     choose_and_run,
@@ -47,7 +44,6 @@ from ._present import (
     usage_color,
 )
 from ._utils import (
-    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
@@ -61,6 +57,7 @@ from ._utils import (
     keyring_core_read,
     keyring_core_write,
     log_red,
+    log_unknown_command,
     log_yellow,
     normalize_command_argv,
     quiet_keyboard_interrupt,

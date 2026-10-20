@@ -12,11 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import autoswitch
+from . import autoswitch, grok_usage, i18n, profile_secrets
 from . import config_menu as cm
-from . import grok_usage
-from . import i18n
-from . import profile_secrets
 from ._present import (
     accounts_table,
     choose_and_run,
@@ -28,7 +25,6 @@ from ._present import (
     usage_color,
 )
 from ._utils import (
-    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
@@ -40,6 +36,7 @@ from ._utils import (
     fetch_parallel,
     has_control_chars,
     log_red,
+    log_unknown_command,
     log_yellow,
     normalize_command_argv,
     oauth_token_refresh,
@@ -48,10 +45,10 @@ from ._utils import (
     resolve_account_dir,
 )
 from .usage_format import (
+    UsageWindow,
     credential_status_prefix,
     format_usage_window,
     json_empty_list,
-    UsageWindow,
     print_no_active_account,
     state_cells,
     usage_window_to_json,

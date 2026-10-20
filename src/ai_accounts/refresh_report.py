@@ -20,8 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
-from . import _present
-from . import i18n
+from . import _present, i18n
 from ._utils import DIM, RED, RESET
 from .providers import PROVIDERS
 

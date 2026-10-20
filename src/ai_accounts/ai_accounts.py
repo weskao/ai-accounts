@@ -18,15 +18,15 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import config_menu as cm
 from . import _present, i18n
+from . import config_menu as cm
 from ._utils import (
-    log_unknown_command,
     BOLD,
     CYAN,
     RESET,
     Spinner,
     log_red,
+    log_unknown_command,
     normalize_command_argv,
     package_version,
     quiet_keyboard_interrupt,

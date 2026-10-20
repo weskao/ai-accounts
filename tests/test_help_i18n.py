@@ -22,7 +22,6 @@ from unittest import mock
 from ai_accounts import (
     _present,
     ai_accounts,
-    autoswitch as aw,
     claude_accounts,
     codex_accounts,
     copilot_accounts,
@@ -32,6 +31,9 @@ from ai_accounts import (
     i18n,
     opencode_accounts,
     vibe_accounts,
+)
+from ai_accounts import (
+    autoswitch as aw,
 )
 
 _MODULES = (

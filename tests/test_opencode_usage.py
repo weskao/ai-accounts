@@ -6,7 +6,13 @@ from unittest import mock
 
 import pytest
 
-from ai_accounts import autoswitch, claude_usage, copilot_usage, opencode_usage, usage_format
+from ai_accounts import (
+    autoswitch,
+    claude_usage,
+    copilot_usage,
+    opencode_usage,
+    usage_format,
+)
 from ai_accounts.usage_format import UsageWindow
 
 HOURLY = UsageWindow(10, 1_000, 300)

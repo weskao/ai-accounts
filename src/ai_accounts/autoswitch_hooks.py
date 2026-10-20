@@ -11,8 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TypeAlias, cast
 
-from . import autoswitch
 from . import _utils as u
+from . import autoswitch
 from ._utils import log_yellow
 
 MANAGED_HOOK = "ai-accounts-autoswitch"

@@ -21,7 +21,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from ai_accounts import autoswitch, config_menu as cm, config_schema
+from ai_accounts import autoswitch, config_schema
+from ai_accounts import config_menu as cm
 from ai_accounts._keyreader import Key, KeyEvent
 from ai_accounts._present import _ANSI_RE
 

@@ -18,7 +18,12 @@ from datetime import date, datetime
 from typing import Final, TypeAlias
 
 from ._utils import clamp_percent, finite_number
-from .usage_format import ResetVouchers, UsageWindow, format_elapsed, format_unix_time_compact
+from .usage_format import (
+    ResetVouchers,
+    UsageWindow,
+    format_elapsed,
+    format_unix_time_compact,
+)
 from .usage_format import parse_iso8601 as _parse_iso8601
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]

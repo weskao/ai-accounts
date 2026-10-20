@@ -15,7 +15,8 @@ from unittest import mock
 
 import pytest
 
-from ai_accounts import autoswitch, opencode_accounts as oa, opencode_usage
+from ai_accounts import autoswitch, opencode_usage
+from ai_accounts import opencode_accounts as oa
 from ai_accounts._present import _ANSI_RE
 from ai_accounts.usage_format import UsageWindow
 

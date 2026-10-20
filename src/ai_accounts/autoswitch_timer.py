@@ -20,23 +20,25 @@ directly — so tests can force a platform without touching the real OS:
 
 from __future__ import annotations
 
-import plistlib
 import os
+import plistlib
 import shlex
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Callable, Sequence
 
 from . import _utils as u
-from . import ai_accounts
-from . import autoswitch_hooks
+from . import (
+    ai_accounts,
+    autoswitch_hooks,
+    host_identity,
+    i18n,
+    quota_reset,
+    refresh_report,
+)
 from . import autoswitch as aw
-from . import i18n
-from . import host_identity
-from . import quota_reset
-from . import refresh_report
 
 LABEL = "com.ai_accounts.autoswitch"
 DEFAULT_INTERVAL_SEC = 30 * 60  # 30 minutes

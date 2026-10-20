@@ -28,10 +28,22 @@ import shutil
 import sys
 import time
 import unicodedata
-from typing import Callable, Final, Sequence
+from collections.abc import Callable, Sequence
+from typing import Final
 
 from . import usage_format
-from ._utils import BOLD, CYAN, DIM, GREEN, MAGENTA, RESET, RED, YELLOW, log_red, log_yellow
+from ._utils import (
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    MAGENTA,
+    RED,
+    RESET,
+    YELLOW,
+    log_red,
+    log_yellow,
+)
 
 # ANSI escape stripper — the single source of truth for measuring the visible
 # width of a colored cell. Sibling tools that still keep a local copy migrate

@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 import json
 import os
 import re
@@ -13,8 +10,11 @@ import struct
 import subprocess
 import threading
 import time
-from typing import TypeAlias
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from datetime import datetime
+from typing import TypeAlias
 
 if os.name == "nt":
     fcntl = None

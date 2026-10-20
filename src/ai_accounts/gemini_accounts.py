@@ -1,36 +1,37 @@
 from __future__ import annotations
 
 import base64
-from contextlib import nullcontext
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+from contextlib import nullcontext
 from datetime import datetime
 from functools import cache
 from pathlib import Path
 from typing import TypeAlias
 
 from . import autoswitch, gemini_usage, i18n
-from . import profile_secrets as ps
 from . import config_menu as cm
+from . import profile_secrets as ps
 from ._present import (
     _ANSI_RE as _ANSI_RE,
+)
+from ._present import (
     accounts_table,
     choose_and_run,
     choose_profile,
+    expiry_status,
     format_help,
     highlight_cmd,
     ok,
     panel,
     success_panel,
-    expiry_status,
     usage_color,
 )
 from ._utils import (
-    log_unknown_command,
     ACCOUNT_COMMANDS,
     BOLD,
     DIM,
@@ -50,6 +51,7 @@ from ._utils import (
     has_control_chars,
     have,
     log_red,
+    log_unknown_command,
     log_yellow,
     normalize_command_argv,
     oauth_token_refresh,

@@ -31,9 +31,7 @@ from pathlib import Path
 import telegram_kit
 
 from . import _utils as u
-from . import config_schema
-from . import i18n
-from . import secrets_store
+from . import config_schema, i18n, secrets_store
 from .providers import PROVIDERS
 from .usage_format import UsageWindow
 

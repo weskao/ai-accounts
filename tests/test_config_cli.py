@@ -22,6 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 from ai_accounts import (
+    _keyreader,
     ai_accounts,
     autoswitch,
     claude_accounts,
@@ -33,7 +34,6 @@ from ai_accounts import (
     opencode_accounts,
     vibe_accounts,
 )
-from ai_accounts import _keyreader
 
 # (module, prog label used in panel titles / usage lines)
 _MODULES = (
@@ -159,7 +159,7 @@ class AllFiveToolsConfigDispatchTest(_ConfigFileMixin):
                     _keyreader.KeyEvent(_keyreader.Key.CHAR, "q"),
                 ])
 
-                def run(title, fields):
+                def run(title, fields, prog=prog, events=events):
                     visible = {f.key for f in fields}
                     for key in keys:
                         self.assertEqual(key in visible, prog in ("ai-accounts", "agy-accounts"))

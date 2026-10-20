@@ -9,10 +9,11 @@ import time
 import urllib.error
 import urllib.request
 from collections import Counter
+from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Container, Final, Sequence, TypeAlias, TypeVar
+from typing import Final, TypeAlias, TypeVar
 
 from ._utils import BOLD, DIM, GREEN, RESET, YELLOW, log_yellow
 

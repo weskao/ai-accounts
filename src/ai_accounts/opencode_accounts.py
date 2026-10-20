@@ -21,13 +21,18 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from . import autoswitch
+from . import autoswitch, i18n, opencode_usage
 from . import config_menu as cm
-from . import i18n
-from . import opencode_usage
-from ._present import accounts_table, choose_and_run, choose_profile, format_help, ok, panel, usage_color
+from ._present import (
+    accounts_table,
+    choose_and_run,
+    choose_profile,
+    format_help,
+    ok,
+    panel,
+    usage_color,
+)
 from ._utils import (
-    log_unknown_command,
     BOLD,
     DIM,
     GREEN,
@@ -37,6 +42,7 @@ from ._utils import (
     fetch_parallel,
     has_control_chars,
     log_red,
+    log_unknown_command,
     log_yellow,
     normalize_command_argv,
     quiet_keyboard_interrupt,
