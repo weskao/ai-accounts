@@ -1,3 +1,16 @@
+## [0.27.0] - 2026-10-20
+
+### 🚀 Features
+
+- **timer:** Add timer_interval_min, cheap 5-min tick
+
+### 📚 Documentation
+
+- **timer:** Document timer_interval_min and cheap tick
+
+### ⚙️ Miscellaneous Tasks
+
+- **lint:** Enable ruff I, UP, B023, B904
 ## [0.26.2] - 2026-10-19
 
 ### 🚜 Refactor
