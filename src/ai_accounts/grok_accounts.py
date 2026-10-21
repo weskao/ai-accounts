@@ -46,7 +46,6 @@ from ._utils import (
 )
 from .usage_format import (
     UsageWindow,
-    credential_status_prefix,
     format_usage_window,
     json_empty_list,
     print_no_active_account,
@@ -108,8 +107,9 @@ grant against the token endpoint discovered from the credential's own
 issuer — nothing is hardcoded. It
 falls back to running `grok models` (letting the official CLI rotate the
 credential) when that grant needs a client secret ai-accounts does not hold.
-`switch` refreshes in place when the restored token is expired or within 5
-minutes of expiring.
+`switch` copies the live auth file back into the account being left (x.ai
+revokes a refresh token when it rotates it), then refreshes the restored
+access token in place when it is expired or within 5 minutes of expiring.
 """
 
 
@@ -346,15 +346,14 @@ def _active_profile(active: JsonDict | None = None) -> Path | None:
 
 
 def _expiry_status(claims: JsonDict) -> tuple[str, str]:
-    """(display text, color) — refresh-token health first, mirroring
-    gemini_accounts._list_expiry_status. A live refresh_token means the
-    account is healthy regardless of the (1h-lived) access token's own
-    expiry; RED is reserved for what actually needs a human: no refresh
-    token present, a malformed record, or (once refresh lands) one revoked
-    by x.ai."""
-    prefix = credential_status_prefix(claims)
-    if prefix is not None:
-        return prefix
+    """(display text, color) for the access token's own expiry, used by `who`.
+
+    x.ai access tokens last about an hour. List does not print this: a saved
+    profile is normally past that hour, and switch renews it. Malformed
+    records stay distinct from a real expiry.
+    """
+    if claims.get("malformed"):
+        return "malformed", YELLOW
     value = str(claims.get("expires_at") or "")
     if not value:
         return "—", DIM
@@ -502,7 +501,6 @@ _TABLE_COLUMNS = [
     ("1W USED", "usage_1w"),
     ("BUILD USED", "usage_build"),
     ("UPDATED", "usage_updated"),
-    ("EXPIRES", "expires"),
     ("STATE", "state"),
 ]
 
@@ -584,7 +582,6 @@ def cmd_list(
         if not malformed and claims.get("name"):
             account = f"{claims['name']} <{account}>"
         is_active = path == active
-        expires_text, expires_color = _expiry_status(claims)
         rows.append(
             {
                 "profile": f"{GREEN}{BOLD}{path.stem}{RESET}" if is_active else path.stem,
@@ -594,7 +591,6 @@ def cmd_list(
                 "usage_1w": _usage_cell(usage.weekly),
                 "usage_build": _usage_cell(usage.build),
                 "usage_updated": grok_usage.format_refreshed_at(usage),
-                "expires": f"{expires_color}{expires_text}{RESET}",
                 "state": state,
             }
         )
@@ -617,9 +613,36 @@ def _backup_active() -> bool:
     return True
 
 
+def _fold_active_into_profile(profile: Path) -> bool:
+    """Copy the live auth file into its own saved profile. No network.
+
+    x.ai rotates the refresh token on every grant and revokes the previous
+    one. The Grok CLI writes that rotation only to the live auth file, so
+    leaving the account without this copy saves a spent refresh token and
+    the next switch back cannot renew. Returns False only when the copy
+    itself could not be written — the caller must not then overwrite the
+    live file, or the only good token is gone.
+    """
+    live = _read_json(_auth_file())
+    if live is None or not _claims(live) or _claims(live).get("malformed"):
+        return True
+    saved = _load_profile_metadata(profile)
+    if saved is not None and _identity(saved) != _identity(live):
+        log_yellow(
+            f"⚠️  Not syncing active auth into {profile.name}: it belongs to a different account."
+        )
+        return True
+    return _save_profile(profile, live)
+
+
 def cmd_switch(name: str) -> int:
     profile = _profile_file(name)
     if profile is None:
+        return 1
+    # Fold before loading the target. Switching back onto the account just
+    # left must restore the tokens just copied, not the spent snapshot.
+    outgoing = _active_profile()
+    if outgoing is not None and not _fold_active_into_profile(outgoing):
         return 1
     payload = _load_profile(profile)
     if payload is None or not _claims(payload):

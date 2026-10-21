@@ -193,6 +193,34 @@ class GrokAccountsTests(unittest.TestCase):
         # principal_type "User" is no longer a table cell
         self.assertNotRegex(text, r"│ User │")
 
+    def test_list_omits_the_refreshable_expiry_column(self) -> None:
+        # Every OAuth row said "refreshable", and an idle profile's access
+        # token is normally past its hour. The table column carried neither
+        # a difference nor an alarm switch cannot already heal. `who` keeps
+        # the session word and the live access-token clock.
+        soon = _auth()
+        soon["https://auth.x.ai::client"]["expires_at"] = (
+            ga.datetime.now(ga.timezone.utc) + ga.timedelta(minutes=30)
+        ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        claims = ga._claims(soon)
+        self.assertTrue(claims["refreshable"])
+        text, color = ga._expiry_status(claims)
+        self.assertEqual(text, "<1h")
+        self.assertEqual(color, ga.YELLOW)
+
+        self.assertTrue(ga._write_json(self.account_dir / "personal.json", soon))
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(ga.cmd_list(fetch_usage=False), 0)
+        listing = _ANSI_RE.sub("", output.getvalue())
+        self.assertNotIn("EXPIRES", listing)
+        self.assertNotIn("refreshable", listing)
+        self.assertNotIn("<1h", listing)
+
+        detail = _ANSI_RE.sub("", "\n".join(ga._claims_lines(claims, self.account_dir / "personal.json")))
+        self.assertIn("refreshable", detail)
+        self.assertIn("<1h", detail)
+
     def test_list_json_includes_plan_and_weekly_usage(self) -> None:
         self.assertTrue(ga._write_json(ga._auth_file(), _auth()))
         self.assertTrue(ga._write_json(self.account_dir / "personal.json", _auth()))
@@ -844,6 +872,38 @@ class GrokDirectRefreshTests(unittest.TestCase):
 
         self.assertEqual(ga._record(ga._read_json(ga._auth_file()))["key"], "fresh-access-token")
         self.assertEqual(ga._record(ga._load_profile(profile))["key"], "fresh-access-token")
+
+    def test_switch_folds_the_live_rotated_token_into_the_outgoing_profile(self) -> None:
+        # x.ai kills the refresh token it just replaced. The CLI writes the
+        # new one only to the live auth file, so leaving that account must
+        # copy it back or the next switch to it cannot renew.
+        personal = self.account_dir / "personal.json"
+        stale = _auth()
+        stale["https://auth.x.ai::client"]["refresh_token"] = "spent-refresh-token"
+        stale["https://auth.x.ai::client"]["key"] = "spent-access-token"
+        live = _auth()
+        live["https://auth.x.ai::client"]["refresh_token"] = "rotated-refresh-token"
+        live["https://auth.x.ai::client"]["key"] = "rotated-access-token"
+        self.assertTrue(ga._write_json(personal, stale))
+        self.assertTrue(
+            ga._write_json(
+                self.account_dir / "work.json",
+                _auth("work@example.test", "principal-2"),
+            )
+        )
+        self.assertTrue(ga._write_json(ga._auth_file(), live))
+        ga._set_marker(personal)
+
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(ga.cmd_switch("work"), 0)
+
+        saved = ga._record(ga._load_profile(personal))
+        assert saved is not None
+        self.assertEqual(saved["refresh_token"], "rotated-refresh-token")
+        self.assertEqual(saved["key"], "rotated-access-token")
+        self.assertEqual(
+            ga._claims(ga._read_json(ga._auth_file()))["email"], "work@example.test"
+        )
 
     def test_switch_leaves_a_fresh_token_alone(self) -> None:
         profile = self.account_dir / "personal.json"

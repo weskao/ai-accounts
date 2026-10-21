@@ -335,7 +335,13 @@ tells you to run.
 ### Grok plan and usage
 
 `grok-accounts list` shows `PROFILE`, `ACCOUNT`, `PLAN`, `ID`, `1W USED`,
-`BUILD USED`, `UPDATED`, `EXPIRES`, and `STATE`. `PLAN` is the consumer
+`BUILD USED`, `UPDATED`, and `STATE`. Access-token expiry stays on `who`
+(`Session` is `refreshable` or `browser login`; `Expires` is the access
+token's own remaining time, about 1 hour). A saved profile's access token
+is normally past that hour, and `switch` renews it. `switch` also copies
+the live auth file back into the account being left before it overwrites
+that file, because x.ai revokes a refresh token when it issues the next
+one. `PLAN` is the consumer
 subscription (`SuperGrok`, `SuperGrok Plus`, `SuperGrok Heavy`, or `Free`)
 from the Grok Build CLI billing proxy — not the OIDC `principal_type`, which
 is `User` for every personal login. A successful `/user` reply with a null
