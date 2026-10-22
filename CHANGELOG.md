@@ -1,3 +1,12 @@
+## [0.27.1] - 2026-10-22
+
+### 🐛 Bug Fixes
+
+- **grok:** [**breaking**] Drop expires column, fold live token
+
+### 📚 Documentation
+
+- Scope repository guidance
 ## [0.27.0] - 2026-10-20
 
 ### 🚀 Features
