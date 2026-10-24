@@ -17,7 +17,7 @@ GitHub Copilot, Devin, and opencode.
 `ai-accounts list` brings saved profiles into one provider-by-provider view,
 marks the active profile, and shows usage where the provider supports it.
 
-![ai-accounts list showing saved profiles grouped by provider and active profile markers](ai-accounts-list%20demo.png)
+![ai-accounts list showing saved profiles grouped by provider and active profile markers](ai-accounts-list%20demo.jpeg)
 
 ### Configure switching and notifications
 
