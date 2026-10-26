@@ -353,9 +353,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.token_refresh.help": {
         "zh-TW": "依排程更新 OAuth token，與自動切換各自獨立。"
     },
-    "config.timer_interval_min.label": {"zh-TW": "排程間隔（分鐘）"},
+    "config.timer_interval_min.label": {"zh-TW": "↳ 重置偵測間隔（分鐘）"},
     "config.timer_interval_min.help": {
-        "zh-TW": "排程多久喚醒一次。沒有事要做時幾乎不耗資源；帳號檢查與 token 更新仍最多每 30 分鐘一次，縮短間隔主要是讓配額重置通知更快送達。"
+        "zh-TW": "配額重置多快被發現：重置時間一過，最晚在這麼多分鐘後的下次檢查就會送出通知。帳號檢查與 token 更新仍是每 30 分鐘一次，除非這裡設得更長。"
     },
     "config.update_check.label": {"zh-TW": "檢查更新"},
     "config.update_check.help": {

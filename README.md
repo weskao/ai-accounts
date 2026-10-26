@@ -915,7 +915,7 @@ provider probes, token refresh and the routine reset scan run at most every
 30 minutes, and a 5-minute tick only does work when a quota window's
 recorded deadline has just passed (it then runs the reset scan alone).
 Upgrading from the old 1800-second default? Re-run `install-timer` once.
-`timer_interval_min` (`ai-accounts config`, under General) sets how often the timer
+`timer_interval_min` (`ai-accounts config`, "Reset check interval" under Notifications) sets how often the timer
 wakes: numbers only, default 5, minimum 1, maximum 60. Changing it re-registers an
 already-installed timer by itself; with no timer installed it only saves the value.
 A passed `--interval` overrides the setting for that install only.

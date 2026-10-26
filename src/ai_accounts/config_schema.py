@@ -361,6 +361,19 @@ FIELDS: tuple[Field, ...] = (
         group="Notifications",
     ),
     Field(
+        # Key keeps its old name: renaming it would orphan saved configs.
+        key="timer_interval_min",
+        type=int,
+        default=5,
+        minimum=1,
+        maximum=60,
+        clamp=True,
+        label="↳ Reset check interval (minutes)",
+        help="How soon a quota reset is noticed: after a window's reset time passes, the next check (at most this many minutes later) sends the notification. Account checks and token refresh stay every 30 minutes, unless this is set longer.",
+        group="Notifications",
+        reregisters_timer=True,
+    ),
+    Field(
         key="agy_blind_switch",
         programs=("ai-accounts", "agy-accounts"),
         type=bool,
@@ -418,18 +431,6 @@ FIELDS: tuple[Field, ...] = (
         help="Refresh OAuth tokens on the scheduled timer, independent of auto-switch.",
         group="General",
         needs_timer=True,
-    ),
-    Field(
-        key="timer_interval_min",
-        type=int,
-        default=5,
-        minimum=1,
-        maximum=60,
-        clamp=True,
-        label="Timer interval (minutes)",
-        help="How often the scheduled timer wakes up. A wake-up with nothing due costs almost nothing; account checks and token refresh still run at most every 30 minutes, so a shorter interval mainly makes quota-reset notifications arrive sooner.",
-        group="General",
-        reregisters_timer=True,
     ),
     Field(
         key="update_check",
