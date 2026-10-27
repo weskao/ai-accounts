@@ -1,3 +1,16 @@
+## [0.28.0] - 2026-10-27
+
+### 🚀 Features
+
+- **notify:** Remind before reset vouchers expire
+
+### 🐛 Bug Fixes
+
+- **config:** Move reset interval to notifications
+
+### 📚 Documentation
+
+- **readme:** Refresh list and config demos with fake data
 ## [0.27.1] - 2026-10-22
 
 ### 🐛 Bug Fixes
