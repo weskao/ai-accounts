@@ -271,7 +271,9 @@ consumed, and nothing here calls the redeem endpoint):
   request. The auto-switch probe never makes it. Quota-reset detection runs
   `list --json` on every timer tick but sets an internal opt-out
   (`AI_ACCOUNTS_SKIP_RESET_EXPIRY`), so it skips the request and keeps only the
-  count.
+  count — except on the 30-minute full tick while
+  [voucher-expiry reminders](#reset-voucher-expiry-reminders) are on, which need
+  the expiries.
 - **Claude:** the usage request carries `?cedar_ember=1`, which adds a
   `cedar_ember` block to the same response — no extra request. Its grants'
   `resets_left` are summed and each grant's `ends_at` is the expiry; grants
@@ -288,6 +290,22 @@ The server only reports Claude vouchers to a client that looks like Claude
 Code, so the request sends `User-Agent: claude-cli/2.1.296 (external, cli)`. If
 vouchers turn `—` after a Claude Code upgrade, set `CLAUDE_USAGE_USER_AGENT` to
 a current value (for example `claude-cli/<your claude --version> (external, cli)`).
+
+### Reset-voucher expiry reminders
+
+`reset_expiry_notify` (default `true`) sends one notification when an unused
+voucher will expire within `reset_expiry_notify_hours` (default `24`, range
+1–720), e.g. `⏳ codex: work has 2 reset voucher(s) expiring in 5h 12m`. Each
+voucher is reminded about once; several due on the same tick share one grouped
+notification. It uses the configured `notify` channel, like every other
+notification. Both keys are in the "Notifications" group of `ai-accounts config`,
+`codex-accounts config` and `claude-accounts config`.
+
+It runs on the scheduled timer's 30-minute full tick (`ai-accounts
+install-timer`), reusing the quota-reset scan's `list --json` call, so it costs
+no extra subprocess — only the Codex expiry `GET` above, for accounts that have
+vouchers. Any provider whose `list --json` rows carry `reset_vouchers` is
+covered automatically.
 
 ### Claude credits
 

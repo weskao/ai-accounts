@@ -86,7 +86,7 @@ class _ConfigMixin:
         )
         env.start()
         self.addCleanup(env.stop)
-        aw.save_config({"reset_notify": False})
+        aw.save_config({"reset_notify": False, "reset_expiry_notify": False})
 
 
 class _SubprocessMixin:
@@ -464,7 +464,7 @@ class TimerEntryPointTests(_ConfigMixin, unittest.TestCase):
         # carried here too or this test would fire quota_reset.run_tick's
         # real provider subprocesses.
         self.config_path.write_text(
-            json.dumps({"enabled": "false", "reset_notify": False}), encoding="utf-8"
+            json.dumps({"enabled": "false", "reset_notify": False, "reset_expiry_notify": False}), encoding="utf-8"
         )
         probe = mock.Mock()
 
@@ -794,7 +794,7 @@ class ResetNotifyGateTests(_ConfigMixin, unittest.TestCase):
         # the gate run while the user's config was never actually set to the
         # JSON boolean `true`.
         self.config_path.write_text(
-            json.dumps({"reset_notify": "true"}), encoding="utf-8"
+            json.dumps({"reset_notify": "true", "reset_expiry_notify": False}), encoding="utf-8"
         )
 
         # When: the scheduled job's entry point fires
@@ -816,7 +816,7 @@ class ResetNotifyGateTests(_ConfigMixin, unittest.TestCase):
 
         # Then: run_tick runs, receiving the injected collect through
         self.assertEqual(result, 0)
-        run_tick.assert_called_once_with(collect=collect)
+        run_tick.assert_called_once_with(collect=collect, full=True)
 
     def test_reset_notify_defaults_to_on(self) -> None:
         # Given: no explicit reset_notify setting written — bypass
@@ -833,7 +833,7 @@ class ResetNotifyGateTests(_ConfigMixin, unittest.TestCase):
 
         # Then: run_tick still runs — "on by default" per config_schema
         self.assertEqual(result, 0)
-        run_tick.assert_called_once_with(collect=None)
+        run_tick.assert_called_once_with(collect=None, full=True)
 
     def test_reset_notify_fires_even_when_the_other_two_gates_are_off(self) -> None:
         # Given: enabled and token_refresh both off, reset_notify on
@@ -849,7 +849,7 @@ class ResetNotifyGateTests(_ConfigMixin, unittest.TestCase):
         self.assertEqual(result, 0)
         check.assert_not_called()
         refresh.assert_not_called()
-        run_tick.assert_called_once_with(collect=None)
+        run_tick.assert_called_once_with(collect=None, full=True)
 
     def test_reset_notify_off_while_the_other_two_gates_run(self) -> None:
         # Given: enabled and token_refresh both on, reset_notify left at its
@@ -866,6 +866,28 @@ class ResetNotifyGateTests(_ConfigMixin, unittest.TestCase):
         self.assertEqual(result, 0)
         check.assert_called_once_with()
         refresh.assert_called_once_with()
+        run_tick.assert_not_called()
+
+    def test_voucher_expiry_reminder_runs_run_tick_on_a_full_tick_alone(self) -> None:
+        # Given: reset_notify off, the voucher-expiry reminder on
+        aw.save_config({"reset_expiry_notify": True})
+
+        # When: a full tick fires
+        with mock.patch.object(at.quota_reset, "run_tick") as run_tick:
+            at.run_once(check=lambda: None, refresh=lambda: "")
+
+        # Then: run_tick still runs, told it is a full tick
+        run_tick.assert_called_once_with(collect=None, full=True)
+
+    def test_voucher_expiry_reminder_skips_short_ticks(self) -> None:
+        aw.save_config({"reset_expiry_notify": True})
+
+        with (
+            mock.patch.object(at, "_full_tick_due", return_value=False),
+            mock.patch.object(at.quota_reset, "run_tick") as run_tick,
+        ):
+            at.run_once(check=lambda: None, refresh=lambda: "")
+
         run_tick.assert_not_called()
 
 

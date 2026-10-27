@@ -284,6 +284,25 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Next reset: {next}",
         "zh-TW": "下次重置：{next}",
     },
+    # Reset-voucher (RESETS EXPIRE) reminders: `{left}` is format_elapsed's
+    # "5h 12m", `{at}` the compact expiry time. `.many.title`/`.line` group
+    # several the way the quota-reset wording above does.
+    "notify.voucher.title": {
+        "en": "⏳ {provider}: {profile} has {count} reset voucher(s) expiring in {left}",
+        "zh-TW": "⏳ {provider}：{profile} 有 {count} 張重置券將在 {left}後到期",
+    },
+    "notify.voucher.body": {
+        "en": "Expires: {at} — use it before then.",
+        "zh-TW": "到期時間：{at} — 請在此之前使用。",
+    },
+    "notify.voucher.many.title": {
+        "en": "⏳ ai-accounts: {count} reset vouchers expiring soon",
+        "zh-TW": "⏳ ai-accounts：{count} 張重置券即將到期",
+    },
+    "notify.voucher.line": {
+        "en": "• {provider} · {profile} · ×{count} in {left} ({at})",
+        "zh-TW": "• {provider} · {profile} · ×{count}，{left}後（{at}）",
+    },
     # Display names for a provider's quota-window keys (`providers.Provider`'s
     # `reset_windows`), looked up as `i18n.t(f"window.{key}", default=key)` —
     # keyed directly off the JSON window key so there is no second
@@ -340,6 +359,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "config.reset_notify_min_used_pct.label": {"zh-TW": "↳ 僅在重置前已用 ≥（%）時通知"},
     "config.reset_notify_min_used_pct.help": {
         "zh-TW": "只有重置前已用量達到至少 {value}% 才通知。"
+    },
+    "config.reset_expiry_notify.label": {"zh-TW": "重置券到期前提醒"},
+    "config.reset_expiry_notify.help": {
+        "zh-TW": "未使用的重置券（RESETS EXPIRE）即將到期時提醒一次。"
+    },
+    "config.reset_expiry_notify_hours.label": {"zh-TW": "↳ 提前幾小時提醒"},
+    "config.reset_expiry_notify_hours.help": {
+        "zh-TW": "重置券剩不到 {value} 小時就提醒。"
     },
     "config.agy_blind_switch.label": {"zh-TW": "Antigravity 盲切"},
     "config.agy_blind_switch.help": {

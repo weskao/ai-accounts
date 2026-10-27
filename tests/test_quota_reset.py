@@ -798,5 +798,161 @@ class StateFileTests(unittest.TestCase):
         self.assertEqual(qr.state_path().parent, aw.config_path().parent)
 
 
+DAY = 24 * 3600
+
+
+class ExpiringVouchersTests(unittest.TestCase):
+    """expiring_vouchers() is pure: which unused reset vouchers to remind about."""
+
+    def test_a_voucher_inside_the_window_is_reported(self) -> None:
+        _, events = qr.expiring_vouchers({"codex": {"work": (1000 + 3600,)}}, {}, 1000, DAY)
+
+        self.assertEqual(events, [qr.ExpiryEvent("codex", "work", 1000 + 3600, 1)])
+
+    def test_a_voucher_beyond_the_window_stays_quiet(self) -> None:
+        _, events = qr.expiring_vouchers({"codex": {"work": (1000 + DAY + 1,)}}, {}, 1000, DAY)
+
+        self.assertEqual(events, [])
+
+    def test_each_voucher_is_reminded_only_once(self) -> None:
+        expiries = {"claude": {"me": (5000,)}}
+        state, first = qr.expiring_vouchers(expiries, {}, 1000, DAY)
+        _, second = qr.expiring_vouchers(expiries, state, 1100, DAY)
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+
+    def test_vouchers_sharing_an_expiry_are_one_event_with_a_count(self) -> None:
+        # A claude grant's vouchers all share its ends_at.
+        _, events = qr.expiring_vouchers({"claude": {"me": (5000, 5000, 9000)}}, {}, 1000, DAY)
+
+        self.assertEqual(
+            events,
+            [qr.ExpiryEvent("claude", "me", 5000, 2), qr.ExpiryEvent("claude", "me", 9000, 1)],
+        )
+
+    def test_reminders_for_expired_vouchers_are_pruned(self) -> None:
+        reminded = {"codex/work/900": 900, "codex/work/5000": 5000}
+
+        state, _ = qr.expiring_vouchers({}, reminded, 1000, DAY)
+
+        # Kept even though codex was not collected this tick: only time retires a reminder.
+        self.assertEqual(state, {"codex/work/5000": 5000})
+
+
+class ReportExpiringTests(unittest.TestCase):
+    def test_single_event_names_provider_profile_and_count(self) -> None:
+        with mock.patch.object(qr.aw, "notify", return_value=True) as notify:
+            sent = qr.report_expiring([qr.ExpiryEvent("codex", "work", 1000 + 5 * 3600, 2)], 1000)
+
+        self.assertTrue(sent)
+        title, body = notify.call_args[0]
+        self.assertIn("codex", title)
+        self.assertIn("work", title)
+        self.assertIn("2", title)
+        self.assertIn("5h", title)
+
+    def test_several_events_send_one_grouped_notification(self) -> None:
+        events = [qr.ExpiryEvent("codex", "a", 5000, 1), qr.ExpiryEvent("claude", "b", 6000, 1)]
+
+        with mock.patch.object(qr.aw, "notify", return_value=True) as notify:
+            qr.report_expiring(events, 1000)
+
+        notify.assert_called_once()
+        title, body = notify.call_args[0]
+        self.assertIn("2", title)
+        self.assertIn("codex", body)
+        self.assertIn("claude", body)
+
+    def test_no_events_sends_nothing(self) -> None:
+        with mock.patch.object(qr.aw, "notify") as notify:
+            self.assertFalse(qr.report_expiring([], 1000))
+        notify.assert_not_called()
+
+
+class CollectExpiriesTests(unittest.TestCase):
+    """_collect_one reads `reset_vouchers` from any provider's `list --json`."""
+
+    PAYLOAD = [
+        {
+            "name": "work",
+            "no_quota_api": False,
+            "usage": {"weekly": {"percent": 10, "reset_time": 2000}},
+            "reset_vouchers": {
+                "count": 2,
+                "vouchers": [{"expires_at_unix": 5000}, {"expires_at_unix": 9000}],
+            },
+        },
+        {"name": "none", "no_quota_api": False, "usage": {}, "reset_vouchers": None},
+    ]
+
+    def _collect(self, expiries: dict | None) -> mock.Mock:
+        codex = next(p for p in PROVIDERS if p.key == "codex")
+        done = subprocess.CompletedProcess([], 0, stdout=json.dumps(self.PAYLOAD))
+        with mock.patch.object(qr.u, "run", return_value=done) as run:
+            self.assertIsNotNone(qr._collect_one(codex, expiries))
+        return run
+
+    def test_expiries_are_collected_without_the_skip_flag(self) -> None:
+        expiries: dict = {}
+        run = self._collect(expiries)
+
+        self.assertEqual(expiries, {"codex": {"work": (5000, 9000)}})
+        self.assertNotIn(usage_format.SKIP_RESET_EXPIRY_ENV, run.call_args.kwargs["env"])
+
+    def test_without_an_expiries_map_the_extra_get_stays_skipped(self) -> None:
+        run = self._collect(None)
+
+        self.assertEqual(run.call_args.kwargs["env"][usage_format.SKIP_RESET_EXPIRY_ENV], "1")
+
+
+class RunTickExpiryTests(StateFileTests):
+    def _tick(self, *, full: bool, now: int = 1000) -> mock.Mock:
+        def collect_all(expiries=None):
+            if expiries is not None:
+                expiries["codex"] = {"work": (1000 + 3600,)}  # one fixed voucher across ticks
+            return {"codex": {}}
+
+        with (
+            mock.patch.object(qr, "_collect_all", side_effect=collect_all) as collect,
+            mock.patch.object(qr.aw, "notify", return_value=True) as notify,
+            mock.patch.object(qr.time, "time", return_value=now),
+        ):
+            qr.run_tick(full=full)
+        collect.notify = notify
+        return collect
+
+    def test_full_tick_reminds_once_even_with_reset_notify_off(self) -> None:
+        aw.save_config({"reset_notify": False, "reset_expiry_notify": True})
+
+        first = self._tick(full=True)
+        second = self._tick(full=True, now=1100)
+
+        first.notify.assert_called_once()
+        second.notify.assert_not_called()
+        # reset_notify off: its own window state is never touched.
+        self.assertFalse(qr.state_path().exists())
+
+    def test_short_tick_does_not_fetch_voucher_expiries(self) -> None:
+        aw.save_config({"reset_notify": True, "reset_expiry_notify": True})
+
+        collect = self._tick(full=False)
+
+        collect.assert_called_once_with(None)
+        collect.notify.assert_not_called()
+
+    def test_reminder_respects_the_configured_hours(self) -> None:
+        aw.save_config({"reset_notify": False, "reset_expiry_notify": True, "reset_expiry_notify_hours": 1})
+
+        tick = self._tick(full=True, now=1000)  # expires in exactly 1h: inside
+
+        tick.notify.assert_called_once()
+
+    def test_both_off_collects_nothing(self) -> None:
+        aw.save_config({"reset_notify": False, "reset_expiry_notify": False})
+
+        self._tick(full=True).assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

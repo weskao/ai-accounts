@@ -448,10 +448,10 @@ def run_once(
         output = (refresh or _run_token_refresh_everywhere)()
         if any(marker in output.lower() for marker in _REVOKED_MARKERS):
             _report_revoked(output)
-    if aw.config_flag("reset_notify") and (  # fail closed: same rule, own flag
-        full or quota_reset.reset_due(now, FULL_TICK_SEC)
+    if (full and aw.config_flag("reset_expiry_notify")) or (  # fail closed: own flags
+        aw.config_flag("reset_notify") and (full or quota_reset.reset_due(now, FULL_TICK_SEC))
     ):
-        quota_reset.run_tick(collect=collect)
+        quota_reset.run_tick(collect=collect, full=full)
     return 0
 
 

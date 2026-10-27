@@ -53,6 +53,8 @@ _CONFIG_ENV = "AI_ACCOUNTS_CONFIG_JSON"
 # config_schema's declared default for reset_notify_min_used_pct — used only
 # as a fallback if a hand-edited config has a non-numeric value there.
 _DEFAULT_MIN_USED_PCT = 90
+# Same fallback role for reset_expiry_notify_hours.
+_DEFAULT_EXPIRY_HOURS = 24
 
 # ponytail: fixed per-provider ceiling, matching autoswitch_timer's
 # _REFRESH_TIMEOUT_SEC precedent and its rationale verbatim — a wedged
@@ -120,6 +122,22 @@ class ResetEvent:
     reset_at_bound: bool = False
 
 
+# provider key -> profile name -> unix expiry of each unused reset voucher
+# (RESETS EXPIRE), soonest first — from any provider whose `list --json` rows
+# carry `reset_vouchers`, so a new provider is covered by emitting that key.
+Expiries = dict[str, dict[str, tuple[int, ...]]]
+
+
+@dataclass(frozen=True, slots=True)
+class ExpiryEvent:
+    """Reset vouchers on one profile that expire together, inside the reminder window."""
+
+    provider: str
+    profile: str
+    expires_at: int
+    count: int
+
+
 # ── state file ───────────────────────────────────────────────────────────────
 
 
@@ -133,17 +151,23 @@ def state_path() -> Path:
     return _config_dir() / "quota-reset-state.json"
 
 
-def _read_state() -> State:
+def expiry_state_path() -> Path:
+    """Reset vouchers already reminded about, ``{"<provider>/<profile>/<expiry>": expiry}``.
+    Its own file: :func:`detect` drops every key of a collected provider it did not see."""
+    return _config_dir() / "reset-expiry-state.json"
+
+
+def _read_state(path: Path | None = None) -> State:
     try:
-        data = json.loads(state_path().read_text(encoding="utf-8"))
+        data = json.loads((path or state_path()).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
 
 
-def _write_state(state: State) -> None:
+def _write_state(state: State, path: Path | None = None) -> None:
     try:
-        u.atomic_write_json(state_path(), state)
+        u.atomic_write_json(path or state_path(), state)
     except OSError as exc:
         u.log_red(f"Could not record quota-reset state: {exc}")
 
@@ -210,8 +234,22 @@ def _collect_agy_cached() -> ProviderSnapshot | None:
     return profiles
 
 
-def _collect_one(provider: Provider) -> ProviderSnapshot | None:
+def _voucher_expiries(entry: dict[str, Any]) -> tuple[int, ...]:
+    """Unix expiries from one `list --json` row's ``reset_vouchers`` (see
+    ``usage_format.reset_vouchers_json``); empty when it carries none."""
+    vouchers = entry.get("reset_vouchers")
+    items = vouchers.get("vouchers") if isinstance(vouchers, dict) else None
+    if not isinstance(items, list):
+        return ()
+    stamps = (item.get("expires_at_unix") for item in items if isinstance(item, dict))
+    return tuple(sorted(ts for ts in stamps if isinstance(ts, int)))
+
+
+def _collect_one(provider: Provider, expiries: Expiries | None = None) -> ProviderSnapshot | None:
     """*provider*'s `list --json`, parsed into a :data:`ProviderSnapshot`.
+
+    Given *expiries*, also records each profile's reset-voucher expiries into
+    ``expiries[provider.key]`` from the same call — no second subprocess.
 
     Every failure (timeout, non-zero exit, bad JSON, an unexpected shape)
     returns None instead of raising — one bad provider must never abort the
@@ -219,13 +257,16 @@ def _collect_one(provider: Provider) -> ProviderSnapshot | None:
     """
     if provider.reset_windows_cached:
         return _collect_agy_cached()
+    env = dict(os.environ)
+    if expiries is None:
+        # Windows only; skip the Codex voucher-expiry GET.
+        env[usage_format.SKIP_RESET_EXPIRY_ENV] = "1"
     try:
         result = u.run(
             [sys.executable, "-m", provider.module, "list", "--json"],
             capture_output=True,
             timeout=_LIST_TIMEOUT_SEC,
-            # Timer ticks need windows only; skip the Codex voucher-expiry GET.
-            env={**os.environ, usage_format.SKIP_RESET_EXPIRY_ENV: "1"},
+            env=env,
         )
         if result.returncode != 0:
             return None
@@ -256,13 +297,16 @@ def _collect_one(provider: Provider) -> ProviderSnapshot | None:
                     used_pct=percent, reset_time=reset_time, plan=plan
                 )
         profiles[name] = windows
+        if expiries is not None and (stamps := _voucher_expiries(entry)):
+            # Each worker thread writes only its own provider's key.
+            expiries.setdefault(provider.key, {})[name] = stamps
     return profiles
 
 
-def _collect_all() -> Snapshot:
+def _collect_all(expiries: Expiries | None = None) -> Snapshot:
     watched = [p for p in PROVIDERS if p.reset_windows]
     with ThreadPoolExecutor(max_workers=max(1, len(watched))) as pool:
-        results = list(pool.map(_collect_one, watched))
+        results = list(pool.map(lambda p: _collect_one(p, expiries), watched))
     return {provider.key: result for provider, result in zip(watched, results)}
 
 
@@ -397,7 +441,36 @@ def detect(
     return new_state, events
 
 
+def expiring_vouchers(
+    expiries: Expiries, reminded: dict[str, int], now: int, within_sec: int
+) -> tuple[dict[str, int], list[ExpiryEvent]]:
+    """Reset vouchers expiring within *within_sec* of *now* not yet in *reminded*.
+
+    Returns ``(new_reminded, events)``: each voucher expiry is reminded about
+    once, keyed ``"<provider>/<profile>/<expiry>"``. A reminder is retired only
+    once its expiry passes — not when a provider fails to collect — so a
+    flaky tick cannot re-arm it.
+    """
+    new_reminded = {k: v for k, v in reminded.items() if isinstance(v, int) and v > now}
+    events: list[ExpiryEvent] = []
+    for provider, profiles in expiries.items():
+        for profile, stamps in profiles.items():
+            for expires_at, count in sorted(Counter(stamps).items()):
+                key = f"{provider}/{profile}/{expires_at}"
+                if now < expires_at <= now + within_sec and key not in new_reminded:
+                    events.append(ExpiryEvent(provider, profile, expires_at, count))
+                    new_reminded[key] = expires_at
+    return new_reminded, events
+
+
 # ── notification ─────────────────────────────────────────────────────────────
+
+
+def _elapsed(seconds: int) -> str:
+    """*seconds* as a localised "2d 9h" / "3h 12m"."""
+    return usage_format.format_elapsed(
+        seconds, unit=lambda n, u: i18n.t(f"elapsed.{u}", n=n)
+    )
 
 
 def _when(event: ResetEvent, now: int) -> str:
@@ -406,10 +479,7 @@ def _when(event: ResetEvent, now: int) -> str:
     if event.reset_at is None or now - event.reset_at < 60:
         return ""
     key = "notify.reset.within" if event.reset_at_bound else "notify.reset.ago"
-    ago = usage_format.format_elapsed(
-        now - event.reset_at, unit=lambda n, u: i18n.t(f"elapsed.{u}", n=n)
-    )
-    return i18n.t(key, ago=ago)
+    return i18n.t(key, ago=_elapsed(now - event.reset_at))
 
 
 def report(events: list[ResetEvent], now: int | None = None) -> bool:
@@ -471,14 +541,43 @@ def report(events: list[ResetEvent], now: int | None = None) -> bool:
     return aw.notify(title, body)
 
 
+def report_expiring(events: list[ExpiryEvent], now: int) -> bool:
+    """One notification for *events* via ``aw.notify()`` — a single line for
+    one, the grouped `.many` wording for several. Already de-duplicated by
+    :func:`expiring_vouchers`, so never ``notify_once``."""
+    if not events:
+        return False
+
+    def fields(event: ExpiryEvent) -> dict[str, Any]:
+        return {
+            "provider": event.provider,
+            "profile": event.profile,
+            "count": event.count,
+            "left": _elapsed(event.expires_at - now),
+            "at": usage_format.format_unix_time_compact(event.expires_at),
+        }
+
+    if len(events) == 1:
+        args = fields(events[0])
+        return aw.notify(i18n.t("notify.voucher.title", **args), i18n.t("notify.voucher.body", **args))
+    title = i18n.t("notify.voucher.many.title", count=sum(event.count for event in events))
+    body = "\n".join(i18n.t("notify.voucher.line", **fields(event)) for event in events)
+    return aw.notify(title, body)
+
+
 # ── one tick ─────────────────────────────────────────────────────────────────
 
 
-def _min_used_pct(cfg: dict[str, Any]) -> int:
+def _int_setting(cfg: dict[str, Any], key: str, default: int) -> int:
+    """*cfg[key]* as an int, *default* if a hand-edited config holds junk there."""
     try:
-        return int(cfg.get("reset_notify_min_used_pct", _DEFAULT_MIN_USED_PCT))
+        return int(cfg.get(key, default))
     except (TypeError, ValueError):
-        return _DEFAULT_MIN_USED_PCT
+        return default
+
+
+def _min_used_pct(cfg: dict[str, Any]) -> int:
+    return _int_setting(cfg, "reset_notify_min_used_pct", _DEFAULT_MIN_USED_PCT)
 
 
 def reset_due(now: int, grace_sec: int) -> bool:
@@ -500,22 +599,41 @@ def reset_due(now: int, grace_sec: int) -> bool:
     return False
 
 
-def run_tick(collect: Callable[[], Snapshot] | None = None) -> list[ResetEvent]:
+def run_tick(
+    collect: Callable[[], Snapshot] | None = None, *, full: bool = True
+) -> list[ResetEvent]:
     """Collect, detect, persist state, and notify — one scheduled-job tick.
+
+    Two features share the one collection: quota-reset notifications
+    (``reset_notify``) and reset-voucher expiry reminders
+    (``reset_expiry_notify``). The latter runs on *full* ticks only, since it
+    costs Codex an extra GET per account holding vouchers.
 
     *collect* lets a test inject a fake snapshot in place of real provider
     subprocesses, the same shape as ``autoswitch_timer.run_once``'s
-    check/refresh injection.
+    check/refresh injection; it carries no voucher expiries.
     """
     cfg = aw.load_config()
-    if cfg.get("reset_notify") is not True:  # fail closed, same rule as autoswitch.config_flag
+    # fail closed, same rule as autoswitch.config_flag
+    resets_on = cfg.get("reset_notify") is True
+    expiry_on = full and cfg.get("reset_expiry_notify") is True
+    if not (resets_on or expiry_on):
         return []
-    min_used_pct = _min_used_pct(cfg)
-    state = _read_state()
-    snapshot = (collect or _collect_all)()
+    expiries: Expiries | None = {} if expiry_on else None
+    snapshot = collect() if collect else _collect_all(expiries)
     now = int(time.time())
-    new_state, events = detect(state, snapshot, now, min_used_pct)
-    _write_state(new_state)
-    if events:
-        report(events, now)
+    events: list[ResetEvent] = []
+    if resets_on:
+        new_state, events = detect(_read_state(), snapshot, now, _min_used_pct(cfg))
+        _write_state(new_state)
+        if events:
+            report(events, now)
+    if expiries is not None:
+        hours = _int_setting(cfg, "reset_expiry_notify_hours", _DEFAULT_EXPIRY_HOURS)
+        reminded, expiring = expiring_vouchers(
+            expiries, _read_state(expiry_state_path()), now, hours * 3600
+        )
+        # Recorded only once sent: a dead channel retries next full tick.
+        if expiring and report_expiring(expiring, now):
+            _write_state(reminded, expiry_state_path())
     return events

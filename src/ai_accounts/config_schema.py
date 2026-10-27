@@ -360,6 +360,30 @@ FIELDS: tuple[Field, ...] = (
         help="Only notify when the window had reached at least {value}% used just before it reset.",
         group="Notifications",
     ),
+    # Reset-voucher (RESETS EXPIRE) reminders: any provider whose `list --json`
+    # rows carry `reset_vouchers` is covered — add its program here when it does.
+    Field(
+        key="reset_expiry_notify",
+        programs=("ai-accounts", "claude-accounts", "codex-accounts"),
+        type=bool,
+        default=True,
+        label="Notify before a reset voucher expires",
+        help="Remind once when an unused reset voucher (RESETS EXPIRE) is about to expire.",
+        group="Notifications",
+        needs_timer=True,
+    ),
+    Field(
+        key="reset_expiry_notify_hours",
+        programs=("ai-accounts", "claude-accounts", "codex-accounts"),
+        type=int,
+        default=24,
+        minimum=1,
+        maximum=720,
+        clamp=True,
+        label="↳ Remind this many hours ahead",
+        help="Remind when a reset voucher has less than {value} hours left.",
+        group="Notifications",
+    ),
     Field(
         # Key keeps its old name: renaming it would orphan saved configs.
         key="timer_interval_min",

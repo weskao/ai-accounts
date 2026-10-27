@@ -714,7 +714,13 @@ class RunMenuTest(_ConfigFileMixin, unittest.TestCase):
     def run_menu(self, read, **kwargs):
         out = io.StringIO()
         err = io.StringIO()
-        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+        # repaint() cuts a frame to the terminal's rows; without a tty that is
+        # shutil's 24-row fallback, which the full menu outgrows.
+        with (
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(err),
+            mock.patch.dict(os.environ, {"LINES": "80"}),
+        ):
             rc = cm.run_menu("test config", read=read, out=out, **kwargs)
         return rc, out.getvalue(), err.getvalue()
 

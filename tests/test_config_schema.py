@@ -299,6 +299,19 @@ class ResetNotifyProgramsTests(unittest.TestCase):
             self.assertNotIn("opencode-accounts", programs, key)
 
 
+class ResetExpiryNotifyTests(unittest.TestCase):
+    def test_defaults_to_on_with_a_24_hour_lead(self) -> None:
+        self.assertIs(cs.defaults()["reset_expiry_notify"], True)
+        self.assertEqual(cs.defaults()["reset_expiry_notify_hours"], 24)
+
+    def test_is_a_timer_feature_offered_where_vouchers_exist(self) -> None:
+        self.assertTrue(cs.field("reset_expiry_notify").needs_timer)
+        for key in ("reset_expiry_notify", "reset_expiry_notify_hours"):
+            programs = cs.field(key).programs
+            for program in ("ai-accounts", "claude-accounts", "codex-accounts"):
+                self.assertIn(program, programs, key)
+
+
 class GrowthTests(unittest.TestCase):
     """Adding a key must be one declarative entry and nothing else."""
 
