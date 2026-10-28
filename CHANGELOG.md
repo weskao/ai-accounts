@@ -1,3 +1,8 @@
+## [0.28.1] - 2026-10-28
+
+### 🐛 Bug Fixes
+
+- **codex:** Refresh active profile from live auth
 ## [0.28.0] - 2026-10-27
 
 ### 🚀 Features

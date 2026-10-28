@@ -1,3 +1,3 @@
 """Profile management for AI coding CLIs."""
 
-__version__ = "0.28.0"
+__version__ = "0.28.1"
