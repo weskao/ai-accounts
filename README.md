@@ -929,9 +929,8 @@ configured before the alert can be delivered.
 
 `ai-accounts install-timer` registers only the OS timer, without the provider
 hooks, and takes `--interval <seconds>` (default: the `timer_interval_min` setting, 5 minutes). Most ticks are cheap: the
-provider probes, token refresh and the routine reset scan run at most every
-30 minutes, and a 5-minute tick only does work when a quota window's
-recorded deadline has just passed (it then runs the reset scan alone).
+provider probes and token refresh run at most every 30 minutes; a 5-minute
+tick runs only the reset scan (one `list --json` per watched provider).
 Upgrading from the old 1800-second default? Re-run `install-timer` once.
 `timer_interval_min` (`ai-accounts config`, "Reset check interval" under Notifications) sets how often the timer
 wakes: numbers only, default 5, minimum 1, maximum 60. Changing it re-registers an
@@ -1104,12 +1103,10 @@ Provider coverage:
   duplicate those notifications
 - `vibe` — not supported: no quota API to watch.
 
-Detection only happens on a timer tick, so a scheduled reset is noticed on
-the first tick after its deadline (the `timer_interval_min` setting, default
-5 minutes) — it is not instantaneous or event-driven. Those early scans only
-run for windows at or above `reset_notify_min_used_pct`, and only for 30
-minutes after the deadline; an off-schedule reset (no deadline passed) is
-caught by the 30-minute routine scan.
+Detection only happens on a timer tick, so a reset — scheduled, or an
+off-schedule one such as Codex handing quota back early — is noticed on the
+next tick (the `timer_interval_min` setting, default 5 minutes); it is not
+instantaneous or event-driven.
 
 **The scheduled timer (`ai-accounts install-timer`) must be installed, or this
 feature does nothing:** with no timer running, `reset_notify` makes no extra

@@ -580,25 +580,6 @@ def _min_used_pct(cfg: dict[str, Any]) -> int:
     return _int_setting(cfg, "reset_notify_min_used_pct", _DEFAULT_MIN_USED_PCT)
 
 
-def reset_due(now: int, grace_sec: int) -> bool:
-    """True when a window worth notifying about passed its recorded deadline
-    within the last *grace_sec* — reads only the state file, no provider call.
-
-    Lets the timer collect right after a scheduled reset instead of waiting
-    for its next full tick. Capped by *grace_sec* so a provider that keeps
-    failing, or has not rolled its window yet, falls back to the full-tick
-    cadence instead of being polled every few minutes forever.
-    """
-    min_used_pct = _min_used_pct(aw.load_config())
-    for entry in _read_state().values():
-        try:
-            if entry["used_pct"] >= min_used_pct and 0 <= now - entry["reset_time"] < grace_sec:
-                return True
-        except (KeyError, TypeError):
-            continue  # a hand-edited or malformed entry is not a reason to collect
-    return False
-
-
 def run_tick(
     collect: Callable[[], Snapshot] | None = None, *, full: bool = True
 ) -> list[ResetEvent]:

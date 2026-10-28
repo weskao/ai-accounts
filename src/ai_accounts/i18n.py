@@ -382,7 +382,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "config.timer_interval_min.label": {"zh-TW": "↳ 重置偵測間隔（分鐘）"},
     "config.timer_interval_min.help": {
-        "zh-TW": "配額重置多快被發現：重置時間一過，最晚在這麼多分鐘後的下次檢查就會送出通知。帳號檢查與 token 更新仍是每 30 分鐘一次，除非這裡設得更長。"
+        "zh-TW": "配額重置多快被發現：每次檢查（相隔這麼多分鐘）都會詢問各服務，不論是到期重置或提早重置，下次檢查就會送出通知。帳號檢查與 token 更新仍是每 30 分鐘一次，除非這裡設得更長。"
     },
     "config.update_check.label": {"zh-TW": "檢查更新"},
     "config.update_check.help": {

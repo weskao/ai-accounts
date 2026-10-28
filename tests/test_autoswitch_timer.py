@@ -923,48 +923,37 @@ class GateOrderingTests(_ConfigMixin, unittest.TestCase):
 
 class CheapTickTests(_ConfigMixin, unittest.TestCase):
     """The OS fires every DEFAULT_INTERVAL_SEC, but heavy work runs at most
-    every FULL_TICK_SEC — except the reset scan, right after a deadline."""
+    every FULL_TICK_SEC — except the reset scan, which runs every tick."""
 
     def _tick(self, now: int, check, collect) -> None:
         with mock.patch.object(at.time, "time", return_value=now):
             at.run_once(check=check, refresh=lambda: "", collect=collect)
-
-    def _write_reset_state(self, used_pct: int, reset_time: int) -> None:
-        at.quota_reset.state_path().write_text(
-            json.dumps({"grok/p1/weekly": {"used_pct": used_pct, "reset_time": reset_time}}),
-            encoding="utf-8",
-        )
 
     def test_a_tick_between_full_ticks_skips_the_heavy_work(self) -> None:
         aw.save_config({"enabled": True, "reset_notify": True})
         check, collect = mock.Mock(), mock.Mock(return_value={})
         self._tick(1_000_000, check, collect)
         self._tick(1_000_000 + at.DEFAULT_INTERVAL_SEC, check, collect)
-        self.assertEqual((check.call_count, collect.call_count), (1, 1))
+        self.assertEqual((check.call_count, collect.call_count), (1, 2))
         # one full cadence later (minus scheduler slack) it runs again
         self._tick(1_000_000 + at.FULL_TICK_SEC - 30, check, collect)
-        self.assertEqual((check.call_count, collect.call_count), (2, 2))
+        self.assertEqual((check.call_count, collect.call_count), (2, 3))
 
-    def test_a_passed_deadline_triggers_the_reset_scan_early(self) -> None:
+    def test_an_early_reset_is_notified_on_the_next_short_tick(self) -> None:
+        # Codex hands quota back before its deadline: no deadline passed, yet
+        # the next 5-minute tick must notice, not the next 30-minute one.
         aw.save_config({"enabled": True, "reset_notify": True})
-        check, collect = mock.Mock(), mock.Mock(return_value={})
-        self._tick(1_000_000, check, collect)
-        # a high-usage window's deadline passed since the full tick
-        self._write_reset_state(used_pct=95, reset_time=1_000_100)
-        self._tick(1_000_300, check, collect)
-        self.assertEqual((check.call_count, collect.call_count), (1, 2))
-
-    def test_reset_due_ignores_low_usage_and_long_past_deadlines(self) -> None:
-        aw.save_config({"reset_notify": True})
-        now = 2_000_000
-        self._write_reset_state(used_pct=10, reset_time=now - 60)
-        self.assertFalse(at.quota_reset.reset_due(now, at.FULL_TICK_SEC))
-        self._write_reset_state(used_pct=95, reset_time=now - at.FULL_TICK_SEC)
-        self.assertFalse(at.quota_reset.reset_due(now, at.FULL_TICK_SEC))
-        self._write_reset_state(used_pct=95, reset_time=now + 60)
-        self.assertFalse(at.quota_reset.reset_due(now, at.FULL_TICK_SEC))
-        self._write_reset_state(used_pct=95, reset_time=now - 60)
-        self.assertTrue(at.quota_reset.reset_due(now, at.FULL_TICK_SEC))
+        win = at.quota_reset.WindowSnapshot
+        before = {"codex": {"p1": {"hourly": win(100, 1_003_600), "weekly": win(100, 1_300_000)}}}
+        after = {"codex": {"p1": {"hourly": win(0, 1_018_300), "weekly": win(0, 1_605_100)}}}
+        check = mock.Mock()
+        with mock.patch.object(at.quota_reset, "report") as report:
+            self._tick(1_000_000, check, lambda: before)
+            self._tick(1_000_300, check, lambda: after)
+        self.assertEqual(check.call_count, 1)  # account checks still wait for the full tick
+        report.assert_called_once()
+        events = report.call_args.args[0]
+        self.assertEqual({e.window for e in events}, {"hourly", "weekly"})
 
 
 class TimerIntervalSettingTests(_ConfigMixin, unittest.TestCase):

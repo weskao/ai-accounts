@@ -45,10 +45,9 @@ from . import autoswitch as aw
 
 LABEL = "com.ai_accounts.autoswitch"
 # The OS wakes the job every `timer_interval_min`, but a tick is cheap unless something is due:
-# the heavy work (provider probes, token refresh, routine reset scan) runs at
-# most every FULL_TICK_SEC, and the reset scan also runs early, on a 5-minute
-# tick, once a recorded quota deadline has passed — so a reset notification
-# lands within ~5 minutes instead of up to 30.
+# the heavy work (provider probes, token refresh, voucher expiry) runs at most
+# every FULL_TICK_SEC, while the reset scan runs on every tick — so a reset
+# notification, scheduled or early, lands within one interval instead of 30 min.
 _INTERVAL_FIELD = config_schema.field("timer_interval_min")
 DEFAULT_INTERVAL_SEC = _INTERVAL_FIELD.default * 60
 FULL_TICK_SEC = 30 * 60  # 30 minutes
@@ -429,8 +428,7 @@ def run_once(
     subprocesses).
 
     ``enabled`` and ``token_refresh`` run only on a full tick (at most every
-    :data:`FULL_TICK_SEC`); ``reset_notify`` also runs between full ticks when
-    :func:`quota_reset.reset_due` says a recorded deadline just passed.
+    :data:`FULL_TICK_SEC`); ``reset_notify`` runs on every tick.
 
     A refresh tick alerts via :func:`ai_accounts.autoswitch.notify_once` only
     when the refresh output mentions a revoked refresh token — never for a
@@ -448,9 +446,9 @@ def run_once(
         output = (refresh or _run_token_refresh_everywhere)()
         if any(marker in output.lower() for marker in _REVOKED_MARKERS):
             _report_revoked(output)
-    if (full and aw.config_flag("reset_expiry_notify")) or (  # fail closed: own flags
-        aw.config_flag("reset_notify") and (full or quota_reset.reset_due(now, FULL_TICK_SEC))
-    ):
+    # Every tick: an early reset (Codex/Claude handing quota back) moves no
+    # deadline, so only asking the provider can see it.
+    if (full and aw.config_flag("reset_expiry_notify")) or aw.config_flag("reset_notify"):
         quota_reset.run_tick(collect=collect, full=full)
     return 0
 

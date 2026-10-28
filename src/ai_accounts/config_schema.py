@@ -393,7 +393,7 @@ FIELDS: tuple[Field, ...] = (
         maximum=60,
         clamp=True,
         label="↳ Reset check interval (minutes)",
-        help="How soon a quota reset is noticed: after a window's reset time passes, the next check (at most this many minutes later) sends the notification. Account checks and token refresh stay every 30 minutes, unless this is set longer.",
+        help="How soon a quota reset is noticed: every check (this many minutes apart) asks the providers, so a scheduled or early reset is notified on the next one. Account checks and token refresh stay every 30 minutes, unless this is set longer.",
         group="Notifications",
         reregisters_timer=True,
     ),
