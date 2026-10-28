@@ -1,3 +1,8 @@
+## [0.28.2] - 2026-10-28
+
+### 🐛 Bug Fixes
+
+- **timer:** Scan for quota resets on every tick
 ## [0.28.1] - 2026-10-28
 
 ### 🐛 Bug Fixes
