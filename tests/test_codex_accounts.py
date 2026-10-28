@@ -585,6 +585,19 @@ class RefreshCommandTests(_CodexHomeMixin):
         auth_data = json.loads(auth.read_text())
         self.assertEqual(auth_data["tokens"]["refresh_token"], "rt-new")
 
+    def test_refresh_active_profile_uses_the_token_codex_rotated(self):
+        # Codex rotated auth.json after the last fold-back; the saved copy is spent.
+        # Sending it trips OpenAI's refresh_token_reused and kills the live login.
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-spent"))
+        self.write_auth(_auth_payload("acct-w", "w@x.com", refresh_token="rt-live"))
+        new = {"access_token": _jwt({"exp": int(time.time()) + 864000}),
+               "refresh_token": "rt-new"}
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(new, None)) as refresh:
+            rc = self.run_quiet(ca.cmd_refresh, "work")
+
+        self.assertEqual(rc, 0)
+        refresh.assert_called_once_with("rt-live")
+
     def test_refresh_other_profile_leaves_auth_json_alone(self):
         self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
         auth = self.write_auth(_auth_payload("acct-p", "p@x.com"))

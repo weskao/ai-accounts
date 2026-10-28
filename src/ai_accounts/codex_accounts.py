@@ -1268,6 +1268,13 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
         cmd_list()
         return 1, None
 
+    # Codex rotates the active login's refresh_token in auth.json without
+    # touching the saved copy. Refreshing from that spent copy returns
+    # refresh_token_reused and OpenAI revokes the live token with it — so fold
+    # the live auth back first, the same way `switch` does.
+    if _active_profile() == profile_file:
+        _copy_active_auth_to(profile_file)
+
     refreshed, kind = _refresh_file(profile_file, name)
     if refreshed is None:
         return 1, kind
