@@ -871,9 +871,15 @@ def _save_profile_auth(name: str, auth_text: str) -> int:
     # Converge auth.json AND the keychain mirror to the same content:
     # `codex login` writes auth.json without updating the keychain item, so
     # without the mirror the next keychain-first read (ours or codex's own)
-    # would resurrect pre-login tokens.
-    _write_vendor_auth(_auth_file(), auth)
-    _mirror_active_auth_to_keychain(_auth_file())
+    # would resurrect pre-login tokens. Never converge toward an older login:
+    # a missed keychain read falls back to a stale auth.json, and pushing its
+    # spent token over the keychain's would force a re-login.
+    keychain_text = _read_keychain_auth()
+    keychain_ts = _parse_last_refresh(keychain_text) if keychain_text else None
+    auth_ts = _parse_last_refresh(auth_text)
+    if keychain_ts is None or auth_ts is None or auth_ts >= keychain_ts:
+        _write_vendor_auth(_auth_file(), auth)
+        _mirror_active_auth_to_keychain(_auth_file())
     _set_current_profile(profile_file)
 
     success_panel(

@@ -315,6 +315,23 @@ class SaveCommandTests(_CodexHomeMixin):
         auth = json.loads((self.home / "auth.json").read_text())
         self.assertEqual(auth["tokens"]["refresh_token"], "rt-live")
 
+    def test_save_never_pushes_stale_auth_json_over_a_newer_keychain(self):
+        # codex rotates keychain-only, so auth.json goes stale. A keychain read
+        # that misses once makes save fall back to it; converging the live
+        # stores must not then write that spent token into the keychain.
+        self.write_auth(_auth_payload("acct-w", "w@x.com", refresh_token="rt-stale"))
+        live = json.dumps(
+            _auth_payload(
+                "acct-w", "w@x.com", refresh_token="rt-live",
+                last_refresh="2026-07-11T12:00:00.000000Z",
+            )
+        )
+        reads = iter([None])
+        with mock.patch.object(ca, "_keychain_account", return_value="tester"), \
+                mock.patch.object(ca, "_read_keychain_auth", side_effect=lambda: next(reads, live)):
+            self.assertEqual(self.run_quiet(ca.cmd_save, "work"), 0)
+        self.assertEqual(self.keychain_writes, [])
+
     def test_save_works_with_keychain_only_login_no_auth_json_file(self):
         # Pure keychain-backed login: codex never wrote auth.json at all.
         live = json.dumps(_auth_payload("acct-k", "k@x.com", refresh_token="rt-kc"))
