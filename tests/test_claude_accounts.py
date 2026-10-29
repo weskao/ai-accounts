@@ -883,6 +883,44 @@ class RefreshTests(_HomeMixin):
         self.assertEqual(active["refreshToken"], "rt-2")
         self.assertEqual(ca._active_profile(), profile)
 
+    def _saved_with_identity(self, email: str) -> Path:
+        profile = self.home / "accounts" / "work.json"
+        ca._write_profile(profile, _oauth(access="old", refresh="rt-saved"), {"email": email, "name": "User"})
+        self.mark_current("work")
+        return profile
+
+    def test_refresh_after_claude_code_rotated_the_live_token_uses_the_live_one(self) -> None:
+        # Claude Code rotated the token after `save`: the saved copy is spent, so
+        # the fingerprint no longer matches. The account email still does.
+        profile = self._saved_with_identity("user@example.com")
+        (self.home / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": "user@example.com"}}), encoding="utf-8"
+        )
+        self.set_active(_oauth(access="live", refresh="rt-live"))
+        used: list[str] = []
+
+        def refresh(token: str):
+            used.append(token)
+            return {"access_token": "rotated", "refresh_token": "rt-2", "expires_in": 3600}, None
+
+        with mock.patch.object(ca, "_oauth_refresh", side_effect=refresh):
+            self.assertEqual(self.quiet(ca.cmd_refresh, "--all"), 0)
+        self.assertEqual(used, ["rt-live"])
+        self.assertEqual(self.active_oauth()["refreshToken"], "rt-2")
+        self.assertEqual(ca._read_profile_oauth(profile)["refreshToken"], "rt-2")
+
+    def test_refresh_never_overwrites_live_creds_of_a_different_account(self) -> None:
+        self._saved_with_identity("user@example.com")
+        (self.home / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": "other@example.com"}}), encoding="utf-8"
+        )
+        self.set_active(_oauth(access="live", refresh="rt-live"))
+        refreshed = {"access_token": "rotated", "refresh_token": "rt-2", "expires_in": 3600}
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(refreshed, None)):
+            self.assertEqual(self.quiet(ca.cmd_refresh, "--all"), 0)
+        self.assertIsNone(ca._active_profile())
+        self.assertEqual(self.active_oauth()["refreshToken"], "rt-live")
+
     def test_refresh_revoked_token_fails(self) -> None:
         self.write_profile("work", _oauth(refresh="rt-dead"))
         with mock.patch.object(ca, "_oauth_refresh", return_value=(None, "revoked: rejected")):

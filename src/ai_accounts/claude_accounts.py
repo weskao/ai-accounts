@@ -423,8 +423,9 @@ def _plan_row_cell(claims: dict | None) -> str:
 
 # ── token identity ──────────────────────────────────────────────────────────
 # No stable account id exists, so a profile is matched to the active session by
-# matching token FINGERPRINTS only (there is no same-account grouping like
-# codex/agy). Fingerprints (not raw tokens) so matching never needs a store read.
+# token FINGERPRINT, plus the marked profile's saved email as a fallback (there
+# is no same-account grouping like codex/agy). Fingerprints (not raw tokens) so
+# matching never needs a store read.
 
 def _token_key_from_oauth(oauth: dict) -> str | None:
     token = oauth.get("refreshToken") or oauth.get("accessToken")
@@ -518,6 +519,12 @@ def _active_profile(active_oauth: dict | None = None) -> Path | None:
         if active_token is not None and _token_key_from_path(marked) == active_token:
             return marked
         if active_token is None:
+            return marked
+        # Claude Code rotates the live token on its own, so after a save the
+        # fingerprints drift apart. The marked profile still owns the session
+        # when its saved email matches ~/.claude.json's live account.
+        saved_email = (_read_profile_identity(marked) or {}).get("email")
+        if saved_email and saved_email == (_read_active_identity() or {}).get("email"):
             return marked
 
     account_dir = _account_dir()
@@ -1135,7 +1142,13 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
         cmd_list()
         return 1, None
 
-    oauth = _read_profile_oauth(profile_file)
+    # Decide before rewriting the profile: a rotated refresh token would no
+    # longer match the live one, skipping the sync and stranding the live
+    # session on a token the endpoint just invalidated.
+    synced_active = _active_profile() == profile_file
+    # The live session is never staler than the saved copy, whose refresh
+    # token Claude Code may already have rotated away.
+    oauth = (_read_active_oauth() if synced_active else None) or _read_profile_oauth(profile_file)
     if oauth is None:
         log_red(f"❌ Profile is unreadable: {name}")
         return 1, "revoked"
@@ -1143,10 +1156,6 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
     if new_oauth is None:
         return 1, kind
 
-    # Decide before rewriting the profile: a rotated refresh token would no
-    # longer match the live one, skipping the sync and stranding the live
-    # session on a token the endpoint just invalidated.
-    synced_active = _active_profile() == profile_file
     _write_profile(profile_file, new_oauth)
     if synced_active:
         _write_active_oauth(new_oauth)
