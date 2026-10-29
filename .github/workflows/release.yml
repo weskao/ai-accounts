@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # PyPI trusted publishing (OIDC)
 
 concurrency:
   group: release-${{ github.ref }}
@@ -52,3 +53,6 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --title "$GITHUB_REF_NAME" --verify-tag
           fi
+      - name: Publish to PyPI
+        # Explicit globs: dist/ also holds SHA256SUMS, which PyPI rejects.
+        run: uv publish --trusted-publishing always dist/*.whl dist/*.tar.gz
