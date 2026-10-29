@@ -363,6 +363,23 @@ class ProfileCommandTests(_HomeMixin):
     def test_save_without_credentials_errors(self) -> None:
         self.assertEqual(self.quiet(ca.cmd_save, "work"), 1)
 
+    def test_save_never_writes_stale_file_creds_over_the_live_keychain(self) -> None:
+        # Claude Code rotates tokens in the keychain only, so the file goes stale.
+        # A keychain read that misses once makes save fall back to that file; it
+        # must not then push the stale (rotated-away) token into the keychain.
+        self.set_active(_oauth(access="at-live", refresh="rt-live"))
+        live = self.keychain
+        ca._creds_file().write_text(
+            json.dumps({"claudeAiOauth": _oauth(access="at-stale", refresh="rt-stale")}),
+            encoding="utf-8",
+        )
+        reads = iter([None])
+        with mock.patch.object(
+            ca, "_read_keychain_creds", side_effect=lambda: next(reads, self.keychain)
+        ):
+            self.assertEqual(self.quiet(ca.cmd_save, "work"), 0)
+        self.assertEqual(self.keychain, live)
+
     def test_switch_activates_profile_and_preserves_mcp_tokens(self) -> None:
         self.set_active(_oauth(access="at-a", refresh="rt-a"))
         # Far-future expiry so the switch's in-place refresh doesn't fire — this
@@ -850,6 +867,21 @@ class RefreshTests(_HomeMixin):
         active = self.active_oauth()
         assert active is not None
         self.assertEqual(active["accessToken"], "rotated")
+
+    def test_refresh_named_active_profile_with_rotated_refresh_token_updates_live(self) -> None:
+        # The endpoint rotates the refresh token, so the old live one dies; if the
+        # live stores are not updated, Claude Code's session needs a re-login.
+        oauth = _oauth(access="old", refresh="rt-1")
+        profile = self.write_profile("work", oauth)
+        self.set_active(oauth)
+        self.mark_current("work")
+        refreshed = {"access_token": "rotated", "refresh_token": "rt-2", "expires_in": 3600}
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(refreshed, None)):
+            self.assertEqual(self.quiet(ca.cmd_refresh, "--all"), 0)
+        active = self.active_oauth()
+        assert active is not None
+        self.assertEqual(active["refreshToken"], "rt-2")
+        self.assertEqual(ca._active_profile(), profile)
 
     def test_refresh_revoked_token_fails(self) -> None:
         self.write_profile("work", _oauth(refresh="rt-dead"))

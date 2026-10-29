@@ -753,9 +753,9 @@ def _save_profile_oauth(name: str, oauth: dict, identity: dict | None = None) ->
     if profile_file is None:
         return 1
     _write_profile(profile_file, oauth, identity)
-    # Converge the live stores so the file and keychain mirror match this profile
-    # (a fresh `claude auth login` may have written only one of them).
-    _write_active_oauth(oauth)
+    # Read-only on the live stores: Claude Code rotates tokens in the keychain
+    # while the file goes stale, so writing back here could push a dead token
+    # over the live one and force a re-login.
     _set_current_profile(profile_file)
 
     success_panel(
@@ -1143,12 +1143,14 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
     if new_oauth is None:
         return 1, kind
 
+    # Decide before rewriting the profile: a rotated refresh token would no
+    # longer match the live one, skipping the sync and stranding the live
+    # session on a token the endpoint just invalidated.
+    synced_active = _active_profile() == profile_file
     _write_profile(profile_file, new_oauth)
-    synced_active = False
-    if _active_profile() == profile_file:
+    if synced_active:
         _write_active_oauth(new_oauth)
         _set_current_profile(profile_file)
-        synced_active = True
 
     if show_summary:
         details = (
@@ -1297,6 +1299,9 @@ def cmd_login_switch(name: str) -> int:
         return 1
     identity_after = _read_active_identity()
     identity = identity_after if identity_after and identity_after != identity_before else None
+    # Converge the live stores: a fresh `claude auth login` may have written
+    # only one of them, and nothing has rotated these tokens yet.
+    _write_active_oauth(new_oauth)
     return _save_profile_oauth(name, new_oauth, identity)
 
 
