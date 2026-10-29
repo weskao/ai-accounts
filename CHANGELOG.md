@@ -1,3 +1,8 @@
+## [0.28.3] - 2026-10-29
+
+### 🐛 Bug Fixes
+
+- **config:** List reset interval under reset notify
 ## [0.28.2] - 2026-10-28
 
 ### 🐛 Bug Fixes
