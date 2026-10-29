@@ -1,3 +1,8 @@
+## [0.28.5] - 2026-10-29
+
+### ⚙️ Miscellaneous Tasks
+
+- **release:** Publish to PyPI via trusted publishing
 ## [0.28.4] - 2026-10-29
 
 ### 🐛 Bug Fixes
