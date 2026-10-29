@@ -298,6 +298,15 @@ class ResetNotifyProgramsTests(unittest.TestCase):
             self.assertIn("devin-accounts", programs, key)
             self.assertNotIn("opencode-accounts", programs, key)
 
+    def test_check_interval_sits_under_reset_notify_not_the_voucher_reminder(self) -> None:
+        # Every tick scans for resets; voucher expiry only runs on full ticks.
+        keys = [f.key for f in cs.FIELDS]
+        at = keys.index("reset_notify_min_used_pct")
+        self.assertEqual(keys[at + 1], "timer_interval_min")
+
+    def test_check_interval_is_offered_wherever_reset_notify_is(self) -> None:
+        self.assertEqual(cs.field("timer_interval_min").programs, cs.field("reset_notify").programs)
+
 
 class ResetExpiryNotifyTests(unittest.TestCase):
     def test_defaults_to_on_with_a_24_hour_lead(self) -> None:

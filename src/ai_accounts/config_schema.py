@@ -260,6 +260,20 @@ def _table_style_demo(value: object) -> list[str]:
 
 # ── the schema (append here to add a setting; nothing else to touch) ─────────
 
+# Quota-reset notifications: vibe has zero reset windows to watch
+# (providers.PROVIDERS' `reset_windows`), so this has no effect for it.
+# agy is included — its readings come from its local usage cache rather
+# than a live probe, but the setting does govern them.
+_RESET_NOTIFY_PROGRAMS = (
+    "ai-accounts",
+    "agy-accounts",
+    "claude-accounts",
+    "codex-accounts",
+    "copilot-accounts",
+    "devin-accounts",
+    "grok-accounts",
+)
+
 FIELDS: tuple[Field, ...] = (
     Field(
         key="enabled",
@@ -318,21 +332,9 @@ FIELDS: tuple[Field, ...] = (
         help="Bot API chat id that receives the notification.",
         group="Notifications",
     ),
-    # Quota-reset notifications: vibe has zero reset windows to watch
-    # (providers.PROVIDERS' `reset_windows`), so this has no effect for it.
-    # agy is included — its readings come from its local usage cache rather
-    # than a live probe, but the setting does govern them.
     Field(
         key="reset_notify",
-        programs=(
-            "ai-accounts",
-            "agy-accounts",
-            "claude-accounts",
-            "codex-accounts",
-            "copilot-accounts",
-            "devin-accounts",
-            "grok-accounts",
-        ),
+        programs=_RESET_NOTIFY_PROGRAMS,
         type=bool,
         default=True,
         label="Notify on quota reset",
@@ -342,15 +344,7 @@ FIELDS: tuple[Field, ...] = (
     ),
     Field(
         key="reset_notify_min_used_pct",
-        programs=(
-            "ai-accounts",
-            "agy-accounts",
-            "claude-accounts",
-            "codex-accounts",
-            "copilot-accounts",
-            "devin-accounts",
-            "grok-accounts",
-        ),
+        programs=_RESET_NOTIFY_PROGRAMS,
         type=int,
         default=90,
         minimum=0,
@@ -359,6 +353,20 @@ FIELDS: tuple[Field, ...] = (
         label="↳ Only if it was ≥ (%) used",
         help="Only notify when the window had reached at least {value}% used just before it reset.",
         group="Notifications",
+    ),
+    Field(
+        # Key keeps its old name: renaming it would orphan saved configs.
+        key="timer_interval_min",
+        programs=_RESET_NOTIFY_PROGRAMS,
+        type=int,
+        default=5,
+        minimum=1,
+        maximum=60,
+        clamp=True,
+        label="↳ Reset check interval (minutes)",
+        help="How soon a quota reset is noticed: every check (this many minutes apart) asks the providers, so a scheduled or early reset is notified on the next one. Account checks and token refresh stay every 30 minutes, unless this is set longer.",
+        group="Notifications",
+        reregisters_timer=True,
     ),
     # Reset-voucher (RESETS EXPIRE) reminders: any provider whose `list --json`
     # rows carry `reset_vouchers` is covered — add its program here when it does.
@@ -383,19 +391,6 @@ FIELDS: tuple[Field, ...] = (
         label="↳ Remind this many hours ahead",
         help="Remind when a reset voucher has less than {value} hours left.",
         group="Notifications",
-    ),
-    Field(
-        # Key keeps its old name: renaming it would orphan saved configs.
-        key="timer_interval_min",
-        type=int,
-        default=5,
-        minimum=1,
-        maximum=60,
-        clamp=True,
-        label="↳ Reset check interval (minutes)",
-        help="How soon a quota reset is noticed: every check (this many minutes apart) asks the providers, so a scheduled or early reset is notified on the next one. Account checks and token refresh stay every 30 minutes, unless this is set longer.",
-        group="Notifications",
-        reregisters_timer=True,
     ),
     Field(
         key="agy_blind_switch",
