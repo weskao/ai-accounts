@@ -1,3 +1,11 @@
+## [0.28.4] - 2026-10-29
+
+### 🐛 Bug Fixes
+
+- **claude:** Keep live session valid on save/refresh
+- **codex:** Never push stale auth over newer keychain
+- **grok:** Keep rotated live auth on cli refresh
+- **claude:** Match active profile by email fallback
 ## [0.28.3] - 2026-10-29
 
 ### 🐛 Bug Fixes
