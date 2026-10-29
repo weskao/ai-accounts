@@ -942,12 +942,15 @@ def _refresh_profile(profile: Path) -> int:
         log_yellow(f"   Re-login with: grok-accounts login-switch {profile.stem}")
         return 1
     log_yellow(f"⚠️  Direct refresh unavailable for {profile.stem} ({error}) — using the Grok CLI.")
-    return _refresh_profile_via_cli(profile)
+    return _refresh_profile_via_cli(profile, payload if is_active else None)
 
 
-def _refresh_profile_via_cli(profile: Path) -> int:
+def _refresh_profile_via_cli(profile: Path, live: JsonDict | None = None) -> int:
+    """`live` is the active login's auth when `profile` is the active profile:
+    the CLI's rotation then kills its refresh token, so the rotated auth must
+    stay live instead of the pre-refresh copy being restored."""
     original = _read_json(_auth_file())
-    payload = _load_profile(profile)
+    payload = live or _load_profile(profile)
     if payload is None:
         log_red(f"❌ Profile is unreadable: {profile.stem}")
         return 1
@@ -956,12 +959,11 @@ def _refresh_profile_via_cli(profile: Path) -> int:
             return 1
         status = _run_grok_refresh()
         refreshed = _read_json(_auth_file())
-        if (
-            status == 0
-            and refreshed is not None
-            and not _save_profile(profile, refreshed)
-        ):
-            return 1
+        if status == 0 and refreshed is not None:
+            if not _save_profile(profile, refreshed):
+                return 1
+            if live is not None:
+                original = None  # the rotated auth is already live
         return status
     finally:
         if original is not None:

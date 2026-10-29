@@ -802,6 +802,36 @@ class GrokDirectRefreshTests(unittest.TestCase):
 
         cli.assert_called_once()
 
+    def test_active_profile_cli_refresh_keeps_the_rotated_live_auth(self) -> None:
+        # x.ai kills the refresh token it replaces, so restoring the pre-refresh
+        # auth file after the CLI rotated it would leave Grok logged out.
+        live = _oidc_auth()
+        profile = self.account_dir / "personal.json"
+        self.assertTrue(ga._write_json(profile, live))
+        self.assertTrue(ga._write_json(ga._auth_file(), live))
+        ga._marker_file().write_text("personal", encoding="utf-8")
+
+        def refresh() -> int:
+            rotated = ga._read_json(ga._auth_file())
+            assert rotated is not None
+            rotated["https://auth.x.ai::client"]["refresh_token"] = "rotated-refresh-token"
+            self.assertTrue(ga._write_json(ga._auth_file(), rotated))
+            return 0
+
+        with (
+            mock.patch.object(ga, "_token_endpoint", return_value="https://auth.example.test/t"),
+            mock.patch.object(
+                ga, "oauth_token_refresh", return_value=(None, "network error: timed out")
+            ),
+            mock.patch.object(ga, "_run_grok_refresh", side_effect=refresh),
+            redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(ga._refresh_profile(profile), 0)
+
+        auth = ga._read_json(ga._auth_file())
+        assert auth is not None
+        self.assertEqual(auth["https://auth.x.ai::client"]["refresh_token"], "rotated-refresh-token")
+
     def test_revoked_refresh_token_fails_without_spawning_the_cli(self) -> None:
         profile = self.account_dir / "personal.json"
         self.assertTrue(ga._write_json(profile, _oidc_auth()))
