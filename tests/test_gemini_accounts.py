@@ -471,7 +471,7 @@ class UsageTests(unittest.TestCase):
                 )
 
     def test_explicit_quota_period_overrides_legacy_labels(self) -> None:
-        for period, expected_minutes in (("five-hour", 300), ("daily", None), ("unknown", None)):
+        for period, expected_minutes in (("five-hour", 300), ("5h", 300), ("daily", None), ("unknown", None)):
             with self.subTest(period=period):
                 snapshot = gu._snapshot({"groups": [{
                     "displayName": "Gemini Models", "buckets": [{

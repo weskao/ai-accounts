@@ -645,6 +645,7 @@ agy omits fields that hold a default value, so a spent bucket's
 `remainingFraction` can be missing without any API change.
 Quota periods use the bucket's `window` field, falling back to its ID/name
 when that field is missing or blank; unknown explicit periods remain unavailable.
+The 5-hour period is accepted as `five-hour` or `5h` (agy 1.4.10 sends `5h`).
 If agy returns only weekly buckets,
 the 5-hour readings remain unavailable; they are not inferred from weekly
 quota. Optional tier fields such as `upgradeButtonText` and `availableCredits`,

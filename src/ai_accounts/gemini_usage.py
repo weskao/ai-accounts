@@ -88,7 +88,7 @@ def _window(bucket: JsonDict) -> UsageWindow | None:
     display_name = str(bucket.get("displayName", "")).lower()
     period = bucket.get("window")
     if isinstance(period, str) and period.strip():
-        window_minutes = {"weekly": 7 * 24 * 60, "five-hour": 5 * 60}.get(period.strip().lower())
+        window_minutes = {"weekly": 7 * 24 * 60, "five-hour": 5 * 60, "5h": 5 * 60}.get(period.strip().lower())
         if window_minutes is None:
             return None
     else:
