@@ -1,3 +1,8 @@
+## [0.28.6] - 2026-10-30
+
+### 🐛 Bug Fixes
+
+- **gemini:** Accept 5h quota window
 ## [0.28.5] - 2026-10-29
 
 ### ⚙️ Miscellaneous Tasks
