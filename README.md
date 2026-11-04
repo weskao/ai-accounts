@@ -1003,18 +1003,7 @@ the tick prints a report and sends the same content over the configured
 `notify` channel — grouped by provider, one row per profile with the reason it
 failed and the command that fixes it:
 
-```
-┌─ 🔑 ai-accounts: 3 profiles need re-login — codex, agy ─┐
-│  🔐 codex · 2 profiles
-│    • work — HTTP 400 from token endpoint
-│      ↳ codex-accounts login-switch work
-│    • spare — refresh token missing or rejected
-│      ↳ codex-accounts login-switch spare
-│  🔐 agy · 1 profile
-│    • personal — revoked: refresh token rejected (invalid_grant)
-│      ↳ agy-accounts login-switch personal
-└─────────────────────────────────────────────────────────┘
-```
+![Re-login report panel grouped by provider, one row per profile with the reason and the fix command](docs/cli-screenshots/relogin-report.jpeg)
 
 Each provider gets its own color, on the heading and on every profile name
 under it. The alert is de-duplicated by the exact set of profiles it names:
@@ -1193,15 +1182,7 @@ previewed from a full-size terminal:
 COLUMNS=200 codex-accounts list
 ```
 
-```text
-Saved Codex profiles  (2)
-┌──────────┬───────────────────┬──────┬────────────────┬──────────────┬─────────────────┬─────────┬───────┬────────┐
-│ PROFILE  │ ACCOUNT           │ PLAN │ ID             │ 5H USED      │ 1W USED         │ UPDATED │ AUTH  │ STATE  │
-├──────────┼───────────────────┼──────┼────────────────┼──────────────┼─────────────────┼─────────┼───────┼────────┤
-│ work     │ user@example.com  │ Plus │ acct_ab12cd345 │ 42% · 3h 12m │ 68% · 2d 4h 15m │ 14:32   │ 18:00 │ ACTIVE │
-│ personal │ user2@example.com │ Free │ acct_9f8…5b4a  │ 10% · 4h 50m │ 15% · 6d 2h 45m │ 09:02   │ 20:15 │ —      │
-└──────────┴───────────────────┴──────┴────────────────┴──────────────┴─────────────────┴─────────┴───────┴────────┘
-```
+![codex-accounts list in the wide layout: a box-drawing table with one row per profile](docs/cli-screenshots/layout-wide.jpeg)
 
 `STATE` reads the same in every tool's `list`: `ACTIVE` for the live login,
 `SAME ACCT` for another saved profile of an account that already has a row
@@ -1213,29 +1194,10 @@ Vibe reports none, so it never shows `SAME ACCT`.
 COLUMNS=40 codex-accounts list
 ```
 
-```text
-Saved Codex profiles  (2)
-work                              ACTIVE
-  ACCOUNT  user@example.com
-  PLAN     Plus
-  ID       acct_ab12cd345
-  5H USED  42% · 3h 12m
-  1W USED  68% · 2d 4h 15m
-  UPDATED  14:32
-  AUTH     18:00
-────────────────────────────────────────
-personal                               —
-  ACCOUNT  user2@example.com
-  PLAN     Free
-  ID       acct_9f8…5b4a
-  5H USED  10% · 4h 50m
-  1W USED  15% · 6d 2h 45m
-  UPDATED  09:02
-  AUTH     20:15
-```
+![codex-accounts list in the narrow layout: one stacked card per profile](docs/cli-screenshots/layout-narrow.jpeg)
 
-(the box-drawing corners above are the `classic` `table_style`; see below — the
-default `modern` style rounds them instead.)
+(both layouts above are drawn in the default `modern` `table_style`; see below
+for `classic`.)
 
 ## Table style
 
@@ -1252,15 +1214,9 @@ ai-accounts config set table_style classic  # the plain full-brightness grid —
                                              # can wash out
 ```
 
-```text
-Saved Codex profiles  (2)
-╭──────────┬───────────────────┬──────┬────────┐
-│ PROFILE  │ ACCOUNT           │ PLAN │ STATE  │
-├──────────┼───────────────────┼──────┼────────┤
-│ work     │ user@example.com  │ Plus │ ACTIVE │
-│ personal │ user2@example.com │ Free │ —      │
-╰──────────┴───────────────────┴──────┴────────╯
-```
+![The modern table style: rounded dimmed frame, banded header, zebra-striped rows](docs/cli-screenshots/style-modern.jpeg)
+
+![The classic table style: the plain full-brightness grid](docs/cli-screenshots/style-classic.jpeg)
 
 In the interactive menu (`ai-accounts config`) the **Table style** row previews
 itself: while it is selected, a three-row sample table is drawn in the empty
