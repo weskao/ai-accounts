@@ -35,11 +35,11 @@ re-login, or when a quota window resets. Every message ends with the source
 device. All nine message types are in
 [Telegram notification examples](docs/telegram-notifications/README.md); a few of them:
 
-![Telegram message: Codex switched from alice to bob and the session restarted](docs/telegram-notifications/01-switched-restarted.png)
+<img src="docs/telegram-notifications/01-switched-restarted.png" alt="Telegram message: Codex switched from alice to bob and the session restarted" width="460">
 
-![Telegram message: two profiles need re-login, grouped by provider with the fix command](docs/telegram-notifications/05-relogin-grouped.png)
+<img src="docs/telegram-notifications/05-relogin-grouped.png" alt="Telegram message: two profiles need re-login, grouped by provider with the fix command" width="460">
 
-![Telegram message: three quota windows reset](docs/telegram-notifications/07-quota-reset-grouped.png)
+<img src="docs/telegram-notifications/07-quota-reset-grouped.png" alt="Telegram message: three quota windows reset" width="560">
 
 ## Requirements
 
