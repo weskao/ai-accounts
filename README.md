@@ -27,6 +27,20 @@ See [Auto-switch](#auto-switch) for setup and activation commands.
 
 ![Interactive ai-accounts config menu for auto-switch, notifications, and display settings](ai-accounts%20config%20demo.gif)
 
+### Get notified on Telegram
+
+With `notify` set to `telegram`, auto-switch and the timer message you when an
+account is switched, when no account is left to switch to, when a token needs a
+re-login, or when a quota window resets. Every message ends with the source
+device. All nine message types are in
+[Telegram notification examples](docs/telegram-notifications/README.md); a few of them:
+
+<img src="docs/telegram-notifications/01-switched-restarted.png" alt="Telegram message: Codex switched from alice to bob and the session restarted" width="460">
+
+<img src="docs/telegram-notifications/05-relogin-grouped.png" alt="Telegram message: two profiles need re-login, grouped by provider with the fix command" width="460">
+
+<img src="docs/telegram-notifications/07-quota-reset-grouped.png" alt="Telegram message: three quota windows reset" width="560">
+
 ## Requirements
 
 - Python 3.10 or newer
@@ -817,7 +831,9 @@ profile crosses a configured threshold, notify you, and restart supported
 interactive sessions. Every notification ai-accounts sends — a switch, a dead
 end with no account left to switch to, the re-login report, a quota reset —
 ends with the source device (for example, `💻 MacBook Pro · d011********` or
-`🖥️ Mac mini · d011********`), over desktop and Telegram alike.
+`🖥️ Mac mini · d011********`), over desktop and Telegram alike. See
+[Telegram notification examples](docs/telegram-notifications/README.md) for
+each message type as it arrives.
 
 The device code uses the hardware serial on macOS (`ioreg`), and an
 application-specific HMAC-SHA256 digest of Windows `MachineGuid` or Linux
