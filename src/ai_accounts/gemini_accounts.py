@@ -1200,10 +1200,8 @@ def cmd_switch(name: str) -> int:
 
     active_text = _read_active_auth_text()
     if active_text is not None:
-        # Fold any token rotation on the active account back into its own saved
-        # profile before overwriting, so a later switch back restores fresh
-        # tokens. Pure local file op; no network.
-        outgoing_profile = _active_profile(_read_active_auth_text())
+        # Fold CLI-rotated tokens into the outgoing profile before switching.
+        outgoing_profile = _active_profile(active_text)
         if outgoing_profile is not None:
             _copy_active_auth_to(outgoing_profile)
 
@@ -1212,6 +1210,22 @@ def cmd_switch(name: str) -> int:
         log_red(f"❌ Saved tokens for '{name}' are missing from the credential store")
         log_yellow(f"   Re-login with: agy-accounts login-switch {name}")
         return 1
+
+    # Do not replace the shared keyring with a parked, expired account.
+    # Google may reject a rotated refresh token, so check before activation.
+    if _token_expired_or_soon(_claims_from_auth(profile_auth)):
+        updated, error = _direct_refresh_auth(profile_auth)
+        if updated is None:
+            log_yellow(f"⚠️  Switch cancelled ({error}); the active login was preserved.")
+            log_yellow(f"   Re-login or refresh with: agy-accounts login-switch {name}")
+            return 1
+        profile_auth = updated
+        _save_profile(profile_file, updated)
+
+    # Antigravity IDE can rewrite its keyring while this command runs.
+    if _read_active_auth_text() != active_text:
+        log_yellow("⚠️  agy changed its keyring login during the switch; retry.")
+        return 1
     if not _write_cli_auth_text(json.dumps(profile_auth)):
         log_red("❌ Could not update the agy CLI keyring session")
         return 1
@@ -1219,12 +1233,6 @@ def cmd_switch(name: str) -> int:
 
     ok("Switched Antigravity profile to", name)
     print(f"{DIM}   agy will use this account on its next launch.{RESET}")
-
-    # Self-heal an expired snapshot in place so agy starts with a live token —
-    # a profile parked for over an hour always has a dead access token.
-    if _token_expired_or_soon(_read_claims(profile_file)):
-        _recover_switched_auth(profile_file, name)
-
     print()
     return cmd_who()
 
