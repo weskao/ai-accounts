@@ -189,10 +189,13 @@ an editable install from `~/Documents`, `~/Desktop` or `~/Downloads` is
 reported as a failure, because `launchd` cannot run it.
 
 **Failure and recovery.** A failed step stops the chain, moves every directory
-back from its *current* location (so a token rotated meanwhile is kept, never
-replaced by an older snapshot), keeps the schema where it was and exits `1`.
-If something cannot be put back, the report names it and the backup is kept
-at the printed path; nothing in it is printed or logged. A data schema newer
+this run already moved back from its *current* location (so a token rotated
+meanwhile is kept, never replaced by an older snapshot), keeps the schema where
+it was and exits `1`. A store some other process moved in the meantime is left
+where that process put it. Ctrl-C rolls back the same way and still cancels the
+command. If something cannot be put back, the report names it and the backup is
+kept at the printed path; `migrate status` and `doctor` keep pointing at it
+until you delete it, and nothing in it is printed or logged. A data schema newer
 than the running version is refused without any change: run `ai-accounts update`.
 
 ```sh
