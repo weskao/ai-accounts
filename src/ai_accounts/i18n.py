@@ -408,6 +408,188 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Update did not finish — run it yourself:",
         "zh-TW": "更新沒有完成 — 請自行執行：",
     },
+    "update.migrate_missing": {
+        "en": "⚠️  ai-accounts was installed, but the new ai-accounts is not on PATH, so migration and hook/timer verification did not run. Run: ai-accounts migrate",
+        "zh-TW": "⚠️  ai-accounts 已安裝，但 PATH 中找不到新版 ai-accounts，因此未執行遷移與 hooks／排程驗證。請執行：ai-accounts migrate",
+    },
+    "update.migrate_failed": {
+        "en": "⚠️  ai-accounts was installed (not rolled back), but migration or hook/timer verification failed. Retry: ai-accounts migrate",
+        "zh-TW": "⚠️  ai-accounts 已安裝（未回復舊版），但遷移或 hooks／排程驗證失敗。重試：ai-accounts migrate",
+    },
+    # ── migrations (ai-accounts migrate, first-run check) ──
+    "migrate.moved": {
+        "en": "✅ {provider}: moved {src} → {dst}",
+        "zh-TW": "✅ {provider}：已搬移 {src} → {dst}",
+    },
+    "migrate.note": {"en": "⚠️  {note}", "zh-TW": "⚠️  {note}"},
+    "migrate.note.env_override": {
+        "en": "{provider}: {legacy} left in place because {env} is set",
+        "zh-TW": "{provider}：已設定 {env}，{legacy} 保留原位",
+    },
+    "migrate.note.not_dir": {
+        "en": "{provider}: {legacy} is not a directory; left untouched",
+        "zh-TW": "{provider}：{legacy} 不是資料夾，未變更",
+    },
+    "migrate.note.ambiguous": {
+        "en": "{provider}: both {legacy} and {current} exist; both left untouched — merge them by hand",
+        "zh-TW": "{provider}：{legacy} 與 {current} 同時存在，兩者皆未變更 — 請手動合併",
+    },
+    "migrate.note.invalid_json": {
+        "en": "{provider}: {file} is not valid JSON (moved unchanged)",
+        "zh-TW": "{provider}：{file} 不是有效的 JSON（原樣搬移）",
+    },
+    "migrate.done": {
+        "en": "✅ Data schema {old} → {new}",
+        "zh-TW": "✅ 資料結構 {old} → {new}",
+    },
+    "migrate.current": {
+        "en": "✅ Data schema {version} is current",
+        "zh-TW": "✅ 資料結構 {version} 已是最新",
+    },
+    "migrate.failed": {
+        "en": "❌ Migration v{version} ({name}) failed: {error}",
+        "zh-TW": "❌ 遷移 v{version}（{name}）失敗：{error}",
+    },
+    "migrate.rolled_back": {
+        "en": "↩️  Rolled back: your data is as it was before.",
+        "zh-TW": "↩️  已還原：資料維持遷移前的狀態。",
+    },
+    "migrate.unrestored": {
+        "en": "❌ Could not restore: {item}",
+        "zh-TW": "❌ 無法還原：{item}",
+    },
+    "migrate.backup_kept": {
+        "en": "Backup kept at {path}",
+        "zh-TW": "備份保留於 {path}",
+    },
+    "migrate.recovered": {
+        "en": "↩️  Rolled back an interrupted migration v{version}",
+        "zh-TW": "↩️  已還原中斷的遷移 v{version}",
+    },
+    "migrate.interrupted": {
+        "en": "an earlier run was interrupted and could not be fully rolled back",
+        "zh-TW": "先前的執行中斷，且無法完整還原",
+    },
+    "migrate.validation": {
+        "en": "{provider}: moved files do not match the originals",
+        "zh-TW": "{provider}：搬移後的檔案與原始檔不一致",
+    },
+    "migrate.no_permission": {
+        "en": "no write permission for {path}",
+        "zh-TW": "沒有 {path} 的寫入權限",
+    },
+    "migrate.no_space": {
+        "en": "not enough free disk space: need {need} bytes, {free} free",
+        "zh-TW": "磁碟空間不足：需要 {need} 位元組，剩餘 {free}",
+    },
+    "migrate.newer": {
+        "en": "❌ Data schema {found} was written by a newer ai-accounts (this one supports {supported}); nothing changed. Run: ai-accounts update",
+        "zh-TW": "❌ 資料結構 {found} 由較新版 ai-accounts 寫入（此版本支援 {supported}），未做任何變更。請執行：ai-accounts update",
+    },
+    "migrate.busy": {
+        "en": "❌ Another ai-accounts migration is running; try again in a moment.",
+        "zh-TW": "❌ 另一個 ai-accounts 遷移正在執行，請稍後再試。",
+    },
+    "migrate.corrupt_state": {
+        "en": "⚠️  Unreadable migration state set aside as {path}; re-checking everything",
+        "zh-TW": "⚠️  無法讀取的遷移狀態已移至 {path}，重新檢查全部項目",
+    },
+    "migrate.failed_io": {
+        "en": "❌ Migration could not run: {error}. Nothing was changed; retry: ai-accounts migrate",
+        "zh-TW": "❌ 無法執行遷移：{error}。未做任何變更；重試：ai-accounts migrate",
+    },
+    "migrate.retry": {
+        "en": "Retry: ai-accounts migrate",
+        "zh-TW": "重試：ai-accounts migrate",
+    },
+    "migrate.first_run_failed": {
+        "en": "⚠️  Automatic migration check failed ({error}); run: ai-accounts migrate",
+        "zh-TW": "⚠️  自動遷移檢查失敗（{error}），請執行：ai-accounts migrate",
+    },
+    "migrate.usage": {
+        "en": "Usage: ai-accounts migrate [status | --dry-run]",
+        "zh-TW": "用法：ai-accounts migrate [status | --dry-run]",
+    },
+    "migrate.integrations.absent": {
+        "en": "Hooks and timer are not installed; nothing to repair (set up with: ai-accounts autoswitch setup)",
+        "zh-TW": "尚未安裝 hooks 與排程，無需修復（安裝：ai-accounts autoswitch setup）",
+    },
+    "migrate.integrations.foreign": {
+        "en": "ℹ️  Hooks and timer belong to another ai-accounts installation ({owner}); left unchanged. To move them to this one, run its: ai-accounts autoswitch setup",
+        "zh-TW": "ℹ️  hooks 與排程屬於另一個 ai-accounts 安裝（{owner}），未變更。若要改用此安裝，請以它執行：ai-accounts autoswitch setup",
+    },
+    "migrate.integrations.ok": {
+        "en": "✅ Re-installed and verified: {items}",
+        "zh-TW": "✅ 已重新安裝並驗證：{items}",
+    },
+    "migrate.integrations.problem": {
+        "en": "❌ {problem}",
+        "zh-TW": "❌ {problem}",
+    },
+    "migrate.integrations.hooks_failed": {
+        "en": "hooks: not all managed Stop hooks are installed",
+        "zh-TW": "hooks：受管理的 Stop hooks 未全部安裝",
+    },
+    "migrate.integrations.timer_failed": {
+        "en": "timer: registration could not be verified",
+        "zh-TW": "排程：無法確認已註冊",
+    },
+    "migrate.integrations.tcc": {
+        "en": "timer: ai-accounts runs from ~/{folder}, which launchd cannot read; reinstall without --editable: uv tool install --reinstall <path-to-repo>",
+        "zh-TW": "排程：ai-accounts 從 ~/{folder} 執行，launchd 無法讀取；請改用非 --editable 安裝：uv tool install --reinstall <path-to-repo>",
+    },
+    "migrate.integrations.missing_cli": {
+        "en": "ℹ️  Not on PATH: {names}. Install those CLIs from their vendors if you use them; their hooks start working once installed.",
+        "zh-TW": "ℹ️  PATH 中找不到：{names}。若有使用，請向各廠商安裝這些 CLI；安裝後其 hooks 即會生效。",
+    },
+    "migrate.plan.header": {
+        "en": "Planned changes (dry run, nothing written):",
+        "zh-TW": "預計變更（試跑，不寫入任何內容）：",
+    },
+    "migrate.plan.none": {
+        "en": "  No data changes needed.",
+        "zh-TW": "  不需要變更資料。",
+    },
+    "migrate.plan.migration": {
+        "en": "  v{version} {name}",
+        "zh-TW": "  v{version} {name}",
+    },
+    "migrate.plan.move": {
+        "en": "    {provider}: move {src} → {dst}",
+        "zh-TW": "    {provider}：搬移 {src} → {dst}",
+    },
+    "migrate.plan.repair": {
+        "en": "  Re-install and verify: {items}",
+        "zh-TW": "  重新安裝並驗證：{items}",
+    },
+    "migrate.status.current": {
+        "en": "Data schema: {version} (current)",
+        "zh-TW": "資料結構：{version}（最新）",
+    },
+    "migrate.status.pending": {
+        "en": "Data schema: {old} → {new} pending ({names})",
+        "zh-TW": "資料結構：{old} → {new} 待遷移（{names}）",
+    },
+    "migrate.status.last": {
+        "en": "Last migration: v{version} {name} (ai-accounts {app}, {at})",
+        "zh-TW": "上次遷移：v{version} {name}（ai-accounts {app}，{at}）",
+    },
+    "migrate.status.interrupted": {
+        "en": "⚠️  Migration v{version} was interrupted; the next run rolls it back first",
+        "zh-TW": "⚠️  遷移 v{version} 曾中斷，下次執行會先還原",
+    },
+    "migrate.status.corrupt": {
+        "en": "⚠️  Migration state is unreadable; the next run sets it aside and re-checks everything",
+        "zh-TW": "⚠️  遷移狀態無法讀取，下次執行會將其移開並重新檢查",
+    },
+    "migrate.status.integrations": {
+        "en": "Integrations: {status} (ai-accounts {app}, {exe})",
+        "zh-TW": "整合：{status}（ai-accounts {app}，{exe}）",
+    },
+    "migrate.status.integrations_unknown": {
+        "en": "Integrations: not checked yet",
+        "zh-TW": "整合：尚未檢查",
+    },
     "config.language.label": {"zh-TW": "語言"},
     "config.language.help": {
         "zh-TW": "通知訊息與本選單的語言。未指定前跟隨系統語系。"
@@ -553,6 +735,10 @@ MESSAGES: dict[str, dict[str, str]] = {
                                       JSON 是否正確且未過期、自動切換計時器狀態；
                                       預設印出成功/失敗表格，--json 則印出單一
                                       JSON 文件
+  ai-accounts migrate                遷移本機資料並修復 hooks／排程
+                                      （升級後會自動執行）
+  ai-accounts migrate status         顯示資料結構與整合狀態
+  ai-accounts migrate --dry-run      顯示預計變更，不寫入任何內容
   ai-accounts update | --update      更新到最新版本（不會詢問）
   ai-accounts -h | --help | help     顯示這份說明
   ai-accounts --version | version    顯示目前的 ai-accounts 版本

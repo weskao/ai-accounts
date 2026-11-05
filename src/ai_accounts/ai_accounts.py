@@ -94,6 +94,10 @@ USAGE
                                       credential-store reachability, saved-profile JSON
                                       validity/expiry, and auto-switch timer status;
                                       pass/fail table by default, one JSON document with --json
+  ai-accounts migrate                Migrate local data and repair hooks/timer
+                                      (runs automatically after an upgrade)
+  ai-accounts migrate status         Show data schema and integration state
+  ai-accounts migrate --dry-run      Show planned changes without writing
   ai-accounts update | --update      Update to the latest release (no prompts)
   ai-accounts -h | --help | help     Show this help
   ai-accounts --version | version    Show the current ai-accounts version
@@ -266,9 +270,21 @@ def cmd_timer_status() -> int:
 
 
 def cmd_autoswitch_setup() -> int:
-    from . import autoswitch_setup
+    from . import autoswitch_setup, migrations
 
-    autoswitch_setup.install()
+    try:
+        autoswitch_setup.install()
+        if not autoswitch_setup.is_installed():
+            log_red("❌ Auto-switch setup is not complete; check timer and hook permissions.")
+            migrations.record_integrations("failed", ["autoswitch setup incomplete"])
+            return 1
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        log_red(f"❌ Auto-switch setup failed: {exc}")
+        migrations.record_integrations("failed", [str(exc)])
+        return 1
+    # This runtime now owns the hooks/timer: first-run repair by another
+    # interpreter (a `uv run` checkout) must leave them alone.
+    migrations.record_integrations("ok")
     print("Installed auto-switch event hooks and timer fallback.")
     return 0
 
@@ -299,6 +315,10 @@ def main(argv: list[str] | None = None) -> int:
         from . import doctor
 
         return doctor.run_doctor("--json" in argv[1:])
+    if command == "migrate":
+        from . import migrations
+
+        return migrations.cmd_migrate(argv[1:])
 
     # `autoswitch` accepts one local setup action; providers ignore every other
     # trailing arg, so `autoswitch install-timer` would run

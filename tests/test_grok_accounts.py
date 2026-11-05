@@ -66,6 +66,34 @@ class GrokAccountsTests(unittest.TestCase):
         usage.start()
         self.addCleanup(usage.stop)
 
+    def test_expired_target_refresh_failure_does_not_displace_active_login(self) -> None:
+        self.assertTrue(ga._write_json(ga._auth_file(), _auth("old@example.test", "old")))
+        target = _auth("new@example.test", "new")
+        target["https://auth.x.ai::client"]["expires_at"] = "2020-01-01T00:00:00Z"
+        self.assertTrue(ga._write_json(self.account_dir / "new.json", target))
+        with mock.patch.object(ga, "_direct_refresh", return_value=(None, "network timeout")):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(ga.cmd_switch("new"), 1)
+        self.assertEqual(ga._claims(ga._read_json(ga._auth_file()))["email"], "old@example.test")
+
+    def test_expired_target_preflight_refreshes_before_live_write(self) -> None:
+        self.assertTrue(ga._write_json(ga._auth_file(), _auth("old@example.test", "old")))
+        target = _auth("new@example.test", "new")
+        target["https://auth.x.ai::client"]["expires_at"] = "2020-01-01T00:00:00Z"
+        self.assertTrue(ga._write_json(self.account_dir / "new.json", target))
+        observed = []
+        def refresh(payload):
+            observed.append(ga._claims(ga._read_json(ga._auth_file()))["email"])
+            updated = json.loads(json.dumps(payload))
+            updated["https://auth.x.ai::client"]["key"] = "fresh"
+            updated["https://auth.x.ai::client"]["expires_at"] = "2035-01-01T00:00:00Z"
+            return updated, None
+        with mock.patch.object(ga, "_direct_refresh", side_effect=refresh):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(ga.cmd_switch("new"), 0)
+        self.assertEqual(observed, ["old@example.test"])
+        self.assertEqual(ga._record(ga._read_json(ga._auth_file()))["key"], "fresh")
+
     def test_profile_name_rejects_control_characters(self) -> None:
         # Profile names with newlines or other control chars (ord < 0x20 or 0x7f) are rejected
         err = io.StringIO()

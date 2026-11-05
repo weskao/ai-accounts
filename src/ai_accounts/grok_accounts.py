@@ -121,12 +121,17 @@ def _auth_file() -> Path:
     return Path(os.environ.get("GROK_AUTH_JSON", str(_grok_home() / "auth.json")))
 
 
-def _account_dir() -> Path:
-    return resolve_account_dir(
+def _store_paths() -> tuple[str, Path, Path]:
+    """(env override, default, legacy) of the profile store; also read by migrations."""
+    return (
         "GROK_ACCOUNT_DIR",
         Path.home() / ".ai-accounts" / "grok" / "accounts",
         _grok_home() / "accounts",
     )
+
+
+def _account_dir() -> Path:
+    return resolve_account_dir(*_store_paths())
 
 
 def _profile_file(name: str) -> Path | None:
@@ -639,14 +644,31 @@ def cmd_switch(name: str) -> int:
     profile = _profile_file(name)
     if profile is None:
         return 1
-    # Fold before loading the target. Switching back onto the account just
-    # left must restore the tokens just copied, not the spent snapshot.
+    live_before = _read_json(_auth_file())
+    # Fold before loading the target: Grok rotates its OAuth refresh token.
     outgoing = _active_profile()
     if outgoing is not None and not _fold_active_into_profile(outgoing):
         return 1
     payload = _load_profile(profile)
     if payload is None or not _claims(payload):
         log_red(f"❌ Profile is unreadable or missing: {name}")
+        return 1
+
+    # Renew a parked account before publishing it as Grok's live auth.
+    # Transient and revoked failures both leave the current login untouched.
+    if _token_expired_or_soon(_claims(payload)):
+        updated, error = _direct_refresh(payload)
+        if updated is None:
+            log_yellow(f"⚠️  Switch cancelled ({error}); current Grok login was preserved.")
+            if _is_revoked_error(error):
+                log_yellow(f"   Re-login with: grok-accounts login-switch {name}")
+            return 1
+        payload = updated
+        if not _save_profile(profile, payload):
+            return 1
+
+    if _read_json(_auth_file()) != live_before:
+        log_yellow("⚠️  Grok changed its login during the switch; retry.")
         return 1
     if not _backup_active():
         return 1
@@ -655,10 +677,6 @@ def cmd_switch(name: str) -> int:
     _set_marker(profile)
     ok("Switched Grok profile to", profile.stem)
     print(f"{DIM}   Grok Build CLI will use this account on its next launch.{RESET}")
-    if _token_expired_or_soon(_claims(payload)):
-        status = _recover_switched_auth(profile, name)
-        if status != 0:
-            return status
     print()
     return cmd_who()
 

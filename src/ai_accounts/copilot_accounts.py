@@ -158,12 +158,17 @@ _USER_URL = "https://api.github.com/user"
 _API_HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": "ai-accounts"}
 
 
-def _account_dir() -> Path:
-    return resolve_account_dir(
+def _store_paths() -> tuple[str, Path, Path]:
+    """(env override, default, legacy) of the profile store; also read by migrations."""
+    return (
         "COPILOT_ACCOUNT_DIR",
         Path.home() / ".ai-accounts" / "copilot" / "accounts",
         _copilot_home() / "accounts",
     )
+
+
+def _account_dir() -> Path:
+    return resolve_account_dir(*_store_paths())
 
 
 def _profile_file(name: str) -> Path | None:

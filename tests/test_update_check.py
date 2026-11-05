@@ -34,6 +34,9 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.delenv(uc._CLAIMED_ENV, raising=False)
     monkeypatch.setattr(uc, "_check", None)
     monkeypatch.setattr(uc, "_latest", [])
+    # Existing update-path tests mock the package installer only. Prevent a
+    # successful mocked update from altering the real OS task scheduler.
+    monkeypatch.setattr(uc, "_post_update_setup", lambda: 0, raising=False)
     # The test venv is itself an editable (dev) install: without this, `update` would
     # really reinstall the user's ai-accounts tool from GitHub.
     monkeypatch.setattr(update_kit, "install_kind", lambda dist: ("uv", "/tools/ai-accounts"))

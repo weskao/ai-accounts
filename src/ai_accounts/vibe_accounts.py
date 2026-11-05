@@ -99,12 +99,17 @@ def _auth_file() -> Path:
     return _vibe_home() / ".env"
 
 
-def _account_dir() -> Path:
-    return resolve_account_dir(
+def _store_paths() -> tuple[str, Path, Path]:
+    """(env override, default, legacy) of the profile store; also read by migrations."""
+    return (
         "VIBE_ACCOUNT_DIR",
         Path.home() / ".ai-accounts" / "vibe" / "accounts",
         _vibe_home() / "accounts",
     )
+
+
+def _account_dir() -> Path:
+    return resolve_account_dir(*_store_paths())
 
 
 def _profile_file(name: str) -> Path | None:

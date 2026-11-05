@@ -99,9 +99,123 @@ newest release tag: a local checkout (`uv tool install --editable .` or a `uv ru
 from a clone), an install from `main` or another commit, or a build newer than the
 tag is replaced by it, whatever version it reports. Already on that tag, it says so
 with your version, e.g. `✅ ai-accounts 0.25.0 is already the latest version (v0.25.0).`
-Exit code: `0` updated or already on the newest tag, `1` the release could not be
-checked or the install failed (offline is a failure, not "up to date"), `2` neither
-`uv` nor `pipx` is on `PATH` (the manual command is printed).
+Exit code: `0` updated or already on the newest tag **and the migration and
+integration checks passed**, `1` the update, the migration or the post-update
+repair failed, `2` neither `uv` nor `pipx` is on `PATH` (the manual command is
+printed). The package install and the migration are reported as separate
+outcomes: a migration or repair failure does **not** undo a successfully
+installed package, says so, and prints the recovery command `ai-accounts migrate`.
+
+After a successful `<provider>-accounts update` (or `ai-accounts update`, or the
+interactive *Update now*), the updater launches the **newly installed**
+`ai-accounts migrate`, which migrates local data and then repairs and verifies
+the hooks and OS timer — see "Upgrades and data migration" below. No separate
+manual step is required, also when you skip several releases.
+
+### Upgrades and data migration
+
+Every upgrade runs the same lifecycle, in the new version's own runtime:
+
+1. Take an exclusive migration lock (`~/.ai-accounts/migrations/lock`), so two
+   terminals, the timer and an update never migrate at the same time.
+2. Read the local **data schema** (`~/.ai-accounts/migrations/state.json`).
+   It is separate from the app version and only changes when a migration
+   lands. No state file means schema `0`: every release before this one.
+3. Plan every pending migration from what is actually on disk.
+4. Check write permission and free disk space; stop before changing anything
+   if either is missing.
+5. Back up each affected ai-accounts-owned directory into a private
+   `~/.ai-accounts/migrations/backups/<time>-v<N>/` (mode `0700`, file modes kept).
+6. Apply the migration, recording each step in a journal that survives a crash.
+7. Validate: every moved file must match the original (size and SHA-256),
+   including the `.current-profile` active-profile marker and each profile's
+   `_secrets` credential reference.
+8. Mark the schema version done and delete the backup.
+9. Re-install and verify whichever hooks and timer are already installed,
+   using the new interpreter path and your current `timer_interval_min`.
+10. Release the lock and print a short report.
+
+Migrations run in order, one checkpoint each, so upgrading straight from any
+older release applies every step in between. An interrupted run (crash, power
+loss, Ctrl-C) is rolled back first on the next run, then retried. Running it
+again is always safe: a completed migration is never applied twice.
+
+| Migration | Schema | What it does |
+| --- | --- | --- |
+| `relocate-legacy-profile-stores` | 1 | Moves `~/.codex/accounts`, `~/.claude/accounts`, `~/.grok/accounts`, `~/.vibe/accounts`, `~/.copilot/accounts` and `~/.codexbar/antigravity` into `~/.ai-accounts/` |
+
+What each provider gets:
+
+| Provider | Migrated now | Left alone, and why |
+| --- | --- | --- |
+| Claude Code, Codex, Grok Build, Mistral Vibe, GitHub Copilot | Old profile store moved into `~/.ai-accounts/<provider>/accounts`, profile names and active profile kept | Keychain/keyring items, vendor `auth.json` / `.credentials.json`, refresh tokens |
+| Antigravity | `~/.codexbar/antigravity` moved to `~/.ai-accounts/antigravity` | OS keyring session, token expiry fields |
+| Devin, OpenCode | Nothing: they never had another store location | Their own credential files |
+
+A store is never merged or guessed at. It stays where it is, with a warning,
+when its `*_ACCOUNT_DIR` / `*_HOME` override is set, when it is not a
+directory, or when the new location already holds data (merge those by hand).
+Profile files that are not valid JSON are moved byte for byte and named in the
+report. Saved-profile tokens still inline from an older version, and a
+plaintext `telegram_bot_token` in `config.json`, keep moving into the OS
+credential store lazily, the next time that profile is read or the config is
+saved, as before. Migration never writes a credential store, never refreshes
+a token and never touches vendor CLI files.
+
+**First run after an external install.** `uv tool install`, `uv tool upgrade`,
+`uv tool install --force`, `pipx` and editable installs bypass `update`, so
+every command checks the schema first, before it reads any data. When it is
+current this costs one small file read. Otherwise the command migrates first,
+in any context, including the timer and vendor-CLI hooks. Hooks and timer are
+repaired automatically only from an interactive terminal, once per new
+version, and only by the installation that owns them: a `uv run` from a
+checkout never re-points your installed timer at its own virtualenv.
+Background runs migrate data only, because re-registering the timer from
+inside its own tick would stop it. The same ownership rule applies to an
+explicit `ai-accounts migrate`: run from another installation (a checkout's
+`uv run`, a scratch virtualenv), it migrates data but leaves the hooks and
+timer alone and names their owner; that installation's `ai-accounts autoswitch
+setup` takes them over on purpose. Diagnostic commands (`migrate`, `doctor`,
+`--version`, `help`) skip the check. `AI_ACCOUNTS_NO_AUTO_MIGRATE=1` turns it off.
+
+**Repair never enables anything you did not set up.** Hooks are re-installed
+only if at least one ai-accounts Stop hook exists, and the timer only if it is
+registered: after `ai-accounts uninstall-timer` it stays off. Existing unrelated
+hooks, every config flag and the timer interval are preserved. The hook
+installer manages Codex, Claude and Antigravity Stop hooks; the timer covers
+the rest. A missing vendor CLI (`claude`, `codex`, `grok`, …) is reported,
+never installed: its hook starts working once you install that CLI. On macOS,
+an editable install from `~/Documents`, `~/Desktop` or `~/Downloads` is
+reported as a failure, because `launchd` cannot run it.
+
+**Failure and recovery.** A failed step stops the chain, moves every directory
+this run already moved back from its *current* location (so a token rotated
+meanwhile is kept, never replaced by an older snapshot), keeps the schema where
+it was and exits `1`. A store some other process moved in the meantime is left
+where that process put it. Ctrl-C rolls back the same way and still cancels the
+command. If something cannot be put back, the report names it and the backup is
+kept at the printed path; `migrate status` and `doctor` keep pointing at it
+until you delete it, and nothing in it is printed or logged. A data schema newer
+than the running version is refused without any change: run `ai-accounts update`.
+
+```sh
+ai-accounts migrate status      # schema, last migration, last failure, integration state; exit 1 = needs action
+ai-accounts migrate --dry-run   # planned moves and repairs; writes nothing
+ai-accounts migrate             # migrate now and repair/verify hooks and timer
+```
+
+Troubleshooting: `migrate` prints `Another ai-accounts migration is running`
+while another terminal or the timer holds the lock; wait a moment and retry.
+A lock left by a crashed process is released by the OS automatically. After a
+failure, `migrate status` shows what was not restored and where the backup is.
+`ai-accounts doctor` adds a `Migrations` line. Windows' `uv`/`pipx` launchers
+are copies rather than links, so there the first-run repair waits for
+`ai-accounts update` or `ai-accounts migrate`; data migration still runs first.
+
+Supported platforms: macOS (LaunchAgent), Linux (systemd user timer or cron)
+and Windows (Task Scheduler), all covered by CI. CI uses mocks for every OS
+integration and credential store; a migration of real accounts on a real
+machine is a separate manual check.
 
 When a newer GitHub release exists, any command run in a real terminal (both
 stdin and stdout are a TTY) ends by asking — `❯ Update now` / `Skip` / `Skip
@@ -127,6 +241,7 @@ the exit code never changes. Turn it off with
 | `ai-accounts` | Run one operation across every provider |
 | `ai-accounts --version` / `ai-accounts version` | Print the current ai-accounts version |
 | `<command> update` / `<command> --update` | Update ai-accounts to the latest release (same for every command below; no prompts) |
+| `ai-accounts migrate [status \| --dry-run]` | Migrate local data and repair hooks/timer (runs automatically after an upgrade) |
 | `codex-accounts` | Manage Codex CLI profiles and ChatGPT OAuth usage |
 | `claude-accounts` | Manage Claude Code profiles and quota usage |
 | `agy-accounts` | Manage Antigravity profiles and quota usage |
@@ -157,6 +272,7 @@ ai-accounts doctor                            # Run offline health checks for ev
 ai-accounts help                              # Show available commands
 ai-accounts --version                         # Print the current ai-accounts version
 ai-accounts update                            # Update to the latest release (`--update` works too)
+ai-accounts migrate status                    # Show data schema and hook/timer repair state
 ```
 
 Replace `<profile_name>` with a name you choose for the saved profile.
@@ -208,6 +324,7 @@ tool you need. For example:
 
 ```sh
 claude-accounts login-switch work             # Log in to Claude Code and save it as "work"
+claude-accounts switch work                   # Preflight near-expiry tokens before activation
 agy-accounts switch                           # Pick a saved Antigravity profile from a menu
 copilot-accounts usage                        # Show the active Copilot account's credit balance
 devin-accounts login-switch personal         # Log out, run `devin auth login`, save as "personal" (a cancelled login restores the old one)
@@ -217,6 +334,42 @@ opencode-accounts switch openai:work          # Make opencode's "work" OpenAI lo
 `switch` and `remove` without a name open an interactive picker, and `save`
 without a name picks one from the active account's email or login. What
 differs per tool:
+
+For OAuth-based tools, `switch` now renews a saved account **before**
+replacing the active credentials when its access token is near expiry:
+
+| Provider | Switch safety | Token upkeep |
+| --- | --- | --- |
+| Codex | Refresh target first; do not write `auth.json` when the macOS Keychain update fails; preserve outgoing rotated tokens | OAuth refresh and existing scheduled `refresh --all` |
+| Claude Code | Refresh target first; keep the current login if refresh or Keychain update fails | OAuth refresh and existing scheduled `refresh --all` |
+| Antigravity (`agy`) | Refresh target first; reject a failed refresh without replacing the shared keyring | Google OAuth refresh, with the existing CLI fallback in `refresh` |
+| Grok Build | Refresh target first; reject a failed refresh without replacing `auth.json` | Direct OIDC refresh and existing CLI fallback in `refresh` |
+| Mistral Vibe | Keep API-key switching; no OAuth token to rotate | Static key; no refresh needed |
+| GitHub Copilot | Keep token/keyring switching and existing credential checks | Token validity check; invalid tokens need login |
+| Devin | Keep API-key switching and existing verification | API key validity check; no renewable OAuth token |
+| OpenCode | Delegate switching to `opencode auth switch`, without rewriting its credential database | Managed by OpenCode itself |
+
+If the current CLI changed its credential during a network refresh, the
+switch aborts rather than overwriting a newer session. Automatic upkeep cannot
+prevent server-side revocation or refresh-token expiry. Running CLI sessions may
+still need a restart/resume to pick up a new login.
+
+For **Claude Code**, `claude-accounts switch <name>` checks whether the saved
+account's access token expires within 24 hours. If so, it attempts to renew
+that **destination** token before touching the currently active login. A
+transient refresh failure or revoked credential cancels the switch and leaves
+the current account selected; use `claude-accounts login-switch <name>` for a
+revoked account. Switching to the already-active profile uses Claude Code's
+latest live credentials rather than an older saved snapshot. On macOS, if
+the existing Keychain login cannot be updated, switching fails rather than
+claiming success while Keychain and the credentials file disagree. The
+existing configuration and unrelated MCP credentials remain intact.
+
+A global switch changes the default credentials. A running Claude Code
+session can still have older credentials cached; if a session continues with
+the previous account, reopen or resume it. For multiple truly independent
+concurrent sessions, use separate `CLAUDE_CONFIG_DIR` directories and the
+official `claude auth login` in each.
 
 | Command | Worth knowing |
 | --- | --- |
@@ -497,6 +650,9 @@ set up; it reports the gap instead:
 - where saved-profile secrets currently live (see "Where your secrets live"
   below) — the OS credential store's label, or a plaintext-fallback reason —
   printed once for the whole run, not per provider
+- the migration state: data schema current, pending, interrupted or newer
+  than this version, and whether the last hook/timer repair failed (`doctor`
+  never migrates; `ai-accounts migrate` does)
 
 ```sh
 ai-accounts doctor
@@ -895,8 +1051,10 @@ the hidden settings. Explicit `config get <key>` and `config set <key> <value>`
 remain shared across all CLIs.
 
 `ai-accounts autoswitch setup` installs provider event hooks plus a low-frequency
-OS timer fallback. Re-run it after reinstalling the package if hook commands or
-the installed Python path changed.
+OS timer fallback. After an upgrade, `ai-accounts update` (or, for a manual
+`uv tool install` / `pipx` upgrade, the next command you run in a terminal)
+re-installs and verifies whichever of them are installed, using the upgraded
+installation's interpreter (see "Upgrades and data migration").
 To restart or re-register the timer on any supported OS, re-run
 `ai-accounts install-timer` (it uses the `timer_interval_min` setting). This unloads and loads the LaunchAgent on macOS, reloads and restarts
 the systemd user timer on Linux (or replaces the cron entry), and replaces the
@@ -998,7 +1156,13 @@ Telegram bot token.
 
 `token_refresh` is an independent switch from `enabled`: each timer tick runs
 `refresh --all` on every provider even when auto-switching is off. A routine
-rotation is silent. When a refresh token can only be fixed by a fresh login,
+rotation is silent. Claude Code refreshes its own active session tokens, while
+the timer also renews saved inactive profiles. If Claude Code changes the live
+login during an in-flight refresh, the scheduled refresh discards that stale
+result instead of overwriting the CLI's newer token; the next tick can retry.
+A refresh token can still be revoked or reach its absolute expiry, so periodic
+refresh reduces unexpected expiration but cannot guarantee a permanent login.
+When a refresh token can only be fixed by a fresh login,
 the tick prints a report and sends the same content over the configured
 `notify` channel — grouped by provider, one row per profile with the reason it
 failed and the command that fixes it:

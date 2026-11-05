@@ -13,7 +13,7 @@
 - User-visible change → update `README.md` (command table and per-tool section) in the same
   change.
 - Scoped rules in `.claude/rules/` (loaded by path in Claude Code; other agents read the one
-  matching the file): `account-tools.md`, `config-schema.md`.
+  matching the file): `account-tools.md`, `config-schema.md`, `migrations.md`.
 
 ## Commands (uv)
 

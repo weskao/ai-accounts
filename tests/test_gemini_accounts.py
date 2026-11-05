@@ -148,6 +148,32 @@ class _HomeMixin(unittest.TestCase):
         return result, output.getvalue(), error.getvalue()
 
 
+class SafeSwitchRegressionTests(_HomeMixin):
+    def test_expired_target_refresh_failure_preserves_keyring(self):
+        original = _creds("sub-old", "old@example.test")
+        self.set_active(original)
+        self.write_profile("next", _creds("sub-new", "new@example.test", refresh_token="rt-next", expires_in_ms=-1000))
+        with mock.patch.object(ga, "_direct_refresh_auth", return_value=(None, "network timeout")):
+            self.assertEqual(self.quiet(ga.cmd_switch, "next"), 1)
+        self.assertEqual(self.active["refresh_token"], original["refresh_token"])
+        self.assertEqual(self.active["id_token"], original["id_token"])
+
+    def test_expired_target_refreshes_before_keyring_switch(self):
+        original = _creds("sub-old", "old@example.test", refresh_token="rt-old")
+        self.set_active(original)
+        target = _creds("sub-new", "new@example.test", refresh_token="rt-next", expires_in_ms=-1000)
+        self.write_profile("next", target)
+        observed = []
+        def refresh(auth):
+            observed.append(auth["refresh_token"])
+            self.assertEqual(self.active["id_token"], original["id_token"])
+            return {**auth, "access_token": "fresh", "expiry_date": int(time.time()*1000) + 3600000}, None
+        with mock.patch.object(ga, "_direct_refresh_auth", side_effect=refresh):
+            self.assertEqual(self.quiet(ga.cmd_switch, "next"), 0)
+        self.assertEqual(observed, ["rt-next"])
+        self.assertEqual(self.active["access_token"], "fresh")
+
+
 class StoragePathTests(unittest.TestCase):
     def test_default_storage_is_ai_accounts_owned(self) -> None:
         with (
@@ -2539,7 +2565,7 @@ class AgyDirectRefreshTests(_HomeMixin):
         self.assertEqual(self.quiet(ga.cmd_switch, "work"), 0)
         post.assert_not_called()
 
-    def test_switch_onto_a_revoked_profile_still_switches_and_hints(self) -> None:
+    def test_switch_onto_a_revoked_profile_refuses_to_replace_live_login(self) -> None:
         self.write_profile(
             "work",
             _creds(
@@ -2548,9 +2574,9 @@ class AgyDirectRefreshTests(_HomeMixin):
         )
         self.enable((None, "revoked: refresh token rejected (invalid_grant)"))
         code, output, error = self.capture(ga.cmd_switch, "work")
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         self.assertIn("login-switch work", ga._ANSI_RE.sub("", output + error))
-        self.assertIsNotNone(self.active)
+        self.assertIsNone(self.active)
 
 
 if __name__ == "__main__":

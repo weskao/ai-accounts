@@ -125,12 +125,17 @@ def _codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
 
 
-def _account_dir() -> Path:
-    return resolve_account_dir(
+def _store_paths() -> tuple[str, Path, Path]:
+    """(env override, default, legacy) of the profile store; also read by migrations."""
+    return (
         "CODEX_ACCOUNT_DIR",
         Path.home() / ".ai-accounts" / "codex" / "accounts",
         _codex_home() / "accounts",
     )
+
+
+def _account_dir() -> Path:
+    return resolve_account_dir(*_store_paths())
 
 
 def _auth_file() -> Path:
@@ -366,6 +371,29 @@ def _save_profile(path: Path, auth: dict) -> None:
 def _write_vendor_auth(auth_path: Path, auth: dict) -> None:
     """Write codex's own auth.json (0600, atomic) — never our metadata keys."""
     atomic_write_json(auth_path, {k: v for k, v in auth.items() if k != _CLAIMS_KEY})
+
+
+def _activate_profile_auth(auth_path: Path, auth: dict) -> bool:
+    """Publish one auth snapshot to Codex's keychain and file safely.
+
+    A keychain-backed CLI reads the keychain first; never overwrite auth.json
+    if the keychain refused the new account. If the file fails after a
+    successful keychain write, restore its original keychain value.
+    """
+    old_keychain = _read_keychain_auth() if _is_default_auth(auth_path) else None
+    if old_keychain is not None:
+        compact = json.dumps(
+            {k: v for k, v in auth.items() if k != _CLAIMS_KEY}, separators=(",", ":")
+        )
+        if not _write_keychain_auth(compact):
+            return False
+    try:
+        _write_vendor_auth(auth_path, auth)
+    except OSError:
+        if old_keychain is not None and not _write_keychain_auth(old_keychain):
+            log_red("❌ Could not restore Codex keychain after a file write failure.")
+        raise
+    return True
 
 
 def _read_claims(auth_path: Path) -> dict | None:
@@ -1062,24 +1090,42 @@ def cmd_switch(name: str, *, restart_daemon: bool = True) -> int:
         return 1
 
     auth_path = _auth_file()
+    original_active = _read_active_auth_text()
     if auth_path.is_file():
-        # Before overwriting, fold any token rotation codex performed on the
-        # active account back into its own saved profile. Codex rotates (and
-        # revokes) the refresh_token during normal use; without this, the
-        # profile keeps the revoked token, and a later `switch` back to it
-        # restores dead credentials — codex then fails MCP startup with
-        # HTTP 401 "token_revoked". Keeping the profile current makes switch
-        # idempotent. Local only (plus the credential store); no network.
-        outgoing_profile = _active_profile(_read_active_auth_text())
+        # Preserve the latest CLI-rotated outgoing token before restoring a
+        # different profile. Never silently strand the previous account.
+        outgoing_profile = _active_profile(original_active)
         if outgoing_profile is not None:
             _copy_active_auth_to(outgoing_profile)
 
-    # Loaded AFTER the fold-back: switching to the outgoing profile (or one of
-    # its aliases) must restore the tokens just folded in.
+    # Load after fold-back so switching to the same profile uses live tokens.
     auth = _load_profile(profile_file)
     if auth is None:
         log_red(f"❌ Saved tokens for '{name}' are unreadable or missing from the credential store.")
         log_yellow(f"   Re-login with: codex-accounts login-switch {name}")
+        return 1
+
+    # A parked account may have an expired access token. Refresh the saved
+    # target before modifying either active credential store.
+    if _token_expired_or_soon(_read_claims(profile_file)):
+        token = _refresh_token_of(auth)
+        if not token:
+            log_yellow(f"⚠️  Switch cancelled: '{name}' has no refresh token.")
+            log_yellow(f"   Re-login with: codex-accounts login-switch {name}")
+            return 1
+        refreshed, error = _oauth_refresh(token)
+        if refreshed is None:
+            log_yellow(f"⚠️  Switch cancelled ({error}); the current login was preserved.")
+            if _is_revoked_error(error):
+                log_yellow(f"   Re-login with: codex-accounts login-switch {name}")
+            return 1
+        auth = _with_refreshed_tokens(auth, refreshed)
+        _save_profile(profile_file, auth)
+
+    # A running Codex process may have refreshed the original token while the
+    # network request ran. Do not write a stale account over its new generation.
+    if _read_active_auth_text() != original_active:
+        log_yellow("⚠️  Codex changed its login during switch; retry.")
         return 1
 
     backup_label = None
@@ -1087,23 +1133,14 @@ def cmd_switch(name: str, *, restart_daemon: bool = True) -> int:
         in_store = profile_secrets.backup("codex", auth_path.read_text(encoding="utf-8"))
         backup_label = profile_secrets.status()[0] if in_store else str(_backup_dir() / "latest")
 
-    _write_vendor_auth(auth_path, auth)
-    # codex reads the keychain before auth.json on macOS — without this mirror
-    # the copy above is silently ignored and codex keeps the old account.
-    if not _mirror_active_auth_to_keychain(auth_path):
-        log_red("❌ Codex still has the previous keychain credentials; switch was not completed.")
-        return 1
-    _set_current_profile(profile_file)
-
-    # Self-heal an expired snapshot before codex (and its MCP clients like
-    # codex_apps) start with a dead access_token. Only fires when the restored
-    # token is expired/near-expiry, so a normal switch stays offline and instant.
-    if _token_expired_or_soon(_read_claims(auth_path)):
-        rc = _recover_switched_auth(auth_path, profile_file, name)
-        if rc != 0:
-            return rc
-        if not _mirror_active_auth_to_keychain(auth_path):
+    try:
+        if not _activate_profile_auth(auth_path, auth):
+            log_red("❌ Codex keychain could not be updated; original login was preserved.")
             return 1
+        _set_current_profile(profile_file)
+    except OSError as exc:
+        log_red(f"❌ Could not switch Codex account: {exc}")
+        return 1
 
     if restart_daemon and not _restart_codex_daemon():
         return 1

@@ -21,6 +21,7 @@ timer, the vendor-CLI hooks and ``ai-accounts list``'s captured children.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -78,9 +79,39 @@ def _language() -> str:
         return i18n.system_language()
 
 
+def _post_update_setup() -> int:
+    """Run the *newly installed* ``ai-accounts migrate``: data migration, then
+    hook/timer repair and verification (:mod:`ai_accounts.migrations`).
+
+    Never in this (old) process: the new code and its interpreter must do it,
+    so hooks and the scheduler reference the runtime that survived the
+    upgrade. The package install already succeeded when this runs, and a
+    failure here never claims it was undone.
+    """
+    from . import i18n
+
+    executable = shutil.which("ai-accounts")
+    if not executable:
+        print(i18n.t("update.migrate_missing", _language()), file=sys.stderr)
+        return 1
+    try:
+        from .migrations import PATH_RUNTIME_ENV
+
+        env = {**os.environ, PATH_RUNTIME_ENV: "1"}  # it IS the installed runtime
+        result = subprocess.run([executable, "migrate"], check=False, env=env)
+    except OSError as exc:
+        print(f"{i18n.t('update.migrate_failed', _language())} ({exc})", file=sys.stderr)
+        return 1
+    if result.returncode != 0:
+        print(i18n.t("update.migrate_failed", _language()), file=sys.stderr)
+        return 1
+    return 0
+
+
 def run_update(cmd: str) -> int:
-    """``<cmd> update``: install the newest release tag (a local checkout too); update-kit's exit code. No prompts."""
-    return update_kit.update(app=cmd, repo=REPO, dist=DIST, lang=_language(), out=sys.stderr)
+    """Upgrade the package and automatically repair its cross-provider integrations."""
+    code = update_kit.update(app=cmd, repo=REPO, dist=DIST, lang=_language(), out=sys.stderr)
+    return code if code != 0 else _post_update_setup()
 
 
 def refuse_args(cmd: str) -> int:
@@ -186,6 +217,8 @@ def _run_upgrade(latest: str) -> None:
     if not ok:
         u.log_red(i18n.t("update.failed", _language()))
         print(f"  {' '.join(cmd)}", file=sys.stderr)
+        return
+    _post_update_setup()
 
 
 def _update_lines(lang: str, current: str, latest: str, selected: int) -> list[str]:
