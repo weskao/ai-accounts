@@ -268,7 +268,14 @@ def cmd_timer_status() -> int:
 def cmd_autoswitch_setup() -> int:
     from . import autoswitch_setup
 
-    autoswitch_setup.install()
+    try:
+        autoswitch_setup.install()
+        if not autoswitch_setup.is_installed():
+            log_red("❌ Auto-switch setup is not complete; check timer and hook permissions.")
+            return 1
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        log_red(f"❌ Auto-switch setup failed: {exc}")
+        return 1
     print("Installed auto-switch event hooks and timer fallback.")
     return 0
 
