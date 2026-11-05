@@ -412,6 +412,73 @@ class ProfileCommandTests(_HomeMixin):
         assert old is not None
         self.assertEqual(old["accessToken"], "at-rotated")
 
+    def test_switch_refreshes_expiring_account_before_changing_live_login(self) -> None:
+        original = _oauth(access="old-access", refresh="old-refresh")
+        self.set_active(original)
+        self.write_profile("old", original)
+        self.mark_current("old")
+        target = self.write_profile("new", _oauth(access="stale", refresh="new-refresh", expires_in_ms=-1000))
+        observed: list[str] = []
+
+        def refresh(token: str):
+            observed.append(token)
+            self.assertEqual(self.active_oauth()["refreshToken"], "old-refresh")
+            self.assertEqual(ca._marked_profile().stem, "old")
+            return {"access_token": "fresh", "refresh_token": "rotated", "expires_in": 3600}, None
+
+        with mock.patch.object(ca, "_oauth_refresh", side_effect=refresh):
+            self.assertEqual(self.quiet(ca.cmd_switch, "new"), 0)
+
+        self.assertEqual(observed, ["new-refresh"])
+        self.assertEqual(self.active_oauth()["refreshToken"], "rotated")
+        self.assertEqual(ca._read_profile_oauth(target)["refreshToken"], "rotated")
+        self.assertEqual(ca._marked_profile().stem, "new")
+
+    def test_switch_refresh_failure_leaves_original_login_and_marker_untouched(self) -> None:
+        original = _oauth(access="old-access", refresh="old-refresh")
+        self.set_active(original)
+        self.write_profile("old", original)
+        self.mark_current("old")
+        self.write_profile("new", _oauth(access="stale", refresh="new-refresh", expires_in_ms=-1000))
+
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(None, "temporary outage")):
+            self.assertEqual(self.quiet(ca.cmd_switch, "new"), 1)
+
+        self.assertEqual(self.active_oauth()["refreshToken"], "old-refresh")
+        self.assertEqual(ca._marked_profile().stem, "old")
+        self.assertEqual(json.loads(self.keychain)["claudeAiOauth"]["refreshToken"], "old-refresh")
+
+    def test_switch_revoked_target_never_replaces_a_working_login(self) -> None:
+        original = _oauth(access="old-access", refresh="old-refresh")
+        self.set_active(original)
+        self.write_profile("old", original)
+        self.mark_current("old")
+        self.write_profile("new", _oauth(access="expired", refresh="revoked", expires_in_ms=-1000))
+
+        with (
+            mock.patch.object(ca, "_oauth_refresh", return_value=(None, "revoked: invalid_grant")),
+            mock.patch.object(ca, "cmd_login_switch") as login,
+        ):
+            self.assertEqual(self.quiet(ca.cmd_switch, "new"), 1)
+        login.assert_not_called()
+        self.assertEqual(self.active_oauth()["refreshToken"], "old-refresh")
+        self.assertEqual(ca._marked_profile().stem, "old")
+
+    def test_switch_keychain_write_failure_keeps_previous_account_active(self) -> None:
+        original = _oauth(access="old-access", refresh="old-refresh")
+        self.set_active(original)
+        self.write_profile("old", original)
+        self.mark_current("old")
+        self.write_profile("new", _oauth(access="new-access", refresh="new-refresh", expires_in_ms=30 * 86400 * 1000))
+        before_file = ca._creds_file().read_text(encoding="utf-8")
+
+        with mock.patch.object(ca, "_write_keychain_creds", return_value=False):
+            self.assertEqual(self.quiet(ca.cmd_switch, "new"), 1)
+
+        self.assertEqual(self.keychain, before_file)
+        self.assertEqual(ca._creds_file().read_text(encoding="utf-8"), before_file)
+        self.assertEqual(ca._marked_profile().stem, "old")
+
     def test_switch_missing_profile_errors(self) -> None:
         self.assertEqual(self.quiet(ca.cmd_switch, "ghost"), 1)
 
