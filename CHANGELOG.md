@@ -1,3 +1,51 @@
+## [0.29.0] - 2026-11-05
+
+### 🚀 Features
+
+- **update:** Automatically repair timer and hooks for all AI CLIs
+- **migrations:** Versioned, crash-safe upgrade migrations and repair
+
+### 🐛 Bug Fixes
+
+- **claude:** Preflight refresh and safeguard credential activation
+- **claude:** Reject stale OAuth refresh results on live credential drift
+- **setup:** Verify integration install before reporting success
+- **codex:** Refresh destination before switching and guard keychain writes
+- **antigravity:** Preflight parked OAuth account before keyring rotation
+- **grok:** Preflight expired OAuth snapshots before active login writes
+- **setup:** Surface failed launchd cron and task scheduler registration
+- **migrations:** Never undo another process's move; own-venv is not installed
+
+### 🚜 Refactor
+
+- **accounts:** Expose each provider's profile store paths
+
+### 📚 Documentation
+
+- **readme:** Refresh list demo with codex/claude reset and credit columns
+- **readme:** Show every provider in the list demo
+- **readme:** Add telegram notification examples
+- **readme:** Use markdown images for telegram demos
+- **readme:** Show re-login report, output layout and table style as fake-data screenshots
+- **claude:** Explain safe switch preflight and scheduled token maintenance
+- **update:** Explain automatic installation and provider-specific auth safety
+- **migrations:** Document upgrade lifecycle, recovery and ownership
+- **migrations:** Describe rollback scope, Ctrl-C and kept backups
+
+### 🧪 Testing
+
+- **claude:** Cover safe switch preflight and keychain failure
+- **claude:** Reject stale token refresh during concurrent CLI rotation
+- **update:** Isolate mocked upgrades from system integration changes
+- **update:** Require automatic integration repair after successful upgrades
+- **update:** Align integration test imports with Ruff
+- **auth:** Require OAuth preflight before switching active AI logins
+- **auth:** Require OAuth preflight before switching active AI logins
+- **auth:** Require OAuth preflight before switching active AI logins
+- **setup:** Validate verified installation in existing command test
+- **codex:** Align expired-login regressions with safe preflight policy
+- **antigravity:** Expect safe refusal on revoked or unavailable credentials
+- **setup:** Require scheduler installation failures to propagate
 ## [0.28.6] - 2026-10-30
 
 ### 🐛 Bug Fixes
