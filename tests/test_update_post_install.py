@@ -69,7 +69,7 @@ def test_post_update_invokes_newly_installed_cli_not_old_python(monkeypatch):
     ) as run:
         assert uc._post_update_setup() == 0
 
-    assert run.call_args.args[0] == ["/opt/uv/bin/ai-accounts", "autoswitch", "setup"]
+    assert run.call_args.args[0] == ["/opt/uv/bin/ai-accounts", "migrate"]
 
 
 def test_missing_installed_cli_is_actionable_and_fails(monkeypatch, capsys):
@@ -77,7 +77,7 @@ def test_missing_installed_cli_is_actionable_and_fails(monkeypatch, capsys):
     with mock.patch.object(uc.subprocess, "run") as run:
         assert uc._post_update_setup() == 1
     run.assert_not_called()
-    assert "ai-accounts autoswitch setup" in capsys.readouterr().err
+    assert "ai-accounts migrate" in capsys.readouterr().err
 
 
 def test_repair_command_failure_reports_manual_retry(monkeypatch, capsys):
@@ -87,7 +87,7 @@ def test_repair_command_failure_reports_manual_retry(monkeypatch, capsys):
         return_value=subprocess.CompletedProcess(["ai-accounts"], 1, stderr="setup failed"),
     ):
         assert uc._post_update_setup() == 1
-    assert "ai-accounts autoswitch setup" in capsys.readouterr().err
+    assert "ai-accounts migrate" in capsys.readouterr().err
 
 
 def test_setup_command_detects_partial_install(monkeypatch, capsys):

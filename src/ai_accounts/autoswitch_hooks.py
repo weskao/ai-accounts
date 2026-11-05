@@ -226,6 +226,25 @@ def is_installed() -> bool:
     return True
 
 
+def any_installed() -> bool:
+    """Whether at least one ai-accounts Stop hook is present (read-only).
+
+    Post-upgrade repair re-installs hooks only when some exist: a user who
+    never ran setup is not enrolled behind their back.
+    """
+    paths = _paths()
+    for provider in ("codex", "claude", "agy"):
+        try:
+            data = _load(paths[provider])
+        except (OSError, ValueError):
+            continue
+        if provider == "agy" and _owns_agy(data.get(MANAGED_HOOK)):
+            return True
+        if provider != "agy" and _grouped_stop_installed(data, provider):
+            return True
+    return False
+
+
 def _change(path: Path, update: Callable[[JsonObject], bool]) -> None:
     try:
         data = _load(path)
@@ -266,6 +285,9 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 2 or args[0] != "run" or args[1] not in _MODULES:
         return 2
+    from . import migrations
+
+    os.environ[migrations.BACKGROUND_ENV] = "1"  # the child migrates data only, never repairs
     try:
         _ = subprocess.run(
             [sys.executable, "-m", _MODULES[args[1]], "autoswitch"],

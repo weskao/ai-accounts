@@ -80,22 +80,30 @@ def _language() -> str:
 
 
 def _post_update_setup() -> int:
-    """Repair the installed CLI's shared timer and hooks using its new Python.
+    """Run the *newly installed* ``ai-accounts migrate``: data migration, then
+    hook/timer repair and verification (:mod:`ai_accounts.migrations`).
 
-    Never run from the old editable checkout: installed hooks and scheduler
-    commands must reference the interpreter that survived the upgrade.
+    Never in this (old) process: the new code and its interpreter must do it,
+    so hooks and the scheduler reference the runtime that survived the
+    upgrade. The package install already succeeded when this runs, and a
+    failure here never claims it was undone.
     """
+    from . import i18n
+
     executable = shutil.which("ai-accounts")
     if not executable:
-        print("⚠️  Post-update setup unavailable; run: ai-accounts autoswitch setup", file=sys.stderr)
+        print(i18n.t("update.migrate_missing", _language()), file=sys.stderr)
         return 1
     try:
-        result = subprocess.run([executable, "autoswitch", "setup"], check=False)
+        from .migrations import PATH_RUNTIME_ENV
+
+        env = {**os.environ, PATH_RUNTIME_ENV: "1"}  # it IS the installed runtime
+        result = subprocess.run([executable, "migrate"], check=False, env=env)
     except OSError as exc:
-        print(f"⚠️  Post-update setup failed: {exc}", file=sys.stderr)
+        print(f"{i18n.t('update.migrate_failed', _language())} ({exc})", file=sys.stderr)
         return 1
     if result.returncode != 0:
-        print("⚠️  Post-update setup incomplete; retry: ai-accounts autoswitch setup", file=sys.stderr)
+        print(i18n.t("update.migrate_failed", _language()), file=sys.stderr)
         return 1
     return 0
 

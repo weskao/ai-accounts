@@ -77,6 +77,15 @@ def _no_tmux(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_first_run_migration(monkeypatch):
+    """Every wrapped ``main()`` runs the post-upgrade first-run check, which
+    moves legacy stores under the *real* HOME and can re-register the real
+    LaunchAgent / scheduled task. Off for the whole suite; the migration
+    tests delete this inside their own throwaway HOME."""
+    monkeypatch.setenv("AI_ACCOUNTS_NO_AUTO_MIGRATE", "1")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_real_config(monkeypatch, tmp_path):
     """Point every test at a throwaway config file instead of the real
     ``~/.ai-accounts/config.json``.

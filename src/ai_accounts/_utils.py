@@ -17,8 +17,9 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import lru_cache, wraps
 from pathlib import Path
@@ -65,7 +66,9 @@ def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
 
     Every entry point's ``main`` wears this, so it is also the one funnel for
     ``<cmd> update`` / ``<cmd> --update`` (:func:`ai_accounts.update_check.run_update`)
-    and for the update prompt (:mod:`ai_accounts.update_check`, once per process tree).
+    and for the update prompt (:mod:`ai_accounts.update_check`, once per process tree),
+    and for the post-upgrade first-run migration check
+    (:func:`ai_accounts.migrations.first_run`, same once-per-tree rule).
     """
 
     @wraps(func)
@@ -84,6 +87,9 @@ def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
         outermost = not updating and update_check.claim()
         if outermost:
             update_check.start_check()
+            from . import migrations
+
+            migrations.first_run(norm)
         try:
             if updating:
                 return update_check.run_update(cmd)
@@ -1033,15 +1039,61 @@ def keyring_core_write(service: str, user: str, secret: str) -> bool:
     return False
 
 
+# ── inter-process lock ───────────────────────────────────────────────────────
+
+@contextmanager
+def file_lock(path: Path | str, *, timeout: float) -> Iterator[bool]:
+    """Hold an exclusive lock on *path* across processes; yields False on timeout.
+
+    ``flock`` on POSIX, ``msvcrt.locking`` on Windows (guarded by ``os.name``,
+    not the patchable ``IS_WINDOWS``). The OS drops the lock when its holder
+    dies, so a crashed process never leaves it stuck.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    windows = os.name == "nt"
+    if windows:
+        import msvcrt
+    else:
+        import fcntl
+    deadline = time.monotonic() + timeout
+    locked = False
+    try:
+        while True:
+            try:
+                if windows:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
+        yield locked
+    finally:
+        if locked:
+            if windows:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 # ── credential files ─────────────────────────────────────────────────────────
 
-def atomic_write_text(path: Path, text: str, *, mode: int = 0o600) -> None:
+def atomic_write_text(path: Path, text: str, *, mode: int = 0o600, durable: bool = False) -> None:
     """Write `text` (utf-8) to `path` atomically, 0600 by default.
 
     A same-directory temp file is filled, chmod'd and `replace`d onto the
     target, so a crash mid-write — or a vendor CLI reading the same credential
     concurrently — never sees a truncated file. Raises OSError on failure,
     after removing the temp file (also for an unencodable `text`, which raises ValueError).
+    *durable* fsyncs the data before the swap (a journal that must survive power loss).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
@@ -1055,6 +1107,9 @@ def atomic_write_text(path: Path, text: str, *, mode: int = 0o600) -> None:
         ) as handle:
             temporary = Path(handle.name)
             handle.write(text)
+            if durable:
+                handle.flush()
+                os.fsync(handle.fileno())
         temporary.chmod(mode)
         temporary.replace(path)
         path.chmod(mode)
@@ -1064,9 +1119,11 @@ def atomic_write_text(path: Path, text: str, *, mode: int = 0o600) -> None:
         raise
 
 
-def atomic_write_json(path: Path, payload, *, indent: int = 2, mode: int = 0o600) -> None:
+def atomic_write_json(
+    path: Path, payload, *, indent: int = 2, mode: int = 0o600, durable: bool = False
+) -> None:
     """Write `payload` as JSON to `path` via `atomic_write_text` (see there)."""
-    atomic_write_text(path, json.dumps(payload, indent=indent) + "\n", mode=mode)
+    atomic_write_text(path, json.dumps(payload, indent=indent) + "\n", mode=mode, durable=durable)
 
 
 # ── OAuth token refresh ──────────────────────────────────────────────────────

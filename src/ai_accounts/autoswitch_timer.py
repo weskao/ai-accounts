@@ -520,6 +520,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif cmd == "status":
         print(status())
     elif cmd == "run":
+        from . import migrations
+
+        os.environ[migrations.BACKGROUND_ENV] = "1"  # inherited by the provider children
+        migrations.first_run(["run"])
         return run_once()
     else:
         print(f"unknown command: {cmd}", file=sys.stderr)

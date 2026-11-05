@@ -353,6 +353,14 @@ def _check_timer() -> _Check:
     return _Check(True, state)
 
 
+def _check_migrations() -> _Check:
+    """Run-level line: data schema and last integration repair (read-only)."""
+    from . import migrations
+
+    summary = migrations.summary()
+    return _Check(bool(summary["ok"]), str(summary["detail"]))
+
+
 def _timer_note(timer: _Check) -> str | None:
     """A warning when a timer-only setting is on but the timer isn't installed.
 
@@ -466,6 +474,7 @@ def _print_table(
     if note:
         print(note)
     print(f"Token storage: {_mark(token_storage)}")
+    print(f"Migrations: {_mark(_check_migrations())}")
     footer = _account_tool_footer(rows, account_tool_note)
     if footer:
         print(footer)
@@ -487,6 +496,7 @@ def _print_json(
         },
         "autoswitch_timer": timer.to_json(),
         "token_storage": token_storage.to_json(),
+        "migrations": _check_migrations().to_json(),
         # Always present (possibly null) so a scripted consumer doesn't need
         # to special-case its absence; non-null only when an account-tool
         # check failed AND the installed editable link points elsewhere.
