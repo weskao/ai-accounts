@@ -429,7 +429,9 @@ class AiAccountsTest(unittest.TestCase):
     def test_autoswitch_setup_is_local_and_runs_once_per_explicit_request(self) -> None:
         with mock.patch.object(aa.subprocess, "run") as run, mock.patch(
             "ai_accounts.autoswitch_setup.install"
-        ) as setup:
+        ) as setup, mock.patch(
+            "ai_accounts.autoswitch_setup.is_installed", return_value=True
+        ):
             with redirect_stdout(io.StringIO()):
                 rc = aa.main(["autoswitch", "setup"])
 
