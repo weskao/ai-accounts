@@ -21,6 +21,7 @@ timer, the vendor-CLI hooks and ``ai-accounts list``'s captured children.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -78,9 +79,31 @@ def _language() -> str:
         return i18n.system_language()
 
 
+def _post_update_setup() -> int:
+    """Repair the installed CLI's shared timer and hooks using its new Python.
+
+    Never run from the old editable checkout: installed hooks and scheduler
+    commands must reference the interpreter that survived the upgrade.
+    """
+    executable = shutil.which("ai-accounts")
+    if not executable:
+        print("⚠️  Post-update setup unavailable; run: ai-accounts autoswitch setup", file=sys.stderr)
+        return 1
+    try:
+        result = subprocess.run([executable, "autoswitch", "setup"], check=False)
+    except OSError as exc:
+        print(f"⚠️  Post-update setup failed: {exc}", file=sys.stderr)
+        return 1
+    if result.returncode != 0:
+        print("⚠️  Post-update setup incomplete; retry: ai-accounts autoswitch setup", file=sys.stderr)
+        return 1
+    return 0
+
+
 def run_update(cmd: str) -> int:
-    """``<cmd> update``: install the newest release tag (a local checkout too); update-kit's exit code. No prompts."""
-    return update_kit.update(app=cmd, repo=REPO, dist=DIST, lang=_language(), out=sys.stderr)
+    """Upgrade the package and automatically repair its cross-provider integrations."""
+    code = update_kit.update(app=cmd, repo=REPO, dist=DIST, lang=_language(), out=sys.stderr)
+    return code if code != 0 else _post_update_setup()
 
 
 def refuse_args(cmd: str) -> int:
@@ -186,6 +209,8 @@ def _run_upgrade(latest: str) -> None:
     if not ok:
         u.log_red(i18n.t("update.failed", _language()))
         print(f"  {' '.join(cmd)}", file=sys.stderr)
+        return
+    _post_update_setup()
 
 
 def _update_lines(lang: str, current: str, latest: str, selected: int) -> list[str]:
