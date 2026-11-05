@@ -57,6 +57,7 @@ from ._utils import (
     YELLOW,
     Spinner,
     atomic_write_json,
+    atomic_write_text,
     email_local_part,
     ensure_tool,
     fetch_parallel,
@@ -193,8 +194,7 @@ def _marked_profile() -> Path | None:
 def _set_current_profile(profile: Path) -> None:
     marker = _current_profile_marker()
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(profile.stem, encoding="utf-8")
-    marker.chmod(0o600)
+    atomic_write_text(marker, profile.stem)
 
 
 # ── credential envelope (claudeAiOauth) ─────────────────────────────────────
@@ -498,14 +498,40 @@ def _read_active_oauth() -> dict | None:
         return None
 
 
-def _write_active_oauth(oauth: dict) -> None:
-    """Set the live account to `oauth`, in both the file and the keychain mirror,
-    preserving any unrelated keys (mcpOAuth) already in each store."""
+def _write_active_oauth(oauth: dict, *, require_keychain_sync: bool = False) -> None:
+    """Update the active login without silently splitting file and keychain state.
+
+    Switching uses strict mode: update an existing keychain login first, then
+    publish the file. If publishing fails, restore the old keychain value.
+    Other callers keep the legacy best-effort mirror behavior.
+    """
     creds = _creds_file()
     current = creds.read_text(encoding="utf-8") if creds.is_file() else None
     merged = _inject_oauth(current, oauth)
+
+    old_keychain = _read_keychain_creds() if require_keychain_sync else None
+    if old_keychain is not None:
+        try:
+            parsed = json.loads(old_keychain)
+        except ValueError as exc:
+            raise OSError("Cannot switch: existing keychain login is unreadable") from exc
+        if _extract_oauth(parsed) is None:
+            raise OSError("Cannot switch: existing keychain login is not recognized")
+
+        new_keychain = _inject_oauth(old_keychain, oauth)
+        if not _write_keychain_creds(json.dumps(new_keychain, separators=(",", ":"))):
+            raise OSError("Cannot switch: macOS keychain could not be updated")
+        try:
+            atomic_write_json(creds, merged)
+        except OSError:
+            if not _write_keychain_creds(old_keychain):
+                log_red("❌ Keychain rollback failed; inspect the active login before retrying.")
+            raise
+        return
+
     atomic_write_json(creds, merged)
-    _mirror_active_oauth_to_keychain(oauth)
+    if not require_keychain_sync:
+        _mirror_active_oauth_to_keychain(oauth)
 
 
 def _active_profile(active_oauth: dict | None = None) -> Path | None:
@@ -934,44 +960,48 @@ def cmd_switch(name: str) -> int:
         log_red(f"❌ Profile is unreadable: {name}")
         return 1
 
-    # Fold any token rotation on the outgoing account back into its own profile
-    # before overwriting, so a later switch back restores fresh tokens.
-    outgoing = _active_profile()
+    # Never replace an already-active session with its older saved snapshot.
+    old_oauth = _read_active_oauth()
+    outgoing = _active_profile(old_oauth)
+    if outgoing == profile_file and old_oauth is not None:
+        oauth = old_oauth
+    elif _token_expired_or_soon(_claims_from_oauth(oauth)):
+        # Refresh the destination BEFORE changing the live login. A revoked or
+        # unreachable token endpoint must not displace a working account.
+        refreshed, error = _refresh_oauth(
+            oauth, name, f"Re-login with: claude-accounts login-switch {name}"
+        )
+        if refreshed is None:
+            log_yellow(f"⚠️  Switch cancelled ({error}); the current login was preserved.")
+            return 1
+        oauth = refreshed
+        _write_profile(profile_file, oauth)
+
+    # Preserve the outgoing CLI-rotated token before changing the live slot.
     if outgoing is not None and outgoing != profile_file:
         _fold_active_into_profile(outgoing)
 
-    _write_active_oauth(oauth)
-    _set_current_profile(profile_file)
+    # Refuse a stale switch if Claude Code changed the login during preflight.
+    if _read_active_oauth() != old_oauth:
+        log_yellow("⚠️  Claude Code changed its login during the switch. Retry.")
+        return 1
+
+    try:
+        _write_active_oauth(oauth, require_keychain_sync=True)
+        try:
+            _set_current_profile(profile_file)
+        except OSError:
+            if old_oauth is not None:
+                _write_active_oauth(old_oauth, require_keychain_sync=True)
+            raise
+    except OSError as exc:
+        log_red(f"❌ Could not switch Claude account: {exc}")
+        return 1
 
     ok("Switched Claude profile to", name)
     print(f"{DIM}   Claude Code will use this account on its next launch.{RESET}")
-
-    # Self-heal an expired snapshot in place so Claude Code starts with a live
-    # token. Only fires when the restored token is expired/near-expiry.
-    if _token_expired_or_soon(_read_claims(profile_file)):
-        rc = _recover_switched_auth(profile_file, name)
-        if rc != 0:
-            return rc
-
     print()
     return cmd_who()
-
-
-def _recover_switched_auth(profile_file: Path, name: str) -> int:
-    """Refresh a just-restored but expired token in place, mirroring the rotated
-    result back into the profile. Only a genuine revocation escalates to login."""
-    oauth = _read_active_oauth() or {}
-    new_oauth, error = _refresh_oauth(oauth, name, f"Re-login with: claude-accounts login-switch {name}")
-    if new_oauth is not None:
-        _write_active_oauth(new_oauth)
-        _write_profile(profile_file, new_oauth)
-        print(f"{DIM}   (token was expired — refreshed in place){RESET}")
-        return 0
-    if not _is_revoked_error(error):
-        log_yellow(f"⚠️  Could not refresh after switch ({error}); Claude Code will retry on next use.")
-        return 0
-    log_yellow(f"⚠️  Saved token for '{name}' is revoked — re-logging in via browser…")
-    return cmd_login_switch(name)
 
 
 def cmd_switch_interactive() -> int:
