@@ -1176,9 +1176,12 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
     # longer match the live one, skipping the sync and stranding the live
     # session on a token the endpoint just invalidated.
     synced_active = _active_profile() == profile_file
+    # Keep the exact live generation we are about to refresh: Claude Code may
+    # rotate its tokens concurrently while the network request is in flight.
+    live_before = _read_active_oauth() if synced_active else None
     # The live session is never staler than the saved copy, whose refresh
     # token Claude Code may already have rotated away.
-    oauth = (_read_active_oauth() if synced_active else None) or _read_profile_oauth(profile_file)
+    oauth = live_before or _read_profile_oauth(profile_file)
     if oauth is None:
         log_red(f"❌ Profile is unreadable: {name}")
         return 1, "revoked"
@@ -1186,10 +1189,22 @@ def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, 
     if new_oauth is None:
         return 1, kind
 
+    if synced_active and _read_active_oauth() != live_before:
+        # A live CLI refresh or login happened while we contacted the OAuth
+        # endpoint. Never write our possibly stale result over that generation.
+        log_yellow("⚠️  Claude Code changed its login during refresh; retry later.")
+        return 1, "transient"
+
+    # Persist the newly rotated token so it cannot be lost even if a keychain
+    # write is unavailable. A failed live write is an explicit error.
     _write_profile(profile_file, new_oauth)
     if synced_active:
-        _write_active_oauth(new_oauth)
-        _set_current_profile(profile_file)
+        try:
+            _write_active_oauth(new_oauth, require_keychain_sync=True)
+            _set_current_profile(profile_file)
+        except OSError as exc:
+            log_red(f"❌ Could not update the active Claude login: {exc}")
+            return 1, "transient"
 
     if show_summary:
         details = (
@@ -1248,7 +1263,17 @@ def _refresh_active_auth() -> int:
     new_oauth, _kind = _refresh_oauth(oauth, "the active auth", "Re-login with: claude auth login")
     if new_oauth is None:
         return 1
-    _write_active_oauth(new_oauth)
+    if _read_active_oauth() != oauth:
+        log_yellow("⚠️  Claude Code changed its login during refresh; retry later.")
+        return 1
+    try:
+        _write_active_oauth(new_oauth, require_keychain_sync=True)
+    except OSError as exc:
+        # Save the rotated token when we know which profile owns this login.
+        if profile_path is not None:
+            _write_profile(profile_path, new_oauth)
+        log_red(f"❌ Could not update the active Claude login: {exc}")
+        return 1
     if profile_path is not None:
         _write_profile(profile_path, new_oauth)
         _set_current_profile(profile_path)
