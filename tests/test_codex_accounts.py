@@ -1836,7 +1836,7 @@ class SwitchDaemonTests(_CodexHomeMixin):
         refreshed = {"access_token": _jwt({"exp": int(time.time()) + 864000}),
                      "refresh_token": "rt-new"}
         with mock.patch.object(ca, "_read_keychain_auth", return_value="{}"), \
-                mock.patch.object(ca, "_write_keychain_auth", side_effect=[True, False, False]), \
+                mock.patch.object(ca, "_write_keychain_auth", return_value=False), \
                 mock.patch.object(ca, "_oauth_refresh", return_value=(refreshed, None)), \
                 mock.patch.object(ca.subprocess, "run", side_effect=[
                     subprocess.CompletedProcess([], 0, '{"status":"running"}', ""),
@@ -2037,7 +2037,7 @@ class SwitchExpiredFallbackTests(_CodexHomeMixin):
         prof = self.saved(self.home / "accounts" / "work.json")
         self.assertEqual(prof["tokens"]["refresh_token"], "rt-fresh")
 
-    def test_expired_token_with_revoked_refresh_token_triggers_login_switch(self):
+    def test_expired_token_with_revoked_refresh_token_leaves_login_untouched(self):
         self.write_profile(
             "work", _auth_payload("acct-w", "w@x.com", refresh_token="rt-dead", expires_in=-3600)
         )
@@ -2048,8 +2048,8 @@ class SwitchExpiredFallbackTests(_CodexHomeMixin):
                 mock.patch.object(ca, "cmd_login_switch", return_value=0) as relogin:
             rc = self.run_quiet(ca.cmd_switch, "work")
 
-        relogin.assert_called_once_with("work")
-        self.assertEqual(rc, 0)
+        relogin.assert_not_called()
+        self.assertEqual(rc, 1)
 
     def test_expired_token_network_error_does_not_relogin(self):
         self.write_profile(
@@ -2062,7 +2062,7 @@ class SwitchExpiredFallbackTests(_CodexHomeMixin):
                 mock.patch.object(ca, "cmd_login_switch") as relogin:
             rc = self.run_quiet(ca.cmd_switch, "work")
 
-        self.assertEqual(rc, 0)  # non-fatal
+        self.assertEqual(rc, 1)  # switching must not activate an expired target
         relogin.assert_not_called()  # transient blip must not pop a browser
 
     def test_expired_token_server_5xx_does_not_relogin(self):
@@ -2076,7 +2076,7 @@ class SwitchExpiredFallbackTests(_CodexHomeMixin):
                 mock.patch.object(ca, "cmd_login_switch") as relogin:
             rc = self.run_quiet(ca.cmd_switch, "work")
 
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)
         relogin.assert_not_called()  # 5xx is transient, not a revoked token
 
 
