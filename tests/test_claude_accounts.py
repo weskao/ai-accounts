@@ -988,6 +988,39 @@ class RefreshTests(_HomeMixin):
         self.assertIsNone(ca._active_profile())
         self.assertEqual(self.active_oauth()["refreshToken"], "rt-live")
 
+    def test_refresh_all_refuses_to_overwrite_a_concurrent_cli_rotation(self) -> None:
+        original = _oauth(access="old", refresh="rt-old")
+        newer = _oauth(access="newer-cli-token", refresh="rt-from-cli")
+        profile = self.write_profile("work", original)
+        self.set_active(original)
+        self.mark_current("work")
+
+        def refresh(token: str):
+            self.assertEqual(token, "rt-old")
+            self.set_active(newer)  # Claude Code refreshed while the HTTP call ran
+            return {"access_token": "stale-response", "refresh_token": "rt-stale", "expires_in": 3600}, None
+
+        with mock.patch.object(ca, "_oauth_refresh", side_effect=refresh):
+            self.assertEqual(self.quiet(ca.cmd_refresh, "--all"), 1)
+
+        self.assertEqual(self.active_oauth()["refreshToken"], "rt-from-cli")
+        self.assertEqual(ca._read_profile_oauth(profile)["refreshToken"], "rt-old")
+
+    def test_refresh_active_refuses_to_overwrite_a_concurrent_cli_rotation(self) -> None:
+        original = _oauth(access="old", refresh="rt-old")
+        newer = _oauth(access="newer-cli-token", refresh="rt-from-cli")
+        self.set_active(original)
+
+        def refresh(token: str):
+            self.assertEqual(token, "rt-old")
+            self.set_active(newer)
+            return {"access_token": "stale-response", "refresh_token": "rt-stale", "expires_in": 3600}, None
+
+        with mock.patch.object(ca, "_oauth_refresh", side_effect=refresh):
+            self.assertEqual(self.quiet(ca.cmd_refresh, None), 1)
+
+        self.assertEqual(self.active_oauth()["refreshToken"], "rt-from-cli")
+
     def test_refresh_revoked_token_fails(self) -> None:
         self.write_profile("work", _oauth(refresh="rt-dead"))
         with mock.patch.object(ca, "_oauth_refresh", return_value=(None, "revoked: rejected")):
