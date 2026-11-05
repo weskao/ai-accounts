@@ -449,3 +449,35 @@ def test_dry_run_says_a_foreign_runtime_would_leave_integrations_alone(home, int
     assert mig.run(dry_run=True) == 0
     out = capsys.readouterr().out
     assert "another ai-accounts installation" in out and "Re-install" not in out
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinked console scripts")
+@pytest.mark.parametrize(("runtime", "expected"), [("venv", False), ("tool", True)])
+def test_a_checkouts_own_venv_on_path_is_not_the_installed_runtime(tmp_path, monkeypatch, runtime, expected):
+    """`uv run` puts the checkout's .venv/bin first on PATH; that must not make
+    it look like the installed `ai-accounts`."""
+    monkeypatch.delenv(mig.PATH_RUNTIME_ENV, raising=False)
+    venv, tool, local = tmp_path / "venv/bin", tmp_path / "tool/bin", tmp_path / "local/bin"
+    for folder in (venv, tool, local):
+        folder.mkdir(parents=True)
+    for folder in (venv, tool):
+        script = folder / "ai-accounts"
+        script.write_text("#!/bin/sh\n", encoding="utf-8")
+        script.chmod(0o755)
+        (folder / "python").write_text("", encoding="utf-8")
+    (local / "ai-accounts").symlink_to(tool / "ai-accounts")
+    # `uv run` prepends the checkout's venv; the installed tool runs from PATH as is.
+    monkeypatch.setenv("PATH", os.pathsep.join([str(venv), str(local)] if runtime == "venv" else [str(local)]))
+    monkeypatch.setattr(sys, "executable", str((venv if runtime == "venv" else tool) / "python"))
+    assert mig._is_path_runtime() is expected
+
+
+def test_ctrl_c_in_the_first_run_check_exits_130_quietly(monkeypatch, capsys):
+    hints = []
+    monkeypatch.delenv(uc._CLAIMED_ENV, raising=False)
+    monkeypatch.setattr(uc, "start_check", lambda: None)
+    monkeypatch.setattr(uc, "maybe_hint", lambda: hints.append(1))
+    monkeypatch.setattr(mig, "first_run", lambda argv: (_ for _ in ()).throw(KeyboardInterrupt()))
+    wrapped = u.quiet_keyboard_interrupt(lambda argv=None: pytest.fail("cancelled command ran"))
+    assert wrapped(["list"]) == 130
+    assert hints == [1]

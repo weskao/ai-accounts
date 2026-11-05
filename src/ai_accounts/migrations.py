@@ -45,6 +45,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -262,6 +263,10 @@ def _move(src: Path, dst: Path) -> None:
     except OSError as exc:
         if exc.errno != errno.EXDEV:
             raise
+    if src.is_symlink():  # a linked store stays a link to the same target
+        os.symlink(os.readlink(src), dst)
+        os.unlink(src)
+        return
     staging = _staging(dst)
     if staging.exists():
         shutil.rmtree(staging)
@@ -346,6 +351,21 @@ def _rollback(ops: list[Op]) -> list[str]:
     return [problem for op in reversed(ops) if (problem := _undo_op(op))]
 
 
+def _cleanup_partial(op: Op) -> str | None:
+    """The op that raised: its rename did not happen, so never move anything
+    back (another process may have moved the store meanwhile); only drop a
+    half-written cross-filesystem staging copy."""
+    src, dst = Path(str(op["src"])), Path(str(op["dst"]))
+    try:
+        if _staging(dst).exists():
+            shutil.rmtree(_staging(dst))
+    except OSError as exc:
+        return f"{op['provider']}: {_staging(dst)}: {exc}"
+    if src.exists() and dst.exists() and not _is_empty_dir(dst):
+        return f"{op['provider']}: {src} + {dst}"
+    return None
+
+
 def _fail(state: dict, migration: Migration, error: str, unrestored: list[str], backup: Path | None) -> None:
     backup = _owned_backup(str(backup)) if backup is not None else None
     keep = bool(unrestored) and backup is not None and backup.exists()
@@ -357,6 +377,8 @@ def _fail(state: dict, migration: Migration, error: str, unrestored: list[str], 
         "at": _now(), "version": migration.version, "name": migration.name,
         "error": error, "unrestored": unrestored, "backup": str(backup) if keep else None,
     }
+    if keep:  # listed until the user deletes it, whatever later runs do
+        state.setdefault("kept_backups", []).append(str(backup))
     _write_state(state)
     _say("migrate.failed", version=migration.version, name=migration.name, error=error)
     if not unrestored:
@@ -401,7 +423,9 @@ def _apply(state: dict, migration: Migration) -> bool:
     if problem:
         _fail(state, migration, problem, [], None)
         return False
-    backup = backups_dir() / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-v{migration.version}"
+    _private_dir(backups_dir())
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    backup = Path(tempfile.mkdtemp(prefix=f"{stamp}-v{migration.version}-", dir=backups_dir()))  # 0700
     journal_ops = [dict(op) for op in ops]
     state["journal"] = {
         "version": migration.version, "name": migration.name, "started_at": _now(),
@@ -409,13 +433,14 @@ def _apply(state: dict, migration: Migration) -> bool:
     }
     _write_state(state)
     try:
-        _private_dir(backup)
         manifests = {}
         for op in journal_ops:
             src = Path(str(op["src"]))
             manifests[op["src"]] = _manifest(src)
             shutil.copytree(src, backup / str(op["provider"]), symlinks=True)
         for op in journal_ops:
+            op["started"] = True  # a crash from here on may or may not have moved it
+            _write_state(state)
             _apply_op(op)
             op["done"] = True
             _write_state(state)
@@ -423,7 +448,12 @@ def _apply(state: dict, migration: Migration) -> bool:
             if _manifest(Path(str(op["dst"]))) != manifests[op["src"]]:
                 raise _ValidationError(i18n.t("migrate.validation", _lang(), provider=op["provider"]))
     except (Exception, KeyboardInterrupt) as exc:  # a hard crash is handled by _recover instead
-        _fail(state, migration, str(exc), _rollback(journal_ops), backup)
+        unrestored = _rollback([op for op in journal_ops if op.get("done")])
+        unrestored += [p for op in journal_ops if op.get("started") and not op.get("done")
+                       if (p := _cleanup_partial(op))]
+        _fail(state, migration, str(exc) or type(exc).__name__, unrestored, backup)
+        if isinstance(exc, KeyboardInterrupt):
+            raise  # rolled back; the user still cancelled the command
         return False
     for op in journal_ops:
         _say("migrate.moved", provider=op["provider"], src=op["src"], dst=op["dst"])
@@ -436,7 +466,9 @@ def _recover(state: dict) -> bool:
     """Roll back a migration a crash left half-applied. False if it cannot."""
     journal = state["journal"]
     backup = _owned_backup(journal.get("backup"))
-    unrestored = _rollback([op for op in journal.get("ops") or [] if op.get("kind") == "move"])
+    touched = [op for op in journal.get("ops") or []
+               if op.get("kind") == "move" and (op.get("started") or op.get("done"))]
+    unrestored = _rollback(touched)
     migration = next(
         (m for m in MIGRATIONS if m.version == journal.get("version")),
         Migration(int(journal.get("version") or 0), str(journal.get("name")), lambda: ([], [])),
@@ -488,10 +520,15 @@ def _is_path_runtime() -> bool:
     """
     if os.environ.get(PATH_RUNTIME_ENV):
         return True
-    found = shutil.which("ai-accounts")
+    here = Path(sys.executable).absolute().parent
+    # `uv run` / an activated venv put our own bin first on PATH; look past it.
+    search = os.pathsep.join(
+        entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and Path(entry).absolute() not in (here, here.resolve())
+    )
+    found = shutil.which("ai-accounts", path=search)
     if not found:
         return False
-    here = Path(sys.executable).absolute().parent
     return Path(found).resolve().parent in (here, here.resolve())
 
 
@@ -695,8 +732,10 @@ def status() -> int:
              error=failure.get("error"))
         for item in failure.get("unrestored") or []:
             _say("migrate.unrestored", out=out, item=item)
-        if failure.get("backup"):
-            _say("migrate.backup_kept", out=out, path=failure["backup"])
+    kept = _kept_backups(state)
+    for path in kept:
+        _say("migrate.backup_kept", out=out, path=path)
+    healthy = healthy and not kept
     record = state.get("integrations")
     if record:
         _say("migrate.status.integrations", out=out, status=record.get("status"),
@@ -707,6 +746,11 @@ def status() -> int:
     else:
         _say("migrate.status.integrations_unknown", out=out)
     return 0 if healthy else 1
+
+
+def _kept_backups(state: dict) -> list[str]:
+    """Backups a failed run kept, until the user deletes them."""
+    return [p for p in state.get("kept_backups") or [] if isinstance(p, str) and Path(p).exists()]
 
 
 def summary() -> dict[str, object]:
@@ -726,6 +770,8 @@ def summary() -> dict[str, object]:
         return {"ok": False, "detail": "last migration failed — see: ai-accounts migrate status"}
     if schema < CURRENT_SCHEMA:
         return {"ok": False, "detail": f"schema {schema} → {CURRENT_SCHEMA} pending — run: ai-accounts migrate"}
+    if kept := _kept_backups(state):
+        return {"ok": False, "detail": f"backup kept at {kept[0]} — see: ai-accounts migrate status"}
     if (state.get("integrations") or {}).get("status") == "failed":
         return {"ok": False, "detail": f"schema {schema}; integration repair failed — run: ai-accounts migrate"}
     return {"ok": True, "detail": f"schema {schema} (current)"}

@@ -524,3 +524,70 @@ def test_unwritable_state_folder_fails_cleanly(home, monkeypatch, capsys):
     monkeypatch.setattr(mig, "_private_dir", boom)
     assert mig.cmd_migrate([]) == 1
     assert "Permission denied" in capsys.readouterr().err
+
+
+# ── review follow-ups ────────────────────────────────────────────────────────
+
+def test_a_store_moved_by_another_process_mid_run_is_not_moved_back(home, monkeypatch):
+    """A lazy move (doctor, an old runtime) wins the race: our rename fails,
+    and rollback must not drag the store back to the legacy path."""
+    files = make_store(home, ".codex/accounts")
+    real = mig._move
+
+    def move(src, dst):
+        real(src, dst)  # the other process
+        os.rename(src, dst)  # ours: source is gone now
+
+    monkeypatch.setattr(mig, "_move", move)
+    assert mig.run() == 1
+    assert files_in(home / ".ai-accounts/codex/accounts") == files
+    assert not (home / ".codex/accounts").exists()
+
+
+def test_ctrl_c_mid_migration_rolls_back_and_still_cancels(home, monkeypatch):
+    codex = make_store(home, ".codex/accounts")
+    make_store(home, ".claude/accounts")
+    monkeypatch.setattr(mig, "_move", fail_on(mig._move, src_has=".claude", error=KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):
+        mig.run()
+    assert files_in(home / ".codex/accounts") == codex
+    assert state().get("journal") is None
+
+
+def test_a_kept_backup_is_still_reported_after_a_later_success(home, monkeypatch, capsys):
+    make_store(home, ".codex/accounts")
+    make_store(home, ".claude/accounts")
+    real = mig._move
+    monkeypatch.setattr(mig, "_move", fail_on(real, src_has=".claude", dst_has=".codex"))
+    assert mig.run() == 1
+    backup = state()["last_failure"]["backup"]
+    monkeypatch.setattr(mig, "_move", real)
+    assert mig.run() == 0
+    capsys.readouterr()
+    assert mig.status() == 1
+    assert backup in capsys.readouterr().out
+    assert mig.summary()["ok"] is False
+    shutil.rmtree(backup)
+    assert mig.status() == 0
+
+
+@pytest.mark.skipif(not POSIX, reason="symlink creation needs privileges on Windows")
+def test_symlinked_store_moved_across_filesystems_stays_a_link(home, tmp_path, monkeypatch):
+    target = tmp_path / "real-store"
+    target.mkdir()
+    (target / "work.json").write_text("{}", encoding="utf-8")
+    (home / ".grok").mkdir()
+    (home / ".grok/accounts").symlink_to(target)
+    real_rename = os.rename
+
+    def rename(src, dst):
+        if ".grok" in str(src):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        real_rename(src, dst)
+
+    monkeypatch.setattr(mig.os, "rename", rename)
+    assert mig.run() == 0
+    moved = home / ".ai-accounts/grok/accounts"
+    assert moved.is_symlink() and moved.resolve() == target.resolve()
+    assert (target / "work.json").exists()
+    assert not (home / ".grok/accounts").exists() and not (home / ".grok/accounts").is_symlink()

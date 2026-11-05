@@ -87,10 +87,11 @@ def quiet_keyboard_interrupt(func: Callable[..., int]) -> Callable[..., int]:
         outermost = not updating and update_check.claim()
         if outermost:
             update_check.start_check()
-            from . import migrations
-
-            migrations.first_run(norm)
         try:
+            if outermost:
+                from . import migrations
+
+                migrations.first_run(norm)  # inside try: Ctrl-C while it waits exits 130
             if updating:
                 return update_check.run_update(cmd)
             return func(*args, **kwargs)
