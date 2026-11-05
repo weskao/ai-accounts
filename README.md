@@ -208,6 +208,7 @@ tool you need. For example:
 
 ```sh
 claude-accounts login-switch work             # Log in to Claude Code and save it as "work"
+claude-accounts switch work                   # Preflight near-expiry tokens before activation
 agy-accounts switch                           # Pick a saved Antigravity profile from a menu
 copilot-accounts usage                        # Show the active Copilot account's credit balance
 devin-accounts login-switch personal         # Log out, run `devin auth login`, save as "personal" (a cancelled login restores the old one)
@@ -217,6 +218,23 @@ opencode-accounts switch openai:work          # Make opencode's "work" OpenAI lo
 `switch` and `remove` without a name open an interactive picker, and `save`
 without a name picks one from the active account's email or login. What
 differs per tool:
+
+For **Claude Code**, `claude-accounts switch <name>` checks whether the saved
+account's access token expires within 24 hours. If so, it attempts to renew
+that **destination** token before touching the currently active login. A
+transient refresh failure or revoked credential cancels the switch and leaves
+the current account selected; use `claude-accounts login-switch <name>` for a
+revoked account. Switching to the already-active profile uses Claude Code's
+latest live credentials rather than an older saved snapshot. On macOS, if
+the existing Keychain login cannot be updated, switching fails rather than
+claiming success while Keychain and the credentials file disagree. The
+existing configuration and unrelated MCP credentials remain intact.
+
+A global switch changes the default credentials. A running Claude Code
+session can still have older credentials cached; if a session continues with
+the previous account, reopen or resume it. For multiple truly independent
+concurrent sessions, use separate `CLAUDE_CONFIG_DIR` directories and the
+official `claude auth login` in each.
 
 | Command | Worth knowing |
 | --- | --- |
@@ -998,7 +1016,13 @@ Telegram bot token.
 
 `token_refresh` is an independent switch from `enabled`: each timer tick runs
 `refresh --all` on every provider even when auto-switching is off. A routine
-rotation is silent. When a refresh token can only be fixed by a fresh login,
+rotation is silent. Claude Code refreshes its own active session tokens, while
+the timer also renews saved inactive profiles. If Claude Code changes the live
+login during an in-flight refresh, the scheduled refresh discards that stale
+result instead of overwriting the CLI's newer token; the next tick can retry.
+A refresh token can still be revoked or reach its absolute expiry, so periodic
+refresh reduces unexpected expiration but cannot guarantee a permanent login.
+When a refresh token can only be fixed by a fresh login,
 the tick prints a report and sends the same content over the configured
 `notify` channel — grouped by provider, one row per profile with the reason it
 failed and the command that fixes it:
