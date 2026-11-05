@@ -723,8 +723,14 @@ def status() -> int:
         last = history[-1]
         _say("migrate.status.last", out=out, version=last.get("version"), name=last.get("name"),
              app=last.get("app_version"), at=last.get("completed_at"))
-        for note in last.get("notes") or []:
-            _say("migrate.note", out=out, note=note)
+        # Re-plan instead of replaying the stored notes: a conflict the user has
+        # since resolved by hand must not be reported forever. Plans never write.
+        # shortcut: invalid-JSON notes come from the move itself, not the plan, so
+        # they show only in the migrate run and in state.json history.
+        for migration in MIGRATIONS:
+            if migration.version == last.get("version"):
+                for note in migration.plan()[1]:
+                    _say("migrate.note", out=out, note=note)
     if journal := state.get("journal"):
         _say("migrate.status.interrupted", out=out, version=journal.get("version"))
     if failure := state.get("last_failure"):

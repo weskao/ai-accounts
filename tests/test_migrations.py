@@ -201,6 +201,19 @@ def test_both_locations_populated_is_ambiguous_and_left_untouched(home, capsys):
     assert state()["history"][-1]["notes"]
 
 
+def test_status_rechecks_a_conflict_the_user_has_since_resolved(home, capsys):
+    make_store(home, ".codexbar/antigravity", profiles=("old",), active="old")
+    make_store(home, ".ai-accounts/antigravity", profiles=("new",), active="new")
+    assert mig.run() == 0
+    capsys.readouterr()
+    assert mig.status() == 0
+    assert ".codexbar" in capsys.readouterr().out
+    shutil.rmtree(home / ".codexbar/antigravity")
+    assert mig.status() == 0
+    assert ".codexbar" not in capsys.readouterr().out
+    assert state()["history"][-1]["notes"]  # the record of what happened stays
+
+
 def test_empty_default_dir_does_not_block_the_move(home):
     files = make_store(home, ".claude/accounts")
     (home / ".ai-accounts/claude/accounts").mkdir(parents=True)

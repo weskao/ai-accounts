@@ -199,7 +199,7 @@ until you delete it, and nothing in it is printed or logged. A data schema newer
 than the running version is refused without any change: run `ai-accounts update`.
 
 ```sh
-ai-accounts migrate status      # schema, last migration, last failure, integration state; exit 1 = needs action
+ai-accounts migrate status      # schema, last migration (its warnings re-checked on disk), last failure, integration state; exit 1 = needs action
 ai-accounts migrate --dry-run   # planned moves and repairs; writes nothing
 ai-accounts migrate             # migrate now and repair/verify hooks and timer
 ```
