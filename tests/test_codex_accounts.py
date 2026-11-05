@@ -169,6 +169,42 @@ class _CodexHomeMixin(unittest.TestCase):
         return rc, out.getvalue(), err.getvalue()
 
 
+class SafeSwitchRegressionTests(_CodexHomeMixin):
+    def test_expired_target_refresh_failure_preserves_current_login(self):
+        old = _auth_payload("acct-old", "old@example.test")
+        self.write_auth(old)
+        self.write_profile("next", _auth_payload("acct-next", "next@example.test", expires_in=-3600))
+        with mock.patch.object(ca, "_oauth_refresh", return_value=(None, "network timeout")):
+            self.assertEqual(self.run_quiet(lambda: ca.cmd_switch("next", restart_daemon=False)), 1)
+        self.assertEqual(json.loads((self.home / "auth.json").read_text())["tokens"]["account_id"], "acct-old")
+
+    def test_expired_target_refreshes_before_live_credentials_change(self):
+        old = _auth_payload("acct-old", "old@example.test")
+        self.write_auth(old)
+        profile = self.write_profile("next", _auth_payload("acct-next", "next@example.test", expires_in=-3600))
+        observed = []
+        def renew(token):
+            observed.append(token)
+            self.assertEqual(json.loads((self.home / "auth.json").read_text())["tokens"]["account_id"], "acct-old")
+            return {"access_token": _jwt({"exp": int(time.time()) + 864000}), "refresh_token": "rt-new"}, None
+        with mock.patch.object(ca, "_oauth_refresh", side_effect=renew):
+            self.assertEqual(self.run_quiet(lambda: ca.cmd_switch("next", restart_daemon=False)), 0)
+        self.assertEqual(observed, ["rt-old"])
+        self.assertEqual(json.loads((self.home / "auth.json").read_text())["tokens"]["refresh_token"], "rt-new")
+        self.assertEqual(self.saved(profile)["tokens"]["refresh_token"], "rt-new")
+
+    def test_keychain_failure_does_not_replace_auth_file(self):
+        old = _auth_payload("acct-old", "old@example.test")
+        self.write_auth(old)
+        self.write_profile("next", _auth_payload("acct-next", "next@example.test"))
+        with (
+            mock.patch.object(ca, "_read_keychain_auth", return_value=json.dumps(old)),
+            mock.patch.object(ca, "_write_keychain_auth", return_value=False),
+        ):
+            self.assertEqual(self.run_quiet(lambda: ca.cmd_switch("next", restart_daemon=False)), 1)
+        self.assertEqual(json.loads((self.home / "auth.json").read_text())["tokens"]["account_id"], "acct-old")
+
+
 class OauthRefreshRequestTests(unittest.TestCase):
     """_oauth_refresh must send the exact request codex-rs sends."""
 
