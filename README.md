@@ -99,9 +99,22 @@ newest release tag: a local checkout (`uv tool install --editable .` or a `uv ru
 from a clone), an install from `main` or another commit, or a build newer than the
 tag is replaced by it, whatever version it reports. Already on that tag, it says so
 with your version, e.g. `✅ ai-accounts 0.25.0 is already the latest version (v0.25.0).`
-Exit code: `0` updated or already on the newest tag, `1` the release could not be
-checked or the install failed (offline is a failure, not "up to date"), `2` neither
-`uv` nor `pipx` is on `PATH` (the manual command is printed).
+Exit code: `0` updated or already on the newest tag **and the integrations were
+verified**, `1` the update or post-update repair failed, `2` neither `uv` nor
+`pipx` is on `PATH` (the manual command is printed). A post-update setup
+failure does **not** undo a successfully installed package; it provides the
+recovery command `ai-accounts autoswitch setup`.
+
+After a successful `<provider>-accounts update` (or `ai-accounts update`), the
+updater automatically invokes the **newly installed** `ai-accounts autoswitch
+setup` to refresh the cross-provider hooks and OS timer. This applies to every
+provider entry point and also to the interactive *Update now* option; no
+separate manual install is required. It leaves existing config flags and saved
+account credentials untouched. An independent `uv tool install` bypasses this
+command, so after a manual installation run `ai-accounts autoswitch setup` once.
+The hook installer manages Codex, Claude and Antigravity Stop hooks, while the
+timer handles the remaining supported providers. Existing unrelated hooks are
+preserved; the setup result is checked before success is reported.
 
 When a newer GitHub release exists, any command run in a real terminal (both
 stdin and stdout are a TTY) ends by asking — `❯ Update now` / `Skip` / `Skip
@@ -218,6 +231,25 @@ opencode-accounts switch openai:work          # Make opencode's "work" OpenAI lo
 `switch` and `remove` without a name open an interactive picker, and `save`
 without a name picks one from the active account's email or login. What
 differs per tool:
+
+For OAuth-based tools, `switch` now renews a saved account **before**
+replacing the active credentials when its access token is near expiry:
+
+| Provider | Switch safety | Token upkeep |
+| --- | --- | --- |
+| Codex | Refresh target first; do not write `auth.json` when the macOS Keychain update fails; preserve outgoing rotated tokens | OAuth refresh and existing scheduled `refresh --all` |
+| Claude Code | Refresh target first; keep the current login if refresh or Keychain update fails | OAuth refresh and existing scheduled `refresh --all` |
+| Antigravity (`agy`) | Refresh target first; reject a failed refresh without replacing the shared keyring | Google OAuth refresh, with the existing CLI fallback in `refresh` |
+| Grok Build | Refresh target first; reject a failed refresh without replacing `auth.json` | Direct OIDC refresh and existing CLI fallback in `refresh` |
+| Mistral Vibe | Keep API-key switching; no OAuth token to rotate | Static key; no refresh needed |
+| GitHub Copilot | Keep token/keyring switching and existing credential checks | Token validity check; invalid tokens need login |
+| Devin | Keep API-key switching and existing verification | API key validity check; no renewable OAuth token |
+| OpenCode | Delegate switching to `opencode auth switch`, without rewriting its credential database | Managed by OpenCode itself |
+
+If the current CLI changed its credential during a network refresh, the
+switch aborts rather than overwriting a newer session. Automatic upkeep cannot
+prevent server-side revocation or refresh-token expiry. Running CLI sessions may
+still need a restart/resume to pick up a new login.
 
 For **Claude Code**, `claude-accounts switch <name>` checks whether the saved
 account's access token expires within 24 hours. If so, it attempts to renew
@@ -913,8 +945,10 @@ the hidden settings. Explicit `config get <key>` and `config set <key> <value>`
 remain shared across all CLIs.
 
 `ai-accounts autoswitch setup` installs provider event hooks plus a low-frequency
-OS timer fallback. Re-run it after reinstalling the package if hook commands or
-the installed Python path changed.
+OS timer fallback. A normal `ai-accounts update` / provider `update` now
+re-runs and verifies that setup automatically using the upgraded installation.
+For a separate manual `uv tool install` or an editable install, run setup
+yourself to refresh installed paths.
 To restart or re-register the timer on any supported OS, re-run
 `ai-accounts install-timer` (it uses the `timer_interval_min` setting). This unloads and loads the LaunchAgent on macOS, reloads and restarts
 the systemd user timer on Linux (or replaces the cron entry), and replaces the
