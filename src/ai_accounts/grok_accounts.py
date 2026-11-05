@@ -121,12 +121,17 @@ def _auth_file() -> Path:
     return Path(os.environ.get("GROK_AUTH_JSON", str(_grok_home() / "auth.json")))
 
 
-def _account_dir() -> Path:
-    return resolve_account_dir(
+def _store_paths() -> tuple[str, Path, Path]:
+    """(env override, default, legacy) of the profile store; also read by migrations."""
+    return (
         "GROK_ACCOUNT_DIR",
         Path.home() / ".ai-accounts" / "grok" / "accounts",
         _grok_home() / "accounts",
     )
+
+
+def _account_dir() -> Path:
+    return resolve_account_dir(*_store_paths())
 
 
 def _profile_file(name: str) -> Path | None:

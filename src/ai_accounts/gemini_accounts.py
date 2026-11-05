@@ -143,13 +143,17 @@ fallback otherwise.
 
 
 # ── paths ─────────────────────────────────────────────────────────────────
-def _antigravity_dir() -> Path:
-    return resolve_data_dir(
+def _store_paths() -> tuple[str, Path, Path]:
+    """(env override, default, legacy) of the store root; also read by migrations."""
+    return (
         "ANTIGRAVITY_HOME",
         Path.home() / ".ai-accounts" / "antigravity",
         Path.home() / ".codexbar" / "antigravity",
-        label="Antigravity store",
     )
+
+
+def _antigravity_dir() -> Path:
+    return resolve_data_dir(*_store_paths(), label="Antigravity store")
 
 
 def _account_dir() -> Path:
