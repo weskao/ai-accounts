@@ -7,8 +7,7 @@ from unittest import mock
 
 import update_kit
 
-from ai_accounts import ai_accounts
-from ai_accounts import autoswitch_setup
+from ai_accounts import ai_accounts, autoswitch_setup
 from ai_accounts import update_check as uc
 
 
