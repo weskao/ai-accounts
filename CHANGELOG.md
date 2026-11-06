@@ -1,3 +1,13 @@
+## [0.29.1] - 2026-11-06
+
+### 🐛 Bug Fixes
+
+- **migrations:** Re-check warnings in migrate status
+- **hooks:** Write claude hook interpreter as $HOME
+
+### 📚 Documentation
+
+- **readme:** Note $HOME in the claude hook command
 ## [0.29.0] - 2026-11-05
 
 ### 🚀 Features
