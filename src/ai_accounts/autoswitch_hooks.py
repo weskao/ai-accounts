@@ -29,7 +29,17 @@ _MODULES = {
 def command(provider: str) -> str:
     """The stable, shell-safe command installed in a provider's Stop hook."""
     args = [sys.executable, "-m", "ai_accounts.autoswitch_hooks", "run", provider]
-    return subprocess.list2cmdline(args) if u.IS_WINDOWS else shlex.join(args)
+    if u.IS_WINDOWS:
+        return subprocess.list2cmdline(args)
+    # Claude's settings.json is often a dotfile synced across machines: write an
+    # interpreter under the home dir as "$HOME/..." (Claude runs hooks via a shell).
+    # shortcut: Codex/agy keep the literal path; extend if their configs get synced.
+    home = str(Path.home())
+    rest = sys.executable[len(home) :]
+    if provider == "claude" and rest.startswith("/") and sys.executable.startswith(home) \
+            and not any(c in rest for c in '"$`\\'):
+        return f'"$HOME{rest}" ' + shlex.join(args[1:])
+    return shlex.join(args)
 
 
 def module(provider: str) -> str:

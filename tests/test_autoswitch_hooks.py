@@ -26,6 +26,28 @@ class HookConfigTests(unittest.TestCase):
                 f'"{executable}" -m ai_accounts.autoswitch_hooks run codex',
             )
 
+    @unittest.skipIf(os.name == "nt", "POSIX shell expansion")
+    def test_claude_command_writes_a_home_interpreter_as_home_var(self) -> None:
+        home = "/home/demo"
+        exe = f"{home}/.local/share/uv/tools/ai-accounts/bin/python"
+        with mock.patch.object(u, "IS_WINDOWS", False), mock.patch.dict(os.environ, {"HOME": home}), \
+                mock.patch.object(sys, "executable", exe):
+            claude = hooks.command("claude")
+            codex = hooks.command("codex")
+        self.assertEqual(
+            claude,
+            '"$HOME/.local/share/uv/tools/ai-accounts/bin/python" -m ai_accounts.autoswitch_hooks run claude',
+        )
+        self.assertEqual(codex, f"{exe} -m ai_accounts.autoswitch_hooks run codex")
+        out = subprocess.run(  # the shell must resolve it back to the real interpreter
+            ["sh", "-c", f"printf %s {claude.split(' -m ')[0]}"],
+            env={"HOME": home}, capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertEqual(out, exe)
+        with mock.patch.object(u, "IS_WINDOWS", False), mock.patch.dict(os.environ, {"HOME": home}), \
+                mock.patch.object(sys, "executable", "/home/demox/bin/python"):
+            self.assertFalse(hooks.command("claude").startswith('"$HOME'))  # prefix, not a subdir
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
