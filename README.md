@@ -1095,7 +1095,10 @@ macOS checks the LaunchAgent file; Linux checks the systemd timer file or reads
 crontab; Windows queries Task Scheduler with `schtasks /Query`. An `installed`
 result confirms registration, not successful execution or quota availability.
 Windows hook commands quote interpreter paths containing spaces; re-run setup
-to update hooks installed by an older version.
+to update hooks installed by an older version. On macOS and Linux the Claude
+hook writes an interpreter under your home directory as `"$HOME/..."`, so a
+`settings.json` synced across machines stays portable; Codex and Antigravity
+hooks keep the absolute path.
 
 When CI fails after a push, GitHub Actions sends a formatted Telegram alert
 with the repository, branch, short commit ID, and a clickable workflow URL.
