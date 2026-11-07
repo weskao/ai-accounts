@@ -465,8 +465,15 @@ voucher will expire within `reset_expiry_notify_hours` (default `24`, range
 1–720), e.g. `⏳ codex: work has 2 reset voucher(s) expiring in 5h 12m`. Each
 voucher is reminded about once; several due on the same tick share one grouped
 notification. It uses the configured `notify` channel, like every other
-notification. Both keys are in the "Notifications" group of `ai-accounts config`,
-`codex-accounts config` and `claude-accounts config`.
+notification; with `notify` set to `none` the reminder (and its Codex expiry
+`GET`) is skipped entirely. Both keys are in the "Notifications" group of
+`ai-accounts config`, `codex-accounts config` and `claude-accounts config`.
+
+On the `telegram` channel the reminder arrives as one photo message: the text is
+the caption of a fixed, provider-neutral hourglass-and-ticket card bundled in the
+package (`src/ai_accounts/assets/voucher_expiry.jpeg`). If the photo cannot be
+sent, the same text goes out as a plain message instead. `desktop` notifications
+stay text-only.
 
 It runs on the scheduled timer's 30-minute full tick (`ai-accounts
 install-timer`), reusing the quota-reset scan's `list --json` call, so it costs
