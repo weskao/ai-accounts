@@ -603,7 +603,8 @@ def run_tick(
     cfg = aw.load_config()
     # fail closed, same rule as autoswitch.config_flag
     resets_on = cfg.get("reset_notify") is True
-    expiry_on = full and cfg.get("reset_expiry_notify") is True
+    # No channel means no reminder can be sent: skip the per-account voucher GET too.
+    expiry_on = full and cfg.get("reset_expiry_notify") is True and cfg.get("notify") != "none"
     if not (resets_on or expiry_on):
         return []
     expiries: Expiries | None = {} if expiry_on else None

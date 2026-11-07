@@ -971,6 +971,12 @@ class RunTickExpiryTests(StateFileTests):
 
         tick.notify.assert_called_once()
 
+    def test_expiry_reminders_skip_the_work_when_notifications_are_off(self) -> None:
+        # Nothing could be sent, so the extra per-account voucher GET is pure waste.
+        aw.save_config({"reset_notify": False, "reset_expiry_notify": True, "notify": "none"})
+
+        self._tick(full=True).assert_not_called()
+
     def test_both_off_collects_nothing(self) -> None:
         aw.save_config({"reset_notify": False, "reset_expiry_notify": False})
 
