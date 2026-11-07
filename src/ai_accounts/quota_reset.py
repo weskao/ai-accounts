@@ -56,6 +56,10 @@ _DEFAULT_MIN_USED_PCT = 90
 # Same fallback role for reset_expiry_notify_hours.
 _DEFAULT_EXPIRY_HOURS = 24
 
+# The one card every voucher-expiry reminder carries on the telegram channel
+# (provider-neutral: no logo, no text). Bundled in the wheel under assets/.
+VOUCHER_IMAGE = Path(__file__).parent / "assets" / "voucher_expiry.jpeg"
+
 # ponytail: fixed per-provider ceiling, matching autoswitch_timer's
 # _REFRESH_TIMEOUT_SEC precedent and its rationale verbatim — a wedged
 # `list --json` subprocess must not silently kill every future reset-check
@@ -559,10 +563,12 @@ def report_expiring(events: list[ExpiryEvent], now: int) -> bool:
 
     if len(events) == 1:
         args = fields(events[0])
-        return aw.notify(i18n.t("notify.voucher.title", **args), i18n.t("notify.voucher.body", **args))
+        return aw.notify(
+            i18n.t("notify.voucher.title", **args), i18n.t("notify.voucher.body", **args), image=VOUCHER_IMAGE
+        )
     title = i18n.t("notify.voucher.many.title", count=sum(event.count for event in events))
     body = "\n".join(i18n.t("notify.voucher.line", **fields(event)) for event in events)
-    return aw.notify(title, body)
+    return aw.notify(title, body, image=VOUCHER_IMAGE)
 
 
 # ── one tick ─────────────────────────────────────────────────────────────────

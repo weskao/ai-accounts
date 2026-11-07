@@ -274,6 +274,14 @@ class ReportTests(unittest.TestCase):
 
         notify.assert_called_once()
 
+    def test_a_quota_reset_notice_carries_no_image(self) -> None:
+        events = [qr.ResetEvent("codex", "work", "hourly", 95, 2000)]
+
+        with mock.patch.object(qr.aw, "notify", return_value=True) as notify:
+            qr.report(events)
+
+        self.assertNotIn("image", notify.call_args.kwargs)
+
     def test_a_late_noticed_reset_says_how_long_ago_it_happened(self) -> None:
         # The timer or a provider's collection was down for days: the reset is
         # still reported, but as old news rather than "just came back".
@@ -868,6 +876,21 @@ class ReportExpiringTests(unittest.TestCase):
         with mock.patch.object(qr.aw, "notify") as notify:
             self.assertFalse(qr.report_expiring([], 1000))
         notify.assert_not_called()
+
+    def test_the_reminder_carries_the_bundled_voucher_image(self) -> None:
+        with mock.patch.object(qr.aw, "notify", return_value=True) as notify:
+            qr.report_expiring([qr.ExpiryEvent("codex", "work", 5000, 1)], 1000)
+
+        self.assertTrue(qr.VOUCHER_IMAGE.is_file())
+        self.assertEqual(notify.call_args.kwargs["image"], qr.VOUCHER_IMAGE)
+
+    def test_a_grouped_reminder_carries_the_image_too(self) -> None:
+        events = [qr.ExpiryEvent("codex", "a", 5000, 1), qr.ExpiryEvent("claude", "b", 6000, 1)]
+
+        with mock.patch.object(qr.aw, "notify", return_value=True) as notify:
+            qr.report_expiring(events, 1000)
+
+        self.assertEqual(notify.call_args.kwargs["image"], qr.VOUCHER_IMAGE)
 
 
 class CollectExpiriesTests(unittest.TestCase):
