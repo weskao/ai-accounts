@@ -200,8 +200,11 @@ def masked_config() -> dict:
     return cfg
 
 
-def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
-    """Send *title*/*message* over the Bot API. False on missing credentials or any failure."""
+def _telegram_notify(title: str, message: str, cfg: dict, image: Path | None = None) -> bool:
+    """Send *title*/*message* over the Bot API. False on missing credentials or any failure.
+
+    With *image* the text is the photo's caption; an unreadable or rejected photo
+    falls back to the plain text, so the notice itself is never lost."""
     token = str(cfg.get("telegram_bot_token", ""))
     chat_id = str(cfg.get("telegram_chat_id", ""))
     if not token or not chat_id:
@@ -212,11 +215,16 @@ def _telegram_notify(title: str, message: str, cfg: dict) -> bool:
     if not footer and (label := os.environ.get("AI_ACCOUNTS_LAUNCHD_LABEL")):
         footer = f"\nlaunchd: {label}"
     text += footer or ""
-    return telegram_kit.send_message(token, chat_id, text)
+    return bool(image and telegram_kit.send_photo(token, chat_id, image, text)) or telegram_kit.send_message(
+        token, chat_id, text
+    )
 
 
-def notify(title: str, message: str) -> bool:
+def notify(title: str, message: str, image: Path | None = None) -> bool:
     """Send *title*/*message* over the configured channel.
+
+    *image* is only used by the ``telegram`` channel (as a captioned photo);
+    ``desktop`` notifications stay text-only.
 
     Every outgoing notification carries the device label as its last line —
     appended here, the one funnel all callers route through, so a new call
@@ -235,7 +243,7 @@ def notify(title: str, message: str) -> bool:
     if channel == "desktop":
         return u.desktop_notify(title, message)
     if channel == "telegram":
-        return _telegram_notify(title, message, cfg)
+        return _telegram_notify(title, message, cfg, image)
     if channel != "none":
         u.log_red(f"Unknown notify channel {channel!r} in {config_path()} — nothing sent")
     return False

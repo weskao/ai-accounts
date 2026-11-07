@@ -559,6 +559,94 @@ class NotifyChannelTests(_ConfigMixin, _PlatformMixin):
         self.assertFalse(ok)
 
 
+class NotifyImageTests(_ConfigMixin, _PlatformMixin):
+    """An optional image rides the telegram channel as a captioned photo, else text."""
+
+    def setUp(self):
+        super().setUp()
+        self.force_platform(macos=True)
+        self.spawned = self.record_subprocess()
+        self.stub_device_label()
+        self.image = Path(self.tmp.name) / "card.jpeg"
+        self.image.write_bytes(b"\xff\xd8fake-jpeg-bytes")
+        self.requests: list = []
+        self.photo_ok = True
+
+        class _Response:
+            def read(self):
+                return b'{"ok":true}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(request, *a, **k):
+            self.requests.append(request)
+            if request.full_url.endswith("/sendPhoto") and not self.photo_ok:
+                raise urllib.error.URLError("rejected")
+            return _Response()
+
+        patch = mock.patch("urllib.request.urlopen", side_effect=fake_urlopen)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def _telegram(self) -> None:
+        aw.save_config(
+            {
+                "notify": "telegram",
+                "telegram_bot_token": "1234:placeholder-token",
+                "telegram_chat_id": "99887766",
+            }
+        )
+
+    def test_telegram_sends_the_image_with_the_text_as_its_caption(self) -> None:
+        # Given: the telegram channel and an image
+        self._telegram()
+        # When: a notification carries the image
+        ok = aw.notify("Expiring", "Use it soon", image=self.image)
+        # Then: one sendPhoto holding the bytes and the text — no separate message
+        self.assertTrue(ok)
+        self.assertEqual(len(self.requests), 1)
+        request = self.requests[0]
+        self.assertTrue(request.full_url.endswith("/sendPhoto"))
+        self.assertIn(b"fake-jpeg-bytes", request.data)
+        self.assertIn(b"Expiring\nUse it soon", request.data)
+
+    def test_a_rejected_photo_falls_back_to_the_text_message(self) -> None:
+        # Given: telegram refusing the upload
+        self._telegram()
+        self.photo_ok = False
+        # When: a notification carries the image
+        ok = aw.notify("Expiring", "Use it soon", image=self.image)
+        # Then: the text still goes out as a plain message
+        self.assertTrue(ok)
+        self.assertTrue(self.requests[-1].full_url.endswith("/sendMessage"))
+        body = urllib.parse.parse_qs(self.requests[-1].data.decode("utf-8"))
+        self.assertIn("Use it soon", body["text"][0])
+
+    def test_a_missing_image_file_still_sends_the_text(self) -> None:
+        # Given: an image path that does not exist
+        self._telegram()
+        # When: a notification carries it
+        ok = aw.notify("Expiring", "Use it soon", image=self.image.with_name("gone.jpeg"))
+        # Then: the notification is not lost
+        self.assertTrue(ok)
+        self.assertEqual(len(self.requests), 1)
+        self.assertTrue(self.requests[0].full_url.endswith("/sendMessage"))
+
+    def test_the_desktop_channel_ignores_the_image(self) -> None:
+        # Given: the desktop channel
+        aw.save_config({"notify": "desktop"})
+        # When: a notification carries an image
+        ok = aw.notify("Expiring", "Use it soon", image=self.image)
+        # Then: one desktop notification, no network
+        self.assertTrue(ok)
+        self.assertEqual(len(self.spawned), 1)
+        self.assertEqual(self.requests, [])
+
+
 class NotifyOnceTests(_ConfigMixin, _PlatformMixin):
     """"No account to switch to" must be said once, not on every poll."""
 
