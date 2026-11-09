@@ -1,3 +1,18 @@
+## [0.30.0] - 2026-11-09
+
+### 🚀 Features
+
+- **notify:** Send telegram notices as a photo
+- **quota-reset:** Attach card to expiry reminders
+- **quota-reset:** Remind again in final 6 hours
+
+### 🐛 Bug Fixes
+
+- **quota-reset:** Skip expiry reminder when notify off
+
+### 📚 Documentation
+
+- **readme:** Describe voucher expiry photo message
 ## [0.29.1] - 2026-11-06
 
 ### 🐛 Bug Fixes
