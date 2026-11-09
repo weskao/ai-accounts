@@ -839,6 +839,51 @@ class ExpiringVouchersTests(unittest.TestCase):
             [qr.ExpiryEvent("claude", "me", 5000, 2), qr.ExpiryEvent("claude", "me", 9000, 1)],
         )
 
+    def test_a_voucher_is_reminded_at_the_window_and_again_inside_the_final_six_hours(self) -> None:
+        expires, hour = 1_000_000, 3600
+        expiries = {"codex": {"work": (expires,)}}
+
+        def remind(hours_left: float, state: dict) -> tuple[dict, list]:
+            return qr.expiring_vouchers(expiries, state, expires - int(hours_left * hour), 72 * hour)
+
+        state, outside = remind(80, {})
+        state, first = remind(71, state)
+        state, between = remind(50, state)
+        state, final = remind(5, state)
+        state, after = remind(2, state)
+
+        self.assertEqual(outside, [])
+        self.assertEqual(len(first), 1)
+        self.assertEqual(between, [])
+        self.assertEqual(len(final), 1)
+        self.assertEqual(after, [])
+
+    def test_a_voucher_first_seen_inside_the_final_window_is_reminded_once(self) -> None:
+        expiries = {"codex": {"work": (1_000_000,)}}
+        state, first = qr.expiring_vouchers(expiries, {}, 1_000_000 - 5 * 3600, 72 * 3600)
+        _, second = qr.expiring_vouchers(expiries, state, 1_000_000 - 3 * 3600, 72 * 3600)
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+
+    def test_a_reminder_recorded_before_stages_existed_still_counts_as_the_first_one(self) -> None:
+        expiries = {"codex": {"work": (1_000_000,)}}
+        legacy = {"codex/work/1000000": 1_000_000}  # the single-stage key format
+
+        _, mid = qr.expiring_vouchers(expiries, legacy, 1_000_000 - 30 * 3600, 72 * 3600)
+        _, final = qr.expiring_vouchers(expiries, legacy, 1_000_000 - 5 * 3600, 72 * 3600)
+
+        self.assertEqual(mid, [])
+        self.assertEqual(len(final), 1)
+
+    def test_a_window_no_wider_than_the_final_stage_reminds_once(self) -> None:
+        expiries = {"codex": {"work": (1_000_000,)}}
+        state, first = qr.expiring_vouchers(expiries, {}, 1_000_000 - 3 * 3600, 4 * 3600)
+        _, second = qr.expiring_vouchers(expiries, state, 1_000_000 - 3600, 4 * 3600)
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+
     def test_reminders_for_expired_vouchers_are_pruned(self) -> None:
         reminded = {"codex/work/900": 900, "codex/work/5000": 5000}
 
@@ -930,10 +975,10 @@ class CollectExpiriesTests(unittest.TestCase):
 
 
 class RunTickExpiryTests(StateFileTests):
-    def _tick(self, *, full: bool, now: int = 1000) -> mock.Mock:
+    def _tick(self, *, full: bool, now: int = 1000, left: int = 3600) -> mock.Mock:
         def collect_all(expiries=None):
             if expiries is not None:
-                expiries["codex"] = {"work": (1000 + 3600,)}  # one fixed voucher across ticks
+                expiries["codex"] = {"work": (1000 + left,)}  # one fixed voucher across ticks
             return {"codex": {}}
 
         with (
@@ -970,6 +1015,15 @@ class RunTickExpiryTests(StateFileTests):
         tick = self._tick(full=True, now=1000)  # expires in exactly 1h: inside
 
         tick.notify.assert_called_once()
+
+    def test_the_default_window_reminds_three_days_ahead(self) -> None:
+        aw.save_config({"reset_notify": False, "reset_expiry_notify": True})
+
+        inside = self._tick(full=True, left=71 * 3600)
+        outside = self._tick(full=True, left=73 * 3600)
+
+        inside.notify.assert_called_once()
+        outside.notify.assert_not_called()
 
     def test_expiry_reminders_skip_the_work_when_notifications_are_off(self) -> None:
         # Nothing could be sent, so the extra per-account voucher GET is pure waste.

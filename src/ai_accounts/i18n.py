@@ -362,11 +362,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "config.reset_expiry_notify.label": {"zh-TW": "重置券到期前提醒"},
     "config.reset_expiry_notify.help": {
-        "zh-TW": "未使用的重置券（RESETS EXPIRE）即將到期時提醒一次。"
+        "zh-TW": "未使用的重置券（RESETS EXPIRE）即將到期時提醒。"
     },
     "config.reset_expiry_notify_hours.label": {"zh-TW": "↳ 提前幾小時提醒"},
     "config.reset_expiry_notify_hours.help": {
-        "zh-TW": "重置券剩不到 {value} 小時就提醒。"
+        "zh-TW": "重置券剩不到 {value} 小時就提醒，最後 6 小時內再提醒一次。"
     },
     "config.agy_blind_switch.label": {"zh-TW": "Antigravity 盲切"},
     "config.agy_blind_switch.help": {

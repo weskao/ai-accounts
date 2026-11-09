@@ -54,7 +54,10 @@ _CONFIG_ENV = "AI_ACCOUNTS_CONFIG_JSON"
 # as a fallback if a hand-edited config has a non-numeric value there.
 _DEFAULT_MIN_USED_PCT = 90
 # Same fallback role for reset_expiry_notify_hours.
-_DEFAULT_EXPIRY_HOURS = 24
+_DEFAULT_EXPIRY_HOURS = 72
+# The last reminder, fired once a voucher is this close to expiring.
+# shortcut: fixed, not a config key — promote it if anyone needs another lead.
+_FINAL_EXPIRY_SEC = 6 * 3600
 
 # The one card every voucher-expiry reminder carries on the telegram channel
 # (provider-neutral: no logo, no text). Bundled in the wheel under assets/.
@@ -448,22 +451,39 @@ def detect(
 def expiring_vouchers(
     expiries: Expiries, reminded: dict[str, int], now: int, within_sec: int
 ) -> tuple[dict[str, int], list[ExpiryEvent]]:
-    """Reset vouchers expiring within *within_sec* of *now* not yet in *reminded*.
+    """Reset vouchers inside a reminder stage not yet in *reminded*.
 
-    Returns ``(new_reminded, events)``: each voucher expiry is reminded about
-    once, keyed ``"<provider>/<profile>/<expiry>"``. A reminder is retired only
-    once its expiry passes — not when a provider fails to collect — so a
-    flaky tick cannot re-arm it.
+    Two stages: when a voucher comes within *within_sec* of expiring, and again
+    within the final ``_FINAL_EXPIRY_SEC`` (skipped when *within_sec* is no
+    wider, so one stage then). Returns ``(new_reminded, events)``: each stage
+    fires once per voucher expiry, keyed ``"<provider>/<profile>/<expiry>"``
+    for the first and ``".../final"`` for the last — the first key is the
+    pre-stages format, so an old reminder still counts. A voucher first seen
+    inside the final window is reminded once, not twice: every stage it is
+    already inside is recorded together. A reminder is retired only once its
+    expiry passes — not when a provider fails to collect — so a flaky tick
+    cannot re-arm it.
     """
+    # (threshold, key suffix), widest first.
+    stages = [(within_sec, "")]
+    if _FINAL_EXPIRY_SEC < within_sec:
+        stages.append((_FINAL_EXPIRY_SEC, "/final"))
     new_reminded = {k: v for k, v in reminded.items() if isinstance(v, int) and v > now}
     events: list[ExpiryEvent] = []
     for provider, profiles in expiries.items():
         for profile, stamps in profiles.items():
             for expires_at, count in sorted(Counter(stamps).items()):
-                key = f"{provider}/{profile}/{expires_at}"
-                if now < expires_at <= now + within_sec and key not in new_reminded:
+                if not now < expires_at:
+                    continue
+                keys = [
+                    f"{provider}/{profile}/{expires_at}{suffix}"
+                    for threshold, suffix in stages
+                    if expires_at <= now + threshold
+                ]
+                # The narrowest stage the voucher is inside decides whether it is news.
+                if keys and keys[-1] not in new_reminded:
                     events.append(ExpiryEvent(provider, profile, expires_at, count))
-                    new_reminded[key] = expires_at
+                    new_reminded.update(dict.fromkeys(keys, expires_at))
     return new_reminded, events
 
 

@@ -309,9 +309,9 @@ class ResetNotifyProgramsTests(unittest.TestCase):
 
 
 class ResetExpiryNotifyTests(unittest.TestCase):
-    def test_defaults_to_on_with_a_24_hour_lead(self) -> None:
+    def test_defaults_to_on_with_a_72_hour_lead(self) -> None:
         self.assertIs(cs.defaults()["reset_expiry_notify"], True)
-        self.assertEqual(cs.defaults()["reset_expiry_notify_hours"], 24)
+        self.assertEqual(cs.defaults()["reset_expiry_notify_hours"], 72)
 
     def test_is_a_timer_feature_offered_where_vouchers_exist(self) -> None:
         self.assertTrue(cs.field("reset_expiry_notify").needs_timer)

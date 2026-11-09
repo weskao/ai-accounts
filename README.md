@@ -460,11 +460,14 @@ a current value (for example `claude-cli/<your claude --version> (external, cli)
 
 ### Reset-voucher expiry reminders
 
-`reset_expiry_notify` (default `true`) sends one notification when an unused
-voucher will expire within `reset_expiry_notify_hours` (default `24`, range
-1–720), e.g. `⏳ codex: work has 2 reset voucher(s) expiring in 5h 12m`. Each
-voucher is reminded about once; several due on the same tick share one grouped
-notification. It uses the configured `notify` channel, like every other
+`reset_expiry_notify` (default `true`) sends a notification when an unused
+voucher will expire within `reset_expiry_notify_hours` (default `72`, range
+1–720), e.g. `⏳ codex: work has 2 reset voucher(s) expiring in 5h 12m`, and
+once more in its final 6 hours (fixed, not configurable). Each stage fires once
+per voucher: with the defaults that is about 3 days ahead and again at 6 hours.
+A voucher first seen already inside the final 6 hours is reminded once, not
+twice, and a window of 6 hours or less has just the one stage. Several vouchers
+due on the same tick share one grouped notification. It uses the configured `notify` channel, like every other
 notification; with `notify` set to `none` the reminder (and its Codex expiry
 `GET`) is skipped entirely. Both keys are in the "Notifications" group of
 `ai-accounts config`, `codex-accounts config` and `claude-accounts config`.
