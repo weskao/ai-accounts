@@ -37,7 +37,9 @@ device. The "account switched" message arrives as a photo (a bundled card,
 back to plain text if the photo cannot be sent. All nine message types are in
 [Telegram notification examples](docs/telegram-notifications/README.md); a few of them:
 
-<img src="docs/telegram-notifications/01-switched-restarted.png" alt="Telegram message: Codex switched from alice to bob and the session restarted" width="460">
+<img src="docs/telegram-notifications/01-switched-restarted.png" alt="Telegram photo message: Codex switched from alice to bob and the session restarted" width="460">
+
+<img src="docs/telegram-notifications/02-switched-restart-needed.png" alt="Telegram photo message: Claude switched from henry to ivy, restart your session to use it" width="380">
 
 <img src="docs/telegram-notifications/05-relogin-grouped.png" alt="Telegram message: two profiles need re-login, grouped by provider with the fix command" width="460">
 
