@@ -1,3 +1,12 @@
+## [0.31.0] - 2026-11-11
+
+### 🚀 Features
+
+- **autoswitch:** Attach card photo to switched notice
+
+### 📚 Documentation
+
+- **readme:** Show photo layout in switched examples
 ## [0.30.0] - 2026-11-09
 
 ### 🚀 Features
