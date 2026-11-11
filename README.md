@@ -32,7 +32,9 @@ See [Auto-switch](#auto-switch) for setup and activation commands.
 With `notify` set to `telegram`, auto-switch and the timer message you when an
 account is switched, when no account is left to switch to, when a token needs a
 re-login, or when a quota window resets. Every message ends with the source
-device. All nine message types are in
+device. The "account switched" message arrives as a photo (a bundled card,
+`src/ai_accounts/assets/account_switch.jpeg`) with the text as its caption, falling
+back to plain text if the photo cannot be sent. All nine message types are in
 [Telegram notification examples](docs/telegram-notifications/README.md); a few of them:
 
 <img src="docs/telegram-notifications/01-switched-restarted.png" alt="Telegram message: Codex switched from alice to bob and the session restarted" width="460">

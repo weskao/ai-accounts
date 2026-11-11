@@ -39,6 +39,10 @@ CONFIG_ENV = "AI_ACCOUNTS_CONFIG_JSON"
 
 NOTIFY_CHANNELS = config_schema.NOTIFY_CHANNELS
 
+# The card every "account switched" notice carries on the telegram channel.
+# Bundled in the wheel under assets/.
+SWITCH_IMAGE = Path(__file__).parent / "assets" / "account_switch.jpeg"
+
 DEFAULTS: dict[str, object] = config_schema.defaults()
 
 
@@ -488,6 +492,7 @@ def run_autoswitch(
             to_used=target_used,
         ),
         body,
+        image=SWITCH_IMAGE,
     )
     return outcome("switched", to_profile=target, restarted=restarted)
 

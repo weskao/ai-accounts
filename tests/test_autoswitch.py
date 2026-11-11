@@ -875,6 +875,14 @@ class EngineTriggerTests(_EngineMixin):
         self.assertIsNone(outcome.to_profile)
         self.assertEqual(self.switched, [])
 
+    def test_the_switched_notice_carries_the_bundled_image(self) -> None:
+        probe = self.probe_from({"work": 95, "spare": 10})
+        with mock.patch.object(aw, "notify", return_value=True) as notify:
+            aw.run_autoswitch("codex", ["work", "spare"], "work", probe, self.record_switch)
+
+        self.assertTrue(aw.SWITCH_IMAGE.is_file())
+        self.assertEqual(notify.call_args.kwargs["image"], aw.SWITCH_IMAGE)
+
     def test_used_equal_to_the_threshold_switches(self) -> None:
         # Given: the active profile sitting exactly on the 90% trigger point
         probe = self.probe_from({"work": 90, "spare": 10})
