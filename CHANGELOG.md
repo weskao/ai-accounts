@@ -1,3 +1,8 @@
+## [0.32.0] - 2026-11-13
+
+### 🚀 Features
+
+- **claude:** Show Fable weekly usage column
 ## [0.31.0] - 2026-11-11
 
 ### 🚀 Features
