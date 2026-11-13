@@ -70,6 +70,7 @@ class UsageSnapshot:
     error: str | None
     reset_vouchers: ResetVouchers = ResetVouchers()
     credits: ExtraUsage | None = None
+    fable_seven_day: UsageWindow | None = None
 
 
 def _window(data: JsonValue, window_minutes: int) -> UsageWindow | None:
@@ -84,6 +85,20 @@ def _window(data: JsonValue, window_minutes: int) -> UsageWindow | None:
         reset_time=_parse_iso8601(data.get("resets_at")),
         window_minutes=window_minutes,
     )
+
+
+def _fable_window(limits: JsonValue) -> UsageWindow | None:
+    """The Fable-only weekly cap: the ``limits`` entry of kind ``weekly_scoped`` whose
+    ``scope.model.display_name`` is Fable (``seven_day_opus``/``_sonnet`` stay null for it)."""
+    for limit in limits if isinstance(limits, list) else ():
+        if not isinstance(limit, dict) or limit.get("kind") != "weekly_scoped":
+            continue
+        scope = limit.get("scope")
+        model = scope.get("model") if isinstance(scope, dict) else None
+        if isinstance(model, dict) and str(model.get("display_name", "")).lower() == "fable":
+            return _window({"utilization": limit.get("percent"), "resets_at": limit.get("resets_at")},
+                           _SEVEN_DAY_MINUTES)
+    return None
 
 
 # `ineligible_reason` values that describe the ACCOUNT (so "0 vouchers" is true). Any other
@@ -233,6 +248,7 @@ def fetch_usage(
         error=None,
         reset_vouchers=_vouchers(result.get("cedar_ember")),
         credits=_credits(result.get("extra_usage")),
+        fable_seven_day=_fable_window(result.get("limits")),
     )
 
 

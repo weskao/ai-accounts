@@ -181,3 +181,32 @@ class TestCredits(unittest.TestCase):
             snap = cu.fetch_usage("token-placeholder")
         self.assertIsNone(snap.credits)
         self.assertEqual(snap.five_hour.percentage, 12)
+
+
+_FABLE_LIMIT = {
+    "kind": "weekly_scoped",
+    "group": "weekly",
+    "percent": 80,
+    "resets_at": "2099-01-08T00:00:00+00:00",
+    "scope": {"model": {"id": None, "display_name": "Fable"}, "surface": None},
+}
+
+
+class TestFableWeekly(unittest.TestCase):
+    def fetch(self, limits: object) -> cu.UsageSnapshot:
+        with mock.patch.object(cu, "_request_usage", return_value={**_WINDOWS, "limits": limits}):
+            return cu.fetch_usage("token-placeholder")
+
+    def test_fable_weekly_scoped_limit_becomes_a_seven_day_window(self) -> None:
+        other = {"kind": "weekly_all", "percent": 59, "scope": None}
+        window = self.fetch([other, _FABLE_LIMIT]).fable_seven_day
+        self.assertEqual(window.percentage, 80)
+        self.assertEqual(window.reset_time, cu._parse_iso8601(_FABLE_LIMIT["resets_at"]))
+        self.assertEqual(window.window_minutes, 7 * 24 * 60)
+
+    def test_missing_or_odd_limits_leave_fable_unknown_and_windows_intact(self) -> None:
+        sonnet = {**_FABLE_LIMIT, "scope": {"model": {"display_name": "Sonnet"}}}
+        for limits in (None, 7, ["x"], [sonnet], [{**_FABLE_LIMIT, "percent": "80"}]):
+            snap = self.fetch(limits)
+            self.assertIsNone(snap.fable_seven_day, limits)
+            self.assertEqual(snap.five_hour.percentage, 12)

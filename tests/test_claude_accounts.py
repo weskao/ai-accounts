@@ -551,6 +551,19 @@ class ProfileCommandTests(_HomeMixin):
         text = ca._ANSI_RE.sub("", output)
         self.assertNotIn("5H USED", text)
         self.assertNotIn("1W USED", text)
+        self.assertNotIn("FABLE 1W", text)
+
+    def test_list_shows_fable_weekly_column(self) -> None:
+        self.write_profile("a", _oauth(access="at-a", refresh="rt-a"))
+        snap = cu.UsageSnapshot(
+            None, cu.UsageWindow(59, 2_000_000_000, 10080), None, 2_000_000_000, None,
+            fable_seven_day=cu.UsageWindow(80, 2_000_000_000, 10080),
+        )
+        with mock.patch.object(ca.claude_usage, "fetch_usage", return_value=snap):
+            _, output, _ = self.capture(ca.cmd_list)
+        text = ca._ANSI_RE.sub("", output)
+        self.assertIn("FABLE 1W", text)
+        self.assertIn("80%", text)
 
     def _voucher_snapshot(self, vouchers: cu.ResetVouchers) -> cu.UsageSnapshot:
         return cu.UsageSnapshot(

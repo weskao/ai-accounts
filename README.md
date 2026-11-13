@@ -488,6 +488,15 @@ no extra subprocess — only the Codex expiry `GET` above, for accounts that hav
 vouchers. Any provider whose `list --json` rows carry `reset_vouchers` is
 covered automatically.
 
+### Claude Fable weekly limit
+
+`claude-accounts` `list` / `usage` (and `ai-accounts list` / `usage`) add a
+`FABLE 1W` column after `1W USED`: the share of the separate weekly Fable cap
+used and the time until it resets, e.g. `80% · 5d 17h`, colored like the other
+usage columns. It is read from the usage endpoint's `limits` entry of kind
+`weekly_scoped` scoped to the Fable model. The column disappears when no account
+reports a Fable cap; a dim `—` means that account has none (or the lookup failed).
+
 ### Claude credits
 
 Claude's paid extra usage ("credits", spent once the plan limits run out) shows

@@ -739,6 +739,7 @@ _TABLE_COLUMNS = [
     ("PLAN", "plan"),
     ("5H USED", "usage_5h"),
     ("1W USED", "usage_1week"),
+    ("FABLE 1W", "usage_fable_1week"),
     *RESET_COLUMNS,
     ("CREDITS", "credits"),
     ("UPDATED", "usage_updated"),
@@ -761,8 +762,9 @@ def _print_accounts_table(rows: list[dict]) -> None:
     accounts_table(
         rows,
         _TABLE_COLUMNS,
-        optional_columns={"usage_5h", "usage_1week", "account", "credits"} | RESET_OPTIONAL_COLUMNS,
-        align_keys=("usage_5h", "usage_1week"),
+        optional_columns={"usage_5h", "usage_1week", "usage_fable_1week", "account", "credits"}
+        | RESET_OPTIONAL_COLUMNS,
+        align_keys=("usage_5h", "usage_1week", "usage_fable_1week"),
         numeric_keys=("resets",),
     )
 
@@ -934,6 +936,7 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
                 "plan": _plan_row_cell(claims),
                 "usage_5h": _usage_cell(usage.five_hour, "5h"),
                 "usage_1week": _usage_cell(usage.seven_day, "1week"),
+                "usage_fable_1week": _usage_cell(usage.fable_seven_day, "1week"),
                 **reset_voucher_cells(usage.reset_vouchers),
                 "credits": _credits_cell(usage.credits),
                 "usage_updated": claude_usage.format_refreshed_at(usage),
