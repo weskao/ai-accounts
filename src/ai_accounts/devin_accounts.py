@@ -487,7 +487,7 @@ def cmd_switch_interactive() -> int:
     if not items:
         log_yellow("⚠️  No saved Devin profiles.")
         return 1
-    chosen = choose_profile("a Devin", items)
+    chosen = choose_profile("a Devin", items, active=p.stem if (p := _active_profile()) else None)
     return 1 if chosen is None else cmd_switch(chosen)
 
 

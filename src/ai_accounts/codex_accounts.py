@@ -1171,6 +1171,7 @@ def cmd_switch_interactive() -> int:
         "a Codex",
         [(profile.stem, _identity_label(claims), _plan_cell(claims))
          for profile, claims in valid_profiles],
+        active=p.stem if (p := _active_profile()) else None,
     )
     if chosen is None:
         return 1

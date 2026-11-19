@@ -883,7 +883,10 @@ def cmd_switch_interactive() -> int:
     if not profiles:
         log_yellow("⚠️  No saved Copilot profiles.")
         return 1
-    chosen = choose_profile("a Copilot", _picker_items(profiles))
+    chosen = choose_profile(
+        "a Copilot", _picker_items(profiles),
+        active=p.stem if (p := _listed_active_profile(profiles)) else None,
+    )
     if chosen is None:
         return 1
     return cmd_switch(chosen)

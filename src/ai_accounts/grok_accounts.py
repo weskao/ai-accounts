@@ -690,7 +690,7 @@ def cmd_switch_interactive() -> int:
         (profile.stem, _identity_label(_claims(_load_profile_metadata(profile))))
         for profile in profiles
     ]
-    chosen = choose_profile("a Grok", items)
+    chosen = choose_profile("a Grok", items, active=p.stem if (p := _active_profile()) else None)
     if chosen is None:
         return 1
     return cmd_switch(chosen)

@@ -28,7 +28,7 @@ import shutil
 import sys
 import time
 import unicodedata
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Final
 
 from . import usage_format
@@ -690,6 +690,7 @@ def choose_profile(
     *,
     cancel_message: str = "Switch cancelled.",
     switch_layout: bool = True,
+    active: str | Collection[str] | None = None,
 ) -> str | None:
     """Interactive numbered profile picker over ``items``.
 
@@ -704,23 +705,30 @@ def choose_profile(
     input — the caller maps ``None`` to exit code 1. In narrow mode the header
     and every numbered entry wrap to the narrow budget (a name plus its
     sublabel measures ~56 columns) instead of running off the screen.
+    ``active`` names the profile(s) currently in use (a set for tools with one
+    active login per integration); their switch-layout rows end in ``ACTIVE``.
     """
     narrow = layout_mode() == "narrow"
+    actives = {active} if isinstance(active, str) else set(active or ())
     _emit(f"{BOLD}Choose {kind_label} profile:{RESET}", narrow)
     if items and switch_layout:
         profile_width = max(visible_len(item[0]) for item in items)
         account_width = max(7, *(visible_len(item[1] or "—") for item in items))
+        plan_width = max(visible_len(item[2] if len(item) == 3 else "—") for item in items)
         number_width = len(str(len(items)))
         for index, item in enumerate(items, start=1):
             name, account = item[:2]
             plan = item[2] if len(item) == 3 else "—"
+            mark = f"{GREEN}ACTIVE{RESET}" if name in actives else ""
             if narrow:
-                _emit(f"  {index:>{number_width}}) {name}", True)
+                _emit(f"  {index:>{number_width}}) {name}{'  ' + mark if mark else ''}", True)
                 _emit(f"     ACCOUNT  {DIM}{account or '—'}{RESET}", True)
                 _emit(f"     PLAN     {plan}", True)
             else:
+                # Plan is padded only on the marked row, so unmarked rows keep no trailing spaces.
+                plan_cell = f"{_pad(plan, plan_width)}  {mark}" if mark else plan
                 print(f"  {index:>{number_width}}) {_pad(name, max(7, profile_width))}  "
-                      f"{DIM}{_pad(account or '—', account_width)}{RESET}  {plan}")
+                      f"{DIM}{_pad(account or '—', account_width)}{RESET}  {plan_cell}")
     else:
         for index, (name, sublabel) in enumerate(items, start=1):
             suffix = f"  {DIM}{sublabel}{RESET}" if sublabel else ""

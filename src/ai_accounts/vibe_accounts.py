@@ -477,7 +477,7 @@ def cmd_switch_interactive() -> int:
         log_yellow("⚠️  No saved Vibe profiles.")
         return 1
     items = _picker_items(profiles)
-    chosen = choose_profile("a Vibe", items)
+    chosen = choose_profile("a Vibe", items, active=p.stem if (p := _active_profile()) else None)
     if chosen is None:
         return 1
     return cmd_switch(chosen)

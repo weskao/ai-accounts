@@ -319,6 +319,18 @@ class PickerGrammarTests(unittest.TestCase):
                 self.assertIn("ACCOUNT  —", clean)
                 self.assertIn("PLAN     —", clean)
 
+    def test_switch_layout_marks_active_profile(self) -> None:
+        items = [("work", "user@example.com", "Team · 5x"), ("personal", None, "Pro")]
+        for mode in ("wide", "narrow"):
+            with self.subTest(mode=mode), mock.patch.object(present, "layout_mode", return_value=mode), \
+                    mock.patch("builtins.input", return_value="1"):
+                _, output = _run(present.choose_profile, "a tool", items, active="personal")
+            rows = [line for line in present.strip_ansi(output).splitlines() if ") " in line]
+            self.assertNotIn("ACTIVE", rows[0])
+            self.assertTrue(rows[1].endswith("ACTIVE"))
+            if mode == "wide":
+                self.assertRegex(rows[1], r"2\) personal\s+—\s+Pro\s+ACTIVE$")
+
     def test_header_numbering_and_cancel_shared_across_tools(self) -> None:
         for label, module, setup in _PICKER_CASES:
             with self.subTest(tool=label), tempfile.TemporaryDirectory() as tmp, \

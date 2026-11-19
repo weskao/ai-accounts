@@ -376,11 +376,12 @@ def _picker_items() -> list[tuple[str, str | None]]:
 
 
 def cmd_switch_interactive() -> int:
-    items = [(login.name, _identity(login)) for login in _logins()[0]]
+    logins = _logins()[0]
+    items = [(login.name, _identity(login)) for login in logins]
     if not items:
         log_yellow("⚠️  No opencode logins found.")
         return 1
-    chosen = choose_profile("an opencode", items)
+    chosen = choose_profile("an opencode", items, active=[login.name for login in logins if login.active])
     return 1 if chosen is None else cmd_switch(chosen)
 
 
