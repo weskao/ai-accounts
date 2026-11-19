@@ -341,7 +341,9 @@ differs per tool:
 
 The `switch` pickers align profile, account and plan columns. Claude's plan
 includes its rate multiplier when available; plans unavailable locally show `—`.
-Profile and plan colors match the `list` display; accounts are dimmed.
+Profile and plan colors match the `list` display; accounts are dimmed. The
+profile currently in use ends in a green `ACTIVE` (opencode marks one per
+integration).
 
 For OAuth-based tools, `switch` now renews a saved account **before**
 replacing the active credentials when its access token is near expiry:
