@@ -1052,7 +1052,8 @@ def cmd_switch_interactive() -> int:
 
     chosen = choose_profile(
         "a Claude",
-        [(profile.stem, _plan_label(_read_claims(profile))) for profile in profiles],
+        [(profile.stem, _identity_label(_read_profile_identity(profile)),
+          _plan_row_cell(_read_claims(profile))) for profile in profiles],
     )
     if chosen is None:
         return 1

@@ -1702,8 +1702,8 @@ class UsageRequestTests(_CodexHomeMixin):
 class InteractiveSwitchTests(_CodexHomeMixin):
     def test_selects_valid_profile_by_number(self):
         # Given: two valid profiles plus expired and unreadable profiles.
-        self.write_profile("personal", _auth_payload("acct-p", "p@x.com"))
-        self.write_profile("work", _auth_payload("acct-w", "w@x.com"))
+        self.write_profile("personal", _auth_payload("acct-p", "p@x.com", plan="pro"))
+        self.write_profile("work", _auth_payload("acct-w", "w@x.com", plan="team"))
         self.write_profile("expired", _auth_payload("acct-e", "e@x.com", expires_in=-3600))
         self.write_profile("broken", {"tokens": {}})
 
@@ -1715,8 +1715,12 @@ class InteractiveSwitchTests(_CodexHomeMixin):
 
         # Then: only valid profiles are offered and the selected profile is switched.
         self.assertEqual(rc, 0)
-        self.assertIn("1) personal", out)
-        self.assertIn("2) work", out)
+        plain = ca._ANSI_RE.sub("", out)
+        self.assertIn("PROFILE", plain)
+        self.assertIn("ACCOUNT", plain)
+        self.assertIn("PLAN", plain)
+        self.assertRegex(plain, r"1\) personal\s+p@x.com\s+Pro")
+        self.assertRegex(plain, r"2\) work\s+w@x.com\s+Team")
         self.assertNotIn("expired", out)
         self.assertNotIn("broken", out)
         switch.assert_called_once_with("work")
@@ -1734,6 +1738,18 @@ class InteractiveSwitchTests(_CodexHomeMixin):
         # Then: no switch occurs.
         self.assertEqual(rc, 1)
         switch.assert_not_called()
+
+    def test_picker_stacks_fields_on_narrow_terminals(self):
+        self.write_profile("personal", _auth_payload("acct-p", "p@x.com", plan="pro"))
+        with mock.patch("ai_accounts._present.layout_mode", return_value="narrow"), \
+             mock.patch("builtins.input", return_value="1"), \
+             mock.patch.object(ca, "cmd_switch", return_value=0):
+            rc, out, _ = self.run_capture(ca.cmd_switch_interactive)
+        plain = ca._ANSI_RE.sub("", out)
+        self.assertEqual(rc, 0)
+        self.assertIn("1) personal", plain)
+        self.assertIn("ACCOUNT  p@x.com", plain)
+        self.assertIn("PLAN     Pro", plain)
 
     def test_switch_without_name_opens_interactive_selection(self):
         # Given: the switch command has no explicit profile name.

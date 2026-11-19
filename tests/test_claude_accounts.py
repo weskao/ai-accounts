@@ -362,6 +362,22 @@ class _HomeMixin(unittest.TestCase):
 
 
 class ProfileCommandTests(_HomeMixin):
+    def test_switch_picker_shows_identity_and_full_plan(self) -> None:
+        self.write_profile("personal", _oauth(sub="pro", tier="default_claude_pro"))
+        self.write_profile("work", {
+            "claudeAiOauth": _oauth(sub="team", tier="default_claude_max_5x"),
+            "aiAccountsAccount": {"name": "Test User", "email": "user@example.com"},
+        })
+        with mock.patch("builtins.input", return_value="2"), mock.patch.object(
+            ca, "cmd_switch", return_value=0
+        ) as switch:
+            rc, out, _ = self.capture(ca.cmd_switch_interactive)
+        plain = ca._ANSI_RE.sub("", out)
+        self.assertEqual(rc, 0)
+        self.assertRegex(plain, r"1\) personal\s+—\s+Pro")
+        self.assertRegex(plain, r"2\) work\s+Test User <user@example.com>\s+Team · 5x")
+        switch.assert_called_once_with("work")
+
     def test_save_captures_only_the_oauth_blob(self) -> None:
         self.set_active(_oauth(access="live", refresh="rt-live"))
         self.assertEqual(self.quiet(ca.cmd_save, "work"), 0)

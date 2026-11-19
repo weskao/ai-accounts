@@ -1169,7 +1169,8 @@ def cmd_switch_interactive() -> int:
 
     chosen = choose_profile(
         "a Codex",
-        [(profile.stem, _identity_label(claims)) for profile, claims in valid_profiles],
+        [(profile.stem, _identity_label(claims), _plan_cell(claims))
+         for profile, claims in valid_profiles],
     )
     if chosen is None:
         return 1

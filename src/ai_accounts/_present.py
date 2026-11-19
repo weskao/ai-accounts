@@ -686,7 +686,7 @@ def _accounts_cards(rows: list[dict[str, str]], columns: Sequence[tuple[str, str
 
 def choose_profile(
     kind_label: str,
-    items: Sequence[tuple[str, str | None]],
+    items: Sequence[tuple[str, str | None] | tuple[str, str | None, str]],
     *,
     cancel_message: str = "Switch cancelled.",
 ) -> str | None:
@@ -694,8 +694,8 @@ def choose_profile(
 
     ``kind_label`` carries its article so the header reads naturally for every
     provider ("a Codex", "a Claude", "an Antigravity"). ``items`` is a
-    PRE-FILTERED list of ``(name, sublabel_or_None)`` display entries — candidate
-    filtering (e.g. dropping expired profiles) stays with the caller.
+    PRE-FILTERED list of ``(name, sublabel_or_None)`` display entries or
+    ``(name, account, plan)`` rows — candidate filtering stays with the caller.
     ``cancel_message`` lets non-switch callers (e.g. remove) print an action-
     appropriate line instead of the switch-flavored default.
 
@@ -706,9 +706,26 @@ def choose_profile(
     """
     narrow = layout_mode() == "narrow"
     _emit(f"{BOLD}Choose {kind_label} profile:{RESET}", narrow)
-    for index, (name, sublabel) in enumerate(items, start=1):
-        suffix = f"  {DIM}{sublabel}{RESET}" if sublabel else ""
-        _emit(f"  {index}) {name}{suffix}", narrow)
+    if items and len(items[0]) == 3:
+        profile_width = max(visible_len(item[0]) for item in items)
+        account_width = max(7, *(visible_len(item[1] or "—") for item in items))
+        number_width = len(str(len(items)))
+        if not narrow:
+            print(f"  {' ' * (number_width + 2)}{_pad('PROFILE', max(7, profile_width))}  "
+                  f"{_pad('ACCOUNT', account_width)}  PLAN")
+        for index, item in enumerate(items, start=1):
+            name, account, plan = item
+            if narrow:
+                _emit(f"  {index:>{number_width}}) {CYAN}{name}{RESET}", True)
+                _emit(f"     ACCOUNT  {account or '—'}", True)
+                _emit(f"     PLAN     {plan}", True)
+            else:
+                print(f"  {index:>{number_width}}) {CYAN}{_pad(name, max(7, profile_width))}{RESET}  "
+                      f"{_pad(account or '—', account_width)}  {plan}")
+    else:
+        for index, (name, sublabel) in enumerate(items, start=1):
+            suffix = f"  {DIM}{sublabel}{RESET}" if sublabel else ""
+            _emit(f"  {index}) {name}{suffix}", narrow)
 
     try:
         selection = input("Select account number: ").strip()
