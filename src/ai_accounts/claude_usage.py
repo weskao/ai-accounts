@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -219,6 +220,9 @@ def _request_usage(access_token: str, *, timeout: float, url: str = USAGE_URL) -
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        retry = (exc.headers or {}).get("Retry-After", "")
+        if exc.code == 429 and retry.isdigit():
+            return f"HTTP 429 from usage endpoint (retry after {retry}s)"
         return f"HTTP {exc.code} from usage endpoint"
     except (urllib.error.URLError, OSError):
         return "network error"
@@ -254,7 +258,9 @@ def fetch_usage(
 
 def _format_error(error: str) -> str:
     if error.startswith("HTTP "):
-        return "ERR " + error.split()[1]
+        retry = re.search(r"retry after (\d+)s", error)
+        after = f" · {format_elapsed(int(retry.group(1)))}" if retry else ""
+        return "ERR " + error.split()[1] + after
     if error == "network error":
         return "ERR network"
     if error == "missing access token":
