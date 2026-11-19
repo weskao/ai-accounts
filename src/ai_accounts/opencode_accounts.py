@@ -376,7 +376,7 @@ def _picker_items() -> list[tuple[str, str | None]]:
 
 
 def cmd_switch_interactive() -> int:
-    items = _picker_items()
+    items = [(login.name, _identity(login)) for login in _logins()[0]]
     if not items:
         log_yellow("⚠️  No opencode logins found.")
         return 1

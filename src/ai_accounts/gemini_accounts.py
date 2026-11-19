@@ -1247,9 +1247,12 @@ def cmd_switch_interactive() -> int:
         log_yellow("⚠️  No saved Antigravity profiles available to switch.")
         return 1
 
+    cache = _read_usage_cache()
     chosen = choose_profile(
         "an Antigravity",
-        [(profile.stem, _identity_label(_read_claims(profile))) for profile in profiles],
+        [(profile.stem, _identity_label(_read_claims(profile)),
+          _plan_cell(snapshot.plan if (snapshot := _cached_snapshot(profile.stem, cache)) else None))
+         for profile in profiles],
     )
     if chosen is None:
         return 1

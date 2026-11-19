@@ -689,6 +689,7 @@ def choose_profile(
     items: Sequence[tuple[str, str | None] | tuple[str, str | None, str]],
     *,
     cancel_message: str = "Switch cancelled.",
+    switch_layout: bool = True,
 ) -> str | None:
     """Interactive numbered profile picker over ``items``.
 
@@ -706,22 +707,20 @@ def choose_profile(
     """
     narrow = layout_mode() == "narrow"
     _emit(f"{BOLD}Choose {kind_label} profile:{RESET}", narrow)
-    if items and len(items[0]) == 3:
+    if items and switch_layout:
         profile_width = max(visible_len(item[0]) for item in items)
         account_width = max(7, *(visible_len(item[1] or "—") for item in items))
         number_width = len(str(len(items)))
-        if not narrow:
-            print(f"  {' ' * (number_width + 2)}{_pad('PROFILE', max(7, profile_width))}  "
-                  f"{_pad('ACCOUNT', account_width)}  PLAN")
         for index, item in enumerate(items, start=1):
-            name, account, plan = item
+            name, account = item[:2]
+            plan = item[2] if len(item) == 3 else "—"
             if narrow:
-                _emit(f"  {index:>{number_width}}) {CYAN}{name}{RESET}", True)
-                _emit(f"     ACCOUNT  {account or '—'}", True)
+                _emit(f"  {index:>{number_width}}) {name}", True)
+                _emit(f"     ACCOUNT  {DIM}{account or '—'}{RESET}", True)
                 _emit(f"     PLAN     {plan}", True)
             else:
-                print(f"  {index:>{number_width}}) {CYAN}{_pad(name, max(7, profile_width))}{RESET}  "
-                      f"{_pad(account or '—', account_width)}  {plan}")
+                print(f"  {index:>{number_width}}) {_pad(name, max(7, profile_width))}  "
+                      f"{DIM}{_pad(account or '—', account_width)}{RESET}  {plan}")
     else:
         for index, (name, sublabel) in enumerate(items, start=1):
             suffix = f"  {DIM}{sublabel}{RESET}" if sublabel else ""
@@ -760,7 +759,7 @@ def choose_and_run(
     "Switch cancelled." wording); pass ``cancel_message`` to match a specific
     action's grammar (e.g. "Remove cancelled.").
     """
-    chosen = choose_profile(kind_label, items, cancel_message=cancel_message)
+    chosen = choose_profile(kind_label, items, cancel_message=cancel_message, switch_layout=False)
     if chosen is None:
         return 1
     return action(chosen)
