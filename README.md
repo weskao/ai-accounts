@@ -339,7 +339,8 @@ opencode-accounts switch openai:work          # Make opencode's "work" OpenAI lo
 without a name picks one from the active account's email or login. What
 differs per tool:
 
-The `switch` pickers align profile, account and plan columns. Claude's plan
+The `switch` and `remove` pickers share one layout and align profile, account
+and plan columns. Claude's plan
 includes its rate multiplier when available; plans unavailable locally show `—`.
 Profile and plan colors match the `list` display; accounts are dimmed. The
 profile currently in use ends in a green `ACTIVE` (opencode marks one per
