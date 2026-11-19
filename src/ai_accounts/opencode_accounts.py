@@ -17,6 +17,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -26,7 +27,6 @@ from . import config_menu as cm
 from ._present import (
     accounts_table,
     choose_and_run,
-    choose_profile,
     format_help,
     ok,
     panel,
@@ -371,18 +371,21 @@ def cmd_switch(name: str) -> int:
     return 0
 
 
-def _picker_items() -> list[tuple[str, str | None]]:
-    return [(login.name, "active" if login.active else None) for login in _logins()[0]]
+def _pick(action: Callable[[str], int], verb: str) -> int:
+    """Shared switch/remove picker: both commands render the same rows."""
+    logins = _logins()[0]
+    if not logins:
+        log_yellow("⚠️  No opencode logins found.")
+        return 1
+    return choose_and_run(
+        "an opencode", [(login.name, _identity(login)) for login in logins], action,
+        cancel_message=f"{verb.capitalize()} cancelled.",
+        active=[login.name for login in logins if login.active],
+    )
 
 
 def cmd_switch_interactive() -> int:
-    logins = _logins()[0]
-    items = [(login.name, _identity(login)) for login in logins]
-    if not items:
-        log_yellow("⚠️  No opencode logins found.")
-        return 1
-    chosen = choose_profile("an opencode", items, active=[login.name for login in logins if login.active])
-    return 1 if chosen is None else cmd_switch(chosen)
+    return _pick(cmd_switch, "switch")
 
 
 def cmd_remove(name: str) -> int:
@@ -393,11 +396,7 @@ def cmd_remove(name: str) -> int:
 
 
 def cmd_remove_interactive() -> int:
-    items = _picker_items()
-    if not items:
-        log_yellow("⚠️  No opencode logins found.")
-        return 1
-    return choose_and_run("an opencode", items, cmd_remove, cancel_message="Remove cancelled.")
+    return _pick(cmd_remove, "remove")
 
 
 def cmd_save() -> int:

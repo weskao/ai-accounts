@@ -36,7 +36,6 @@ from . import config_menu as cm
 from ._present import (
     accounts_table,
     choose_and_run,
-    choose_profile,
     format_help,
     ok,
     panel,
@@ -878,18 +877,21 @@ def _picker_items(profiles: list[Path]) -> list[tuple[str, str | None]]:
     return items
 
 
-def cmd_switch_interactive() -> int:
+def _pick(action: Callable[[str], int], verb: str) -> int:
+    """Shared switch/remove picker: both commands render the same rows."""
     profiles = _profiles()
     if not profiles:
         log_yellow("⚠️  No saved Copilot profiles.")
         return 1
-    chosen = choose_profile(
-        "a Copilot", _picker_items(profiles),
+    return choose_and_run(
+        "a Copilot", _picker_items(profiles), action,
+        cancel_message=f"{verb.capitalize()} cancelled.",
         active=p.stem if (p := _listed_active_profile(profiles)) else None,
     )
-    if chosen is None:
-        return 1
-    return cmd_switch(chosen)
+
+
+def cmd_switch_interactive() -> int:
+    return _pick(cmd_switch, "switch")
 
 
 def cmd_remove(name: str) -> int:
@@ -911,12 +913,7 @@ def cmd_remove(name: str) -> int:
 
 
 def cmd_remove_interactive() -> int:
-    profiles = _profiles()
-    if not profiles:
-        log_yellow("⚠️  No saved Copilot profiles.")
-        return 1
-    items = _picker_items(profiles)
-    return choose_and_run("a Copilot", items, cmd_remove, cancel_message="Remove cancelled.")
+    return _pick(cmd_remove, "remove")
 
 
 def cmd_sync() -> int:

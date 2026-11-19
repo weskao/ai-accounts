@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,7 +32,6 @@ from ._present import (
     RESET_OPTIONAL_COLUMNS,
     accounts_table,
     choose_and_run,
-    choose_profile,
     expiry_status,
     format_help,
     ok,
@@ -1153,6 +1153,17 @@ def cmd_switch(name: str, *, restart_daemon: bool = True) -> int:
     return cmd_who()
 
 
+def _pick(rows: list[tuple[Path, dict | None]], action: Callable[[str], int], verb: str) -> int:
+    """Shared switch/remove picker: both commands render the same rows."""
+    return choose_and_run(
+        "a Codex",
+        [(profile.stem, _identity_label(claims), _plan_cell(claims)) for profile, claims in rows],
+        action,
+        cancel_message=f"{verb.capitalize()} cancelled.",
+        active=p.stem if (p := _active_profile()) else None,
+    )
+
+
 def cmd_switch_interactive() -> int:
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     now = datetime.now().timestamp()
@@ -1166,16 +1177,7 @@ def cmd_switch_interactive() -> int:
     if not valid_profiles:
         log_yellow("⚠️  No unexpired Codex profiles available to switch.")
         return 1
-
-    chosen = choose_profile(
-        "a Codex",
-        [(profile.stem, _identity_label(claims), _plan_cell(claims))
-         for profile, claims in valid_profiles],
-        active=p.stem if (p := _active_profile()) else None,
-    )
-    if chosen is None:
-        return 1
-    return cmd_switch(chosen)
+    return _pick(valid_profiles, cmd_switch, "switch")
 
 
 # ── auto-switch wiring ───────────────────────────────────────────────────────
@@ -1297,8 +1299,7 @@ def cmd_remove_interactive() -> int:
     if not profiles:
         log_yellow("⚠️  No saved Codex profiles.")
         return 1
-    items = [(profile.stem, _identity_label(_read_claims(profile))) for profile in profiles]
-    return choose_and_run("a Codex", items, cmd_remove, cancel_message="Remove cancelled.")
+    return _pick([(profile, _read_claims(profile)) for profile in profiles], cmd_remove, "remove")
 
 
 def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, str | None]:

@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,6 @@ from . import config_menu as cm
 from ._present import (
     accounts_table,
     choose_and_run,
-    choose_profile,
     format_help,
     ok,
     panel,
@@ -482,13 +482,21 @@ def _picker_items() -> list[tuple[str, str | None]]:
     return [(p.stem, _identity_label(p)) for p in _profiles()]
 
 
-def cmd_switch_interactive() -> int:
+def _pick(action: Callable[[str], int], verb: str) -> int:
+    """Shared switch/remove picker: both commands render the same rows."""
     items = _picker_items()
     if not items:
         log_yellow("⚠️  No saved Devin profiles.")
         return 1
-    chosen = choose_profile("a Devin", items, active=p.stem if (p := _active_profile()) else None)
-    return 1 if chosen is None else cmd_switch(chosen)
+    return choose_and_run(
+        "a Devin", items, action,
+        cancel_message=f"{verb.capitalize()} cancelled.",
+        active=p.stem if (p := _active_profile()) else None,
+    )
+
+
+def cmd_switch_interactive() -> int:
+    return _pick(cmd_switch, "switch")
 
 
 def cmd_remove(name: str) -> int:
@@ -515,11 +523,7 @@ def cmd_remove(name: str) -> int:
 
 
 def cmd_remove_interactive() -> int:
-    items = _picker_items()
-    if not items:
-        log_yellow("⚠️  No saved Devin profiles.")
-        return 1
-    return choose_and_run("a Devin", items, cmd_remove, cancel_message="Remove cancelled.")
+    return _pick(cmd_remove, "remove")
 
 
 def cmd_sync() -> int:

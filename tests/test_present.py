@@ -331,6 +331,16 @@ class PickerGrammarTests(unittest.TestCase):
             if mode == "wide":
                 self.assertRegex(rows[1], r"2\) personal\s+—\s+Pro\s+ACTIVE$")
 
+    def test_remove_picker_renders_the_switch_rows(self) -> None:
+        items = [("work", "user@example.com", "Team · 5x"), ("personal", None)]
+        with mock.patch.object(present, "layout_mode", return_value="wide"), \
+                mock.patch("builtins.input", side_effect=KeyboardInterrupt):
+            _, switch_out = _run(present.choose_profile, "a tool", items, active="work")
+            _, remove_out = _run(present.choose_and_run, "a tool", items, lambda _name: 0,
+                                 cancel_message="Switch cancelled.", active="work")
+        self.assertEqual(remove_out, switch_out)
+        self.assertRegex(present.strip_ansi(remove_out), r"1\) work\s+user@example.com\s+Team · 5x\s+ACTIVE")
+
     def test_header_numbering_and_cancel_shared_across_tools(self) -> None:
         for label, module, setup in _PICKER_CASES:
             with self.subTest(tool=label), tempfile.TemporaryDirectory() as tmp, \

@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Final
@@ -39,7 +40,6 @@ from ._present import (
     RESET_OPTIONAL_COLUMNS,
     accounts_table,
     choose_and_run,
-    choose_profile,
     expiry_status,
     format_help,
     ok,
@@ -1044,21 +1044,27 @@ def cmd_switch(name: str) -> int:
     return cmd_who()
 
 
-def cmd_switch_interactive() -> int:
+def _pick(action: Callable[[str], int], verb: str) -> int:
+    """Shared switch/remove picker: both commands render the same rows."""
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
-        log_yellow("⚠️  No saved Claude profiles available to switch.")
+        log_yellow(f"⚠️  No saved Claude profiles available to {verb}.")
         return 1
-
-    chosen = choose_profile(
+    return choose_and_run(
         "a Claude",
-        [(profile.stem, _identity_label(_read_profile_identity(profile)),
-          _plan_row_cell(_read_claims(profile))) for profile in profiles],
+        [
+            (profile.stem, _identity_label(_read_profile_identity(profile)),
+             _plan_row_cell(_read_claims(profile)))
+            for profile in profiles
+        ],
+        action,
+        cancel_message=f"{verb.capitalize()} cancelled.",
         active=p.stem if (p := _active_profile()) else None,
     )
-    if chosen is None:
-        return 1
-    return cmd_switch(chosen)
+
+
+def cmd_switch_interactive() -> int:
+    return _pick(cmd_switch, "switch")
 
 
 # ── auto-switch wiring ───────────────────────────────────────────────────────
@@ -1196,12 +1202,7 @@ def cmd_remove(name: str) -> int:
 
 
 def cmd_remove_interactive() -> int:
-    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
-    if not profiles:
-        log_yellow("⚠️  No saved Claude profiles available to remove.")
-        return 1
-    items = [(profile.stem, _plan_label(_read_claims(profile))) for profile in profiles]
-    return choose_and_run("a Claude", items, cmd_remove, cancel_message="Remove cancelled.")
+    return _pick(cmd_remove, "remove")
 
 
 def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, str | None]:

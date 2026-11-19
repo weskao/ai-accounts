@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,6 @@ from . import i18n, profile_secrets
 from ._present import (
     accounts_table,
     choose_and_run,
-    choose_profile,
     format_help,
     ok,
     panel,
@@ -471,16 +471,21 @@ def _picker_items(profiles: list[Path]) -> list[tuple[str, str | None]]:
     return items
 
 
-def cmd_switch_interactive() -> int:
+def _pick(action: Callable[[str], int], verb: str) -> int:
+    """Shared switch/remove picker: both commands render the same rows."""
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
         log_yellow("⚠️  No saved Vibe profiles.")
         return 1
-    items = _picker_items(profiles)
-    chosen = choose_profile("a Vibe", items, active=p.stem if (p := _active_profile()) else None)
-    if chosen is None:
-        return 1
-    return cmd_switch(chosen)
+    return choose_and_run(
+        "a Vibe", _picker_items(profiles), action,
+        cancel_message=f"{verb.capitalize()} cancelled.",
+        active=p.stem if (p := _active_profile()) else None,
+    )
+
+
+def cmd_switch_interactive() -> int:
+    return _pick(cmd_switch, "switch")
 
 
 def cmd_remove(name: str) -> int:
@@ -502,12 +507,7 @@ def cmd_remove(name: str) -> int:
 
 
 def cmd_remove_interactive() -> int:
-    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
-    if not profiles:
-        log_yellow("⚠️  No saved Vibe profiles.")
-        return 1
-    items = _picker_items(profiles)
-    return choose_and_run("a Vibe", items, cmd_remove, cancel_message="Remove cancelled.")
+    return _pick(cmd_remove, "remove")
 
 
 def cmd_sync() -> int:

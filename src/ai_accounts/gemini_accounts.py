@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import datetime
 from functools import cache
@@ -22,7 +23,6 @@ from ._present import (
 from ._present import (
     accounts_table,
     choose_and_run,
-    choose_profile,
     expiry_status,
     format_help,
     highlight_cmd,
@@ -1241,23 +1241,28 @@ def cmd_switch(name: str) -> int:
     return cmd_who()
 
 
-def cmd_switch_interactive() -> int:
+def _pick(action: Callable[[str], int], verb: str) -> int:
+    """Shared switch/remove picker: both commands render the same rows."""
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
-        log_yellow("⚠️  No saved Antigravity profiles available to switch.")
+        log_yellow(f"⚠️  No saved Antigravity profiles available to {verb}.")
         return 1
-
     cache = _read_usage_cache()
-    chosen = choose_profile(
+    return choose_and_run(
         "an Antigravity",
-        [(profile.stem, _identity_label(_read_claims(profile)),
-          _plan_cell(snapshot.plan if (snapshot := _cached_snapshot(profile.stem, cache)) else None))
-         for profile in profiles],
+        [
+            (profile.stem, _identity_label(_read_claims(profile)),
+             _plan_cell(snapshot.plan if (snapshot := _cached_snapshot(profile.stem, cache)) else None))
+            for profile in profiles
+        ],
+        action,
+        cancel_message=f"{verb.capitalize()} cancelled.",
         active=p.stem if (p := _active_profile()) else None,
     )
-    if chosen is None:
-        return 1
-    return cmd_switch(chosen)
+
+
+def cmd_switch_interactive() -> int:
+    return _pick(cmd_switch, "switch")
 
 
 def cmd_remove(name: str) -> int:
@@ -1276,17 +1281,7 @@ def cmd_remove(name: str) -> int:
 
 
 def cmd_remove_interactive() -> int:
-    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
-    if not profiles:
-        log_yellow("⚠️  No saved Antigravity profiles available to remove.")
-        return 1
-
-    return choose_and_run(
-        "an Antigravity",
-        [(profile.stem, _identity_label(_read_claims(profile))) for profile in profiles],
-        cmd_remove,
-        cancel_message="Remove cancelled.",
-    )
+    return _pick(cmd_remove, "remove")
 
 
 def _refresh_one_profile(name: str, *, show_summary: bool = True) -> tuple[int, str | None]:

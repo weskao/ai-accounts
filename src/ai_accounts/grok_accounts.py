@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,6 @@ from . import config_menu as cm
 from ._present import (
     accounts_table,
     choose_and_run,
-    choose_profile,
     format_help,
     ok,
     panel,
@@ -681,19 +681,26 @@ def cmd_switch(name: str) -> int:
     return cmd_who()
 
 
-def cmd_switch_interactive() -> int:
+def _pick(action: Callable[[str], int], verb: str) -> int:
+    """Shared switch/remove picker: both commands render the same rows."""
     profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
     if not profiles:
         log_yellow("⚠️  No saved Grok profiles.")
         return 1
-    items = [
-        (profile.stem, _identity_label(_claims(_load_profile_metadata(profile))))
-        for profile in profiles
-    ]
-    chosen = choose_profile("a Grok", items, active=p.stem if (p := _active_profile()) else None)
-    if chosen is None:
-        return 1
-    return cmd_switch(chosen)
+    return choose_and_run(
+        "a Grok",
+        [
+            (profile.stem, _identity_label(_claims(_load_profile_metadata(profile))))
+            for profile in profiles
+        ],
+        action,
+        cancel_message=f"{verb.capitalize()} cancelled.",
+        active=p.stem if (p := _active_profile()) else None,
+    )
+
+
+def cmd_switch_interactive() -> int:
+    return _pick(cmd_switch, "switch")
 
 
 def cmd_remove(name: str) -> int:
@@ -715,15 +722,7 @@ def cmd_remove(name: str) -> int:
 
 
 def cmd_remove_interactive() -> int:
-    profiles = sorted(_account_dir().glob("*.json")) if _account_dir().is_dir() else []
-    if not profiles:
-        log_yellow("⚠️  No saved Grok profiles.")
-        return 1
-    items = [
-        (profile.stem, _identity_label(_claims(_load_profile_metadata(profile))))
-        for profile in profiles
-    ]
-    return choose_and_run("a Grok", items, cmd_remove, cancel_message="Remove cancelled.")
+    return _pick(cmd_remove, "remove")
 
 
 # ── direct OIDC refresh ──────────────────────────────────────────────────────

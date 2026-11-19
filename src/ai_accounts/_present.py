@@ -689,15 +689,14 @@ def choose_profile(
     items: Sequence[tuple[str, str | None] | tuple[str, str | None, str]],
     *,
     cancel_message: str = "Switch cancelled.",
-    switch_layout: bool = True,
     active: str | Collection[str] | None = None,
 ) -> str | None:
     """Interactive numbered profile picker over ``items``.
 
     ``kind_label`` carries its article so the header reads naturally for every
     provider ("a Codex", "a Claude", "an Antigravity"). ``items`` is a
-    PRE-FILTERED list of ``(name, sublabel_or_None)`` display entries or
-    ``(name, account, plan)`` rows — candidate filtering stays with the caller.
+    PRE-FILTERED list of ``(name, account)`` or ``(name, account, plan)``
+    rows (a missing plan shows ``—``) — candidate filtering stays with the caller.
     ``cancel_message`` lets non-switch callers (e.g. remove) print an action-
     appropriate line instead of the switch-flavored default.
 
@@ -706,12 +705,12 @@ def choose_profile(
     and every numbered entry wrap to the narrow budget (a name plus its
     sublabel measures ~56 columns) instead of running off the screen.
     ``active`` names the profile(s) currently in use (a set for tools with one
-    active login per integration); their switch-layout rows end in ``ACTIVE``.
+    active login per integration); their rows end in ``ACTIVE``.
     """
     narrow = layout_mode() == "narrow"
     actives = {active} if isinstance(active, str) else set(active or ())
     _emit(f"{BOLD}Choose {kind_label} profile:{RESET}", narrow)
-    if items and switch_layout:
+    if items:
         profile_width = max(visible_len(item[0]) for item in items)
         account_width = max(7, *(visible_len(item[1] or "—") for item in items))
         plan_width = max(visible_len(item[2] if len(item) == 3 else "—") for item in items)
@@ -729,10 +728,6 @@ def choose_profile(
                 plan_cell = f"{_pad(plan, plan_width)}  {mark}" if mark else plan
                 print(f"  {index:>{number_width}}) {_pad(name, max(7, profile_width))}  "
                       f"{DIM}{_pad(account or '—', account_width)}{RESET}  {plan_cell}")
-    else:
-        for index, (name, sublabel) in enumerate(items, start=1):
-            suffix = f"  {DIM}{sublabel}{RESET}" if sublabel else ""
-            _emit(f"  {index}) {name}{suffix}", narrow)
 
     try:
         selection = input("Select account number: ").strip()
@@ -753,21 +748,22 @@ def choose_profile(
 
 def choose_and_run(
     kind_label: str,
-    items: Sequence[tuple[str, str | None]],
+    items: Sequence[tuple[str, str | None] | tuple[str, str | None, str]],
     action: Callable[[str], int],
     *,
     cancel_message: str = "Cancelled.",
+    active: str | Collection[str] | None = None,
 ) -> int:
     """Run ``choose_profile`` then ``action(chosen)``, or return 1 on cancel.
 
     ``items`` is already the caller's pre-filtered candidate list — candidate
     filtering, sublabel formatting, and "no saved profiles" messaging stay
-    with the caller. Defaults to a generic cancel message since this helper is
-    shared across actions (switch already has its own call site with its own
-    "Switch cancelled." wording); pass ``cancel_message`` to match a specific
-    action's grammar (e.g. "Remove cancelled.").
+    with the caller. Every tool's switch and remove pickers share it, so both
+    render the same rows; pass ``cancel_message`` to match the action's
+    grammar (e.g. "Remove cancelled."). ``active`` marks rows as in
+    :func:`choose_profile`.
     """
-    chosen = choose_profile(kind_label, items, cancel_message=cancel_message, switch_layout=False)
+    chosen = choose_profile(kind_label, items, cancel_message=cancel_message, active=active)
     if chosen is None:
         return 1
     return action(chosen)
