@@ -339,9 +339,9 @@ opencode-accounts switch openai:work          # Make opencode's "work" OpenAI lo
 without a name picks one from the active account's email or login. What
 differs per tool:
 
-The Claude and Codex `switch` pickers align profile, account and plan columns;
-Claude's plan includes its rate multiplier when available. Profiles are highlighted
-and plan colors match the `list` display.
+The `switch` pickers align profile, account and plan columns. Claude's plan
+includes its rate multiplier when available; plans unavailable locally show `—`.
+Profile and plan colors match the `list` display; accounts are dimmed.
 
 For OAuth-based tools, `switch` now renews a saved account **before**
 replacing the active credentials when its access token is near expiry:
