@@ -293,6 +293,20 @@ def test_who_without_logins_exits_1(data, capsys):
 # ── switch / remove / save / login-switch ────────────────────────────────────
 
 
+def test_interactive_switch_shows_account_and_selects_login(data, run, monkeypatch, capsys):
+    credential = json.dumps({"type": "oauth", "access": "access-test", "accountId": "acct-123"})
+    _make_db(data / "opencode.db", [("cred-1", "openai", "work", credential, 1)])
+    monkeypatch.setattr("ai_accounts._present.layout_mode", lambda: "wide")
+    monkeypatch.setattr("builtins.input", lambda _: "1")
+
+    rc, out = _main(capsys, "switch")
+
+    assert rc == 0
+    assert "openai:work" in out and "openai:acct-123" in out
+    assert "—" in out
+    assert run[0] == [[EXE, "auth", "switch", "openai", "cred-1"]]
+
+
 def test_switch_delegates_to_opencode_auth_switch(db, run, capsys):
     before = db.read_bytes()
     rc, out = _main(capsys, "switch", "openai:work")

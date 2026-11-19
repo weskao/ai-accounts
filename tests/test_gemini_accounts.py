@@ -710,6 +710,22 @@ class UsageTests(unittest.TestCase):
 
 
 class ProfileCommandTests(_HomeMixin):
+    def test_switch_shows_cached_plan_only_for_matching_account(self):
+        self.write_profile("work", _creds("old-id", "old@example.com"))
+        ga._cache_snapshot("work", _usage("old@example.com"))
+        for replaced in (False, True):
+            if replaced:
+                self.write_profile("work", _creds("new-id", "new@example.com"))
+            with self.subTest(replaced=replaced), \
+                    mock.patch("ai_accounts._present.layout_mode", return_value="wide"), \
+                    mock.patch("builtins.input", return_value="1"), \
+                    mock.patch.object(ga, "cmd_switch", return_value=0):
+                rc, output, _ = self.capture(ga.cmd_switch_interactive)
+            clean = ga._ANSI_RE.sub("", output)
+            self.assertEqual(rc, 0)
+            self.assertIn("new@example.com" if replaced else "old@example.com", clean)
+            self.assertRegex(clean, r"1\) work\s+\S+\s+" + ("—" if replaced else "Pro"))
+
     def test_cached_cli_is_read_only_and_config_refresh_override_works(self):
         auth = _creds("test-id", "user@example.com")
         profile = self.write_profile("work", auth)

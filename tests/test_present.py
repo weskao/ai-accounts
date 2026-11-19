@@ -297,6 +297,28 @@ class PickerGrammarTests(unittest.TestCase):
     identically across all four tools — grok previously mishandled the
     Ctrl-C case before adopting the shared ``_present.choose_profile``."""
 
+    def test_switch_layout_aligns_rows_and_stacks_on_narrow_terminals(self) -> None:
+        items = [("work", "user@example.com", "Pro"), ("personal", None)]
+        for mode in ("wide", "narrow"):
+            with self.subTest(mode=mode), mock.patch.object(present, "layout_mode", return_value=mode), \
+                    mock.patch("builtins.input", return_value="2"):
+                chosen, output = _run(present.choose_profile, "a tool", items)
+            clean = present.strip_ansi(output)
+            self.assertEqual(chosen, "personal")
+            self.assertNotRegex(clean, r"(?m)^\s+PROFILE\s+ACCOUNT\s+PLAN$")
+            self.assertNotIn(f"{present.CYAN}work", output)
+            self.assertIn(f"{present.DIM}user@example.com", output)
+            if mode == "wide":
+                self.assertRegex(clean, r"1\) work\s+user@example.com\s+Pro")
+                self.assertRegex(clean, r"2\) personal\s+—\s+—")
+                rows = [line for line in clean.splitlines() if ") " in line]
+                self.assertEqual(rows[0].index("user@example.com"), rows[1].index("—"))
+            else:
+                self.assertIn("ACCOUNT  user@example.com", clean)
+                self.assertIn("PLAN     Pro", clean)
+                self.assertIn("ACCOUNT  —", clean)
+                self.assertIn("PLAN     —", clean)
+
     def test_header_numbering_and_cancel_shared_across_tools(self) -> None:
         for label, module, setup in _PICKER_CASES:
             with self.subTest(tool=label), tempfile.TemporaryDirectory() as tmp, \

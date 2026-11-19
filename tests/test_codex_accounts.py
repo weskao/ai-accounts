@@ -1716,9 +1716,7 @@ class InteractiveSwitchTests(_CodexHomeMixin):
         # Then: only valid profiles are offered and the selected profile is switched.
         self.assertEqual(rc, 0)
         plain = ca._ANSI_RE.sub("", out)
-        self.assertIn("PROFILE", plain)
-        self.assertIn("ACCOUNT", plain)
-        self.assertIn("PLAN", plain)
+        self.assertNotRegex(plain, r"(?m)^\s+PROFILE\s+ACCOUNT\s+PLAN$")
         self.assertRegex(plain, r"1\) personal\s+p@x.com\s+Pro")
         self.assertRegex(plain, r"2\) work\s+w@x.com\s+Team")
         self.assertNotIn("expired", out)
