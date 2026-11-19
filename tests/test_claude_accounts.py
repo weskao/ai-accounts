@@ -263,6 +263,15 @@ class WireFormatTests(unittest.TestCase):
             _, msg = ca._oauth_refresh("rt-xyz")
         self.assertTrue(ca._is_revoked_error(msg), msg)
 
+    def test_fetch_identity_reads_the_token_owner_from_the_profile_endpoint(self) -> None:
+        body = {"account": {"email": "a@example.com", "display_name": "A", "full_name": "A Full"}}
+        with mock.patch.object(cu, "_request_usage", return_value=body) as req:
+            self.assertEqual(ca._fetch_identity("tok"), {"email": "a@example.com", "name": "A"})
+        self.assertEqual(req.call_args.kwargs["url"], ca._PROFILE_URL)
+        with mock.patch.object(cu, "_request_usage", return_value="HTTP 401 from usage endpoint"):
+            self.assertIsNone(ca._fetch_identity("tok"))
+        self.assertIsNone(ca._fetch_identity(None))
+
     def test_usage_request_sends_oauth_beta_header_and_bearer(self) -> None:
         captured: dict = {}
 
@@ -305,7 +314,10 @@ class _HomeMixin(unittest.TestCase):
         acct = mock.patch.object(ca, "_keychain_account", return_value="tester")
         read = mock.patch.object(ca, "_read_keychain_creds", side_effect=lambda: self.keychain)
         write = mock.patch.object(ca, "_write_keychain_creds", side_effect=self._write_keychain)
-        for patch in (acct, read, write):
+        # The token-owner API lookup is offline by default; tests set this.
+        self.api_identity = None
+        api = mock.patch.object(ca, "_fetch_identity", side_effect=lambda _t: self.api_identity)
+        for patch in (acct, read, write, api):
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -789,6 +801,35 @@ class ProfileCommandTests(_HomeMixin):
         self.assertEqual(self.quiet(ca.cmd_save), 0)
         self.assertTrue((self.home / "accounts" / "user.json").is_file())
         self.assertEqual((self.home / "accounts" / ".current-profile").read_text(), "user")
+
+    def test_save_no_args_names_profile_from_token_owner_not_stale_config(self) -> None:
+        # After `switch`, ~/.claude.json still names the previous account until
+        # Claude Code relaunches; the token's real owner comes from the API.
+        old = self.write_profile("old", _oauth(access="at-old", refresh="rt-old"))
+        before = old.read_text(encoding="utf-8")
+        self.set_active(_oauth(access="live", refresh="rt-live"))
+        (self.home / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": "old@example.com", "displayName": "Old"}}),
+            encoding="utf-8",
+        )
+        self.api_identity = {"email": "new@example.com", "name": "New"}
+        self.assertEqual(self.quiet(ca.cmd_save), 0)
+        self.assertEqual(old.read_text(encoding="utf-8"), before)
+        new = self.home / "accounts" / "new.json"
+        self.assertEqual(ca._read_profile_oauth(new)["accessToken"], "live")
+        self.assertEqual(ca._read_profile_identity(new), {"email": "new@example.com", "name": "New"})
+
+    def test_save_no_args_refuses_to_overwrite_another_token_when_owner_unverified(self) -> None:
+        old = self.write_profile("old", _oauth(access="at-old", refresh="rt-old"))
+        before = old.read_text(encoding="utf-8")
+        self.set_active(_oauth(access="live", refresh="rt-live"))
+        (self.home / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": "old@example.com"}}), encoding="utf-8"
+        )
+        result, _out, err = self.capture(ca.cmd_save)
+        self.assertEqual(result, 1)
+        self.assertIn("pass a name explicitly", err)
+        self.assertEqual(old.read_text(encoding="utf-8"), before)
 
     def test_save_no_args_without_email_fails_with_no_profile_created(self) -> None:
         self.set_active(_oauth(access="live", refresh="rt-live"))
