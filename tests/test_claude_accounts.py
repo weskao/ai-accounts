@@ -272,6 +272,12 @@ class WireFormatTests(unittest.TestCase):
             self.assertIsNone(ca._fetch_identity("tok"))
         self.assertIsNone(ca._fetch_identity(None))
 
+    def test_usage_429_reports_when_the_rate_limit_clears(self) -> None:
+        err = urllib.error.HTTPError(cu.USAGE_URL, 429, "Too Many", {"Retry-After": "3351"}, io.BytesIO(b"{}"))
+        with mock.patch.object(urllib.request, "urlopen", side_effect=err):
+            snap = cu.fetch_usage("at")
+        self.assertEqual(cu.format_refreshed_at(snap), "ERR 429 · 55m")
+
     def test_usage_request_sends_oauth_beta_header_and_bearer(self) -> None:
         captured: dict = {}
 
