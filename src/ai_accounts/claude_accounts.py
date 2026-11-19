@@ -361,6 +361,23 @@ def _read_active_identity() -> dict | None:
     return ident if ident["email"] or ident["name"] else None
 
 
+_PROFILE_URL: Final = "https://api.anthropic.com/api/oauth/profile"
+
+
+def _fetch_identity(access_token: str | None) -> dict | None:
+    """Email/name of the account that actually owns *access_token*, from the
+    OAuth profile endpoint. Unlike ~/.claude.json (stale after a switch until
+    Claude Code relaunches) this cannot misattribute. None on any failure."""
+    if not access_token:
+        return None
+    body = claude_usage._request_usage(access_token, timeout=10, url=_PROFILE_URL)
+    account = body.get("account") if isinstance(body, dict) else None
+    if not isinstance(account, dict):
+        return None
+    ident = {"email": account.get("email"), "name": account.get("display_name") or account.get("full_name")}
+    return ident if ident["email"] or ident["name"] else None
+
+
 def _read_profile_identity(path: Path) -> dict | None:
     """Identity snapshot stored in a profile at save time (None for older, bare
     profiles saved before this was captured — they backfill on next save).
@@ -814,9 +831,10 @@ def cmd_save(name: str | None = None) -> int:
         log_red(f"❌ No Claude credentials found: {_creds_file()}")
         log_yellow("   Run: claude auth login")
         return 1
-    # The user is already running as this account, so ~/.claude.json's identity
-    # provably matches — the one moment its email/name can be trusted outright.
-    identity = _read_active_identity()
+    # The token's owner per the API; ~/.claude.json is only a fallback since it
+    # keeps naming the previous account after a switch until Claude Code relaunches.
+    verified = _fetch_identity(oauth.get("accessToken"))
+    identity = verified or _read_active_identity()
     if name is None:
         email = identity.get("email") if identity else None
         if not isinstance(email, str) or not email:
@@ -826,6 +844,20 @@ def cmd_save(name: str | None = None) -> int:
             )
             return 1
         name = email_local_part(email)
+        target = _profile_file(name)
+        if (
+            verified is None
+            and target is not None
+            and target.is_file()
+            and _token_key_from_path(target) != _token_key_from_oauth(oauth)
+        ):
+            # Unverified owner + a different saved token: likely a stale
+            # ~/.claude.json, and overwriting would destroy that login.
+            log_red(
+                f"❌ Could not verify the active account, and profile '{name}' holds a "
+                "different login — pass a name explicitly."
+            )
+            return 1
     return _save_profile_oauth(name, oauth, identity)
 
 
@@ -1370,7 +1402,9 @@ def cmd_login_switch(name: str) -> int:
         log_red("❌ Login completed without readable Claude credentials")
         return 1
     identity_after = _read_active_identity()
-    identity = identity_after if identity_after and identity_after != identity_before else None
+    identity = _fetch_identity(new_oauth.get("accessToken")) or (
+        identity_after if identity_after and identity_after != identity_before else None
+    )
     # Converge the live stores: a fresh `claude auth login` may have written
     # only one of them, and nothing has rotated these tokens yet.
     _write_active_oauth(new_oauth)
