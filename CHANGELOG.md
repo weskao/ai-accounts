@@ -1,3 +1,31 @@
+## [0.33.0] - 2026-11-19
+
+### 🚀 Features
+
+- **accounts:** Verify token owner via oauth profile endpoint
+- **accounts:** Align claude and codex switch pickers
+- **present:** Highlight active profile in switch picker
+- **present:** Share switch layout with remove picker
+
+### 🐛 Bug Fixes
+
+- **usage:** Surface retry-after delay in http 429 error display
+
+### 🚜 Refactor
+
+- **present:** Add switch_layout param and unify picker column display
+
+### 📚 Documentation
+
+- Update switch picker description to reflect column and color changes
+- Document ACTIVE marker in switch picker
+- Describe shared remove and switch picker
+
+### 🧪 Testing
+
+- **accounts:** Cover token-owner profile saves
+- **usage:** Cover 429 retry-after display
+- Add coverage for switch picker layout and cached-plan display
 ## [0.32.0] - 2026-11-13
 
 ### 🚀 Features
