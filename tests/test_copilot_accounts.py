@@ -391,6 +391,18 @@ class CopilotAccountsTests(unittest.TestCase):
         self.assertFalse((self.account_dir / "work.json").is_file())
         self.assertTrue((self.account_dir / "personal.json").is_file())
 
+    def test_switch_picker_shows_the_plan_list_cached(self) -> None:
+        self.assertTrue(ca._write_json(self.account_dir / "personal.json", _profile()))
+        snapshot = cu.UsageSnapshot(None, None, None, "individual", 1700000000, None)
+        with mock.patch.object(cu, "fetch_usage", return_value=snapshot):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(ca.main(["list"]), 0)
+
+        out = io.StringIO()
+        with mock.patch("builtins.input", side_effect=KeyboardInterrupt), redirect_stdout(out):
+            ca.cmd_switch_interactive()
+        self.assertRegex(_ANSI_RE.sub("", out.getvalue()), r"1\) personal .*individual")
+
     # ── list / usage ────────────────────────────────────────────────────────
 
     def test_list_reports_when_there_are_no_profiles(self) -> None:

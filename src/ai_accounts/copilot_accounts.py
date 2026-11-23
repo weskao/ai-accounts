@@ -658,6 +658,15 @@ def _usage_cell(window) -> str:
     return format_usage_window(window, "1month", f"{color}{window.percentage}%{RESET}")
 
 
+def _remember_plan(path: Path, plan: str | None) -> None:
+    """Cache the live plan in the profile file so the switch picker can show it
+    without a network call. Metadata only — the secret store is never touched."""
+    meta = _load_profile_metadata(path)
+    if plan and meta is not None and meta.get("plan") != plan:
+        meta["plan"] = plan
+        _write_json(path, meta)
+
+
 def _fetch_profile(path: Path) -> tuple[JsonDict, copilot_usage.UsageSnapshot]:
     payload = _load_profile(path) or {}
     token = _token(payload)
@@ -709,6 +718,8 @@ def cmd_list(*, fetch_usage: bool = True, only_active: bool = False, json_output
             )
     else:
         readings = [(_load_profile_metadata(path) or {}, empty) for path in profiles]
+    for path, (_payload, usage) in zip(profiles, readings):
+        _remember_plan(path, usage.plan)
 
     if json_output:
         # Same envelope every other provider prints. `quota_snapshots` is an
@@ -868,12 +879,13 @@ def cmd_autoswitch() -> int:
     return 1 if outcome.reason == "switch_failed" else 0
 
 
-def _picker_items(profiles: list[Path]) -> list[tuple[str, str | None]]:
-    """(name, account) pairs so the picker can tell two profiles apart."""
+def _picker_items(profiles: list[Path]) -> list[tuple[str, str | None, str]]:
+    """(name, account, plan) rows; plan is the one `list` last cached."""
     items = []
     for path in profiles:
-        label = _label(_load_profile_metadata(path))
-        items.append((path.stem, None if label == "—" else label))
+        meta = _load_profile_metadata(path)
+        label = _label(meta)
+        items.append((path.stem, None if label == "—" else label, (meta or {}).get("plan") or "—"))
     return items
 
 

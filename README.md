@@ -572,8 +572,9 @@ failing `list`.
 `copilot-accounts list` shows `PROFILE`, `ACCOUNT`, `PLAN`, `ID`, `MONTH USED`,
 `REMAINING`, `UPDATED`, `AUTH`, and `STATE`. `copilot-accounts usage` shows the
 same details for the active saved profile. Account details are fetched from
-GitHub on each listing, with saved details as a fallback, without rewriting
-profiles. Listings identify the active profile from Copilot's `config.json`
+GitHub on each listing, with saved details as a fallback. A listing only
+rewrites a profile to cache its `PLAN` (never the token), which the `switch` /
+`remove` picker then shows offline; a profile not yet listed shows `—`. Listings identify the active profile from Copilot's `config.json`
 without reading the OS credential store on macOS, Windows, or Linux. `ACCOUNT`
 displays `Name <email>` when available, otherwise the name,
 GitHub login, or email. A private primary email is included only when GitHub
